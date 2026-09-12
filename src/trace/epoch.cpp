@@ -211,9 +211,6 @@ day_of_week weekday(const std::time_t t) {
 
 day_of_week weekday(const epoch_t &e) { return weekday(e.first); }
 
-/** @brief Return the next local week boundary after a timestamp.
- * @param[in] t Integral epoch timestamp.
- * @return Start of the next local-calendar week as `std::time_t`. */
 std::time_t get_time_of_next_week_start(const std::time_t t) {
   const std::tm *tinfo = std::localtime(&t);
   if (tinfo == nullptr) {
@@ -229,16 +226,10 @@ std::time_t get_time_of_next_week_start(const std::time_t t) {
   return std::mktime(&nextweek);
 }
 
-/** @brief Return the next local week boundary for an epoch timestamp.
- * @param[in] t Timestamp whose next week boundary is requested.
- * @return Start of the next local-calendar week as `std::time_t`. */
 std::time_t get_time_of_next_week_start(const epoch_t &t) {
   return get_time_of_next_week_start(t.first);
 }
 
-/** @brief Return the current local week boundary for a timestamp.
- * @param[in] t Integral epoch timestamp.
- * @return Start of the current local-calendar week as `std::time_t`. */
 std::time_t get_time_of_cur_week_start(const std::time_t t) {
   const std::tm *tinfo = std::localtime(&t);
   if (tinfo == nullptr) {
@@ -254,9 +245,6 @@ std::time_t get_time_of_cur_week_start(const std::time_t t) {
   return std::mktime(&nextweek);
 }
 
-/** @brief Return the current local week boundary for an epoch timestamp.
- * @param[in] t Timestamp whose current week boundary is requested.
- * @return Start of the current local-calendar week as `std::time_t`. */
 std::time_t get_time_of_cur_week_start(const epoch_t &t) {
   return get_time_of_cur_week_start(t.first);
 }
