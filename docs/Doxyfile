@@ -76,7 +76,6 @@ INTERACTIVE_SVG        = YES
 
 # Index generation
 ALPHABETICAL_INDEX     = YES
-COLS_IN_ALPHA_INDEX    = 3
 
 # References
 REFERENCED_BY_RELATION = YES

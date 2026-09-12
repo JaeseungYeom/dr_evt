@@ -333,6 +333,7 @@ int main(int argc, char **argv)
   }
 
   SECTION("Caller-supplied distributions use the serialized RNGen engine") {
+    std::stringstream sstr;
     dr_evt::RNGen<> original(42u);
     dr_evt::RNGen<> restored;
     std::vector<char> buffer;
