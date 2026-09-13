@@ -12,6 +12,7 @@ include(GNUInstallDirs)
 include(ExternalProject)
 include(DR_EVT_CMakeUtilities)
 include(CMakePackageConfigHelpers)
+include(CMakeFindDependencyMacro)
 
 
 set(DR_EVT_VERSION ${PACKAGE_VERSION})
@@ -32,7 +33,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 
 # Record the various flags and switches accumlated in DR_EVT
 set(DR_EVT_GNU_LINUX @DR_EVT_GNU_LINUX@)
-set(DR_EVT_HAS_CEREAL @DR_EVT_HAS_CEREAL@)
+set(DR_EVT_HAS_SER20 @DR_EVT_HAS_SER20@)
 set(DR_EVT_HAS_CATCH2 @DR_EVT_HAS_CATCH2@)
 set(DR_EVT_HAS_DOXYGEN @DR_EVT_HAS_DOXYGEN@)
 set(DR_EVT_HAS_OPENMP @DR_EVT_HAS_OPENMP@)
@@ -41,6 +42,10 @@ set(DR_EVT_HAS_STD_FILESYSTEM @DR_EVT_HAS_STD_FILESYSTEM@)
 set(DR_EVT_HAS_PROTOBUF @DR_EVT_HAS_PROTOBUF@)
 
 # Setup dependencies
+
+if (DR_EVT_HAS_SER20)
+  find_dependency(ser20 CONFIG REQUIRED)
+endif ()
 
 if (NOT BOOST_ROOT)
   set(BOOST_ROOT "@BOOST_ROOT@")

@@ -61,7 +61,10 @@ fi
 
 # Exercise the internal replay reclamation boundaries before the CLI-level
 # simulation/replay comparisons below.
-RECLAMATION_BIN="${RECLAMATION_BIN:-${CMAKE_INSTALL_PREFIX:-./install}/bin/tests/test_replay_reclamation}"
+RECLAMATION_BIN="${RECLAMATION_BIN:-$INSTALL_PREFIX/bin/tests/test_replay_reclamation}"
+if [[ "$RECLAMATION_BIN" != /* ]]; then
+    RECLAMATION_BIN="$REPO_ROOT/${RECLAMATION_BIN#./}"
+fi
 
 echo "Testing: replay job-store reclamation boundaries"
 if [ ! -x "$RECLAMATION_BIN" ]; then

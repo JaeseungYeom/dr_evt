@@ -23,7 +23,9 @@ This directory contains GitHub Actions workflows for automated testing.
 - Resource-history tests (5)
 - Job-store tests (6)
 - Config tests, including power-usage `trace_type` coverage
-- Native CTest suite (10 tests, plus MPI streaming when MPI is available)
+- Native CTest suite (11 tests, plus MPI streaming when MPI is available)
+- Ser20-disabled native serialization build and tests
+- Sphinx and Doxygen documentation build with warnings treated as errors
 - Python API tests (16)
 - gRPC client/server tests (2)
 - Append-job tests (C++ + gRPC)
@@ -40,17 +42,20 @@ This directory contains GitHub Actions workflows for automated testing.
 
 **Duration:** ~5-10 minutes
 
-### 2. `quick-test.yml` - Quick Comprehensive Check
+### 2. `quick-test.yml` - Quick Scheduler and Trace-Schema Check
 
 **Triggers:**
 - Push to any branch (except `main`)
 - Manual trigger
 
 **What it runs:**
-- Comprehensive tests only (34) - `tests/run_scheduler_correctness_tests.sh`
+- Scheduler correctness fixtures (34) - `tests/run_scheduler_correctness_tests.sh`
+- Ser20 caller-owned-memory serialization test - installed `t_state_ser20`
+- Progressive-loading C++ API test - installed `test_progressive_load`
+- Queue-input schema test - installed `test_queue_input`
 
 **Compiler:**
-- GCC 11 only
+- GCC 13 only
 
 **Duration:** ~2-3 minutes
 
@@ -73,7 +78,7 @@ Total tests referenced by the full suite:
 | Resource history | 5 | CI runner |
 | Job store | 6 | CI runner |
 | Config | 9 | CI runner; includes power-usage `trace_type` coverage |
-| Native CTest | 10, plus 1 with MPI | CI runner; RNG, trace policies, replay reclamation, append/streaming APIs, queues, and CLI dispatch |
+| Native CTest | 11, plus 1 with MPI | CI runner; RNG and binary serialization, trace policies, replay reclamation, append/streaming APIs, queues, and CLI dispatch |
 | Python API | 16 | CI runner |
 | gRPC client/server | 2 | CI runner |
 | Append-job | 18 C++ + gRPC | CI runner |
@@ -106,6 +111,7 @@ cmake -S . -B build \
   -DCMAKE_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}" \
   -DDR_EVT_BUILD_PYTHON=ON \
   -DDR_EVT_ENABLE_GRPC=ON \
+  -DDR_EVT_WITH_SER20=ON \
   -DDR_EVT_WITH_UNIT_TESTING=ON
 cmake --build build -j4
 cmake --install build
@@ -131,6 +137,21 @@ python3 tests/test_grpc_single_coordinator.py \
   "${CMAKE_INSTALL_PREFIX}/bin/dr_evt_server"
 ./tests/run_progressive_load_tests.sh
 ./tests/run_scale_tests.sh
+ctest --test-dir build --output-on-failure
+
+# Verify the native binary-state path remains usable without Ser20.
+cmake -S . -B build-no-ser20 \
+  -DDR_EVT_WITH_SER20=OFF \
+  -DDR_EVT_ENABLE_PROTOBUF=OFF \
+  -DDR_EVT_ENABLE_GRPC=OFF
+cmake --build build-no-ser20 \
+  --target t_state_rngen-bin t_state-bin -j4
+./build-no-ser20/t_state_rngen
+./build-no-ser20/t_state 10 42 4 2
+
+# Validate the documentation with the same strictness as CI.
+python3 -m pip install -r docs/requirements.txt
+make -C docs html SPHINXOPTS="-W --keep-going"
 ```
 
 There is no `run_correctness_tests.sh` in this checkout - an earlier
@@ -142,11 +163,15 @@ runner is `run_scheduler_correctness_tests.sh`.
 ### Build Steps
 
 1. Install dependencies (CMake, Boost, Protobuf/gRPC, MPI, Python, compilers)
-2. Configure a Release build with Python bindings, Protobuf, and gRPC enabled
+2. Configure a C++20 Release build with Ser20, Python bindings, Protobuf, and
+   gRPC enabled. CI exercises Ser20's FetchContent fallback because no system
+   Ser20 package is installed.
 3. Build with all CPU cores (`make -j$(nproc)`). You may cap it to -j2
    as defense-in-depth against the gRPC/BoringSSL FetchContent OOM
    issue; see `docs/getting-started/installation.md`)
 4. Verify build artifacts exist
+5. Build without Ser20 and run the native serialization tests
+6. Build the Sphinx and Doxygen documentation with warnings as errors
 
 ### Test Steps
 
@@ -177,7 +202,8 @@ When you add a new test:
 
 ### Workflow fails but tests pass locally
 
-- Check compiler version (CI matrix uses GCC 11 and Clang 14)
+- Check compiler version (the full CI matrix uses GCC 13 and Clang 18; the
+  quick workflow uses GCC 13)
 - Check Boost version
 - Run with same flags as CI: `-DCMAKE_BUILD_TYPE=Release`
 

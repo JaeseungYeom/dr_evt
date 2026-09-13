@@ -4,9 +4,14 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX:-$REPO_ROOT/install}"
+if [[ "$INSTALL_PREFIX" != /* ]]; then
+    INSTALL_PREFIX="$REPO_ROOT/${INSTALL_PREFIX#./}"
+fi
 
 if [ -n "${SIMULATOR:-}" ] && [ -x "${SIMULATOR}" ]; then
-    : # Explicit simulator path takes precedence.
+    if [[ "$SIMULATOR" != /* ]]; then
+        SIMULATOR="$REPO_ROOT/${SIMULATOR#./}"
+    fi
 elif [ -x "$INSTALL_PREFIX/bin/simulator" ]; then
     SIMULATOR="$INSTALL_PREFIX/bin/simulator"
 else

@@ -12,6 +12,8 @@ multi-cluster simulations in a distributed fashion and digital-twin scheduler in
 Scheduler behavior is verified against a from-scratch Python reference implementation
 (consistency check between implementations, not independently derived ground truth).
 
+[GitHub Repository](https://github.com/LLNL/dr_evt)
+
 ```{toctree}
 :maxdepth: 2
 :caption: Getting Started

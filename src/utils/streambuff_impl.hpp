@@ -18,27 +18,30 @@ namespace dr_evt {
 
 //---------------------------- ostreambuff --------------------------------
 
-template <typename CharT, typename Traits>
-ostreambuff<CharT, Traits>::ostreambuff(CharT *data, size_t max_size)
+template <binary_character CharT, typename Traits>
+ostreambuff<CharT, Traits>::ostreambuff(CharT *data, size_t max_size) noexcept
     : buf(data), m_capacity(max_size) {
-  static_assert(std::is_same<CharT, char_type>::value, "Invalid char_type");
-  this->setp(data, data + max_size); // set pbase and epptr
+  this->setp(data, max_size == 0 ? data : data + max_size);
 }
 
-template <typename CharT, typename Traits>
-ostreambuff<CharT, Traits>::~ostreambuff() {}
+template <binary_character CharT, typename Traits>
+ostreambuff<CharT, Traits>::ostreambuff(std::span<CharT> storage) noexcept
+    : ostreambuff(storage.data(), storage.size()) {}
 
-template <typename CharT, typename Traits>
-size_t ostreambuff<CharT, Traits>::size() const {
+template <binary_character CharT, typename Traits>
+size_t ostreambuff<CharT, Traits>::size() const noexcept {
+  if (this->pbase() == nullptr) {
+    return 0;
+  }
   return static_cast<size_t>(this->pptr() - this->pbase());
 }
 
-template <typename CharT, typename Traits>
-size_t ostreambuff<CharT, Traits>::capacity() const {
+template <binary_character CharT, typename Traits>
+size_t ostreambuff<CharT, Traits>::capacity() const noexcept {
   return m_capacity;
 }
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 std::ostream &ostreambuff<CharT, Traits>::print(std::ostream &os,
                                                 bool show_content) const {
   const auto sz = size();
@@ -63,29 +66,34 @@ std::ostream &ostreambuff<CharT, Traits>::print(std::ostream &os,
   return os;
 }
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 void ostreambuff<CharT, Traits>::shrink_to_fit() {
   m_capacity = size();
 
-  this->setp(buf, buf + m_capacity); // set pbase and epptr
+  auto const end = m_capacity == 0 ? buf : buf + m_capacity;
+  this->setp(buf, end);              // set pbase and epptr
   this->pbump(m_capacity);           // set pptr
 }
 
 //---------------------------- istreambuff --------------------------------
-template <typename CharT, typename Traits>
-istreambuff<CharT, Traits>::istreambuff(const CharT *data, size_t sz)
+template <binary_character CharT, typename Traits>
+istreambuff<CharT, Traits>::istreambuff(const CharT *data, size_t sz) noexcept
     : buf(data), m_size(sz) {
-  static_assert(std::is_same<CharT, char_type>::value, "Invalid char_type");
   auto const p = const_cast<CharT *>(data);
-  this->setg(p, p, p + sz); // set eback, gptr, and egptr
+  this->setg(p, p, sz == 0 ? p : p + sz);
 }
 
-template <typename CharT, typename Traits>
-size_t istreambuff<CharT, Traits>::size() const {
+template <binary_character CharT, typename Traits>
+istreambuff<CharT, Traits>::istreambuff(
+    std::span<const CharT> storage) noexcept
+    : istreambuff(storage.data(), storage.size()) {}
+
+template <binary_character CharT, typename Traits>
+size_t istreambuff<CharT, Traits>::size() const noexcept {
   return m_size;
 }
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 std::ostream &istreambuff<CharT, Traits>::print(std::ostream &os,
                                                 bool show_content) const {
   const auto sz = size();
@@ -112,35 +120,38 @@ std::ostream &istreambuff<CharT, Traits>::print(std::ostream &os,
 
 //---------------------------- streambuff --------------------------------
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 streambuff<CharT, Traits>::streambuff(CharT *data, size_t max_size,
-                                      size_t cur_size)
+                                      size_t cur_size) noexcept
     : buf(data), m_capacity(max_size) {
-  static_assert(std::is_same<CharT, char_type>::value, "Invalid char_type");
-
   auto const csz = std::min(max_size, cur_size);
-  auto const d_end = data + max_size;
-  auto const d_cur = data + csz;
+  auto const d_end = max_size == 0 ? data : data + max_size;
+  auto const d_cur = csz == 0 ? data : data + csz;
 
   this->setg(data, data, d_cur); // set eback, gptr, and egptr
   this->setp(data, d_end);       // set pbase and epptr
   this->pbump(csz);              // set pptr
 }
 
-template <typename CharT, typename Traits>
-streambuff<CharT, Traits>::~streambuff() {}
+template <binary_character CharT, typename Traits>
+streambuff<CharT, Traits>::streambuff(std::span<CharT> storage,
+                                     size_t current_size) noexcept
+    : streambuff(storage.data(), storage.size(), current_size) {}
 
-template <typename CharT, typename Traits>
-size_t streambuff<CharT, Traits>::size() const {
+template <binary_character CharT, typename Traits>
+size_t streambuff<CharT, Traits>::size() const noexcept {
+  if (this->pbase() == nullptr) {
+    return 0;
+  }
   return static_cast<size_t>(this->pptr() - this->pbase());
 }
 
-template <typename CharT, typename Traits>
-size_t streambuff<CharT, Traits>::capacity() const {
+template <binary_character CharT, typename Traits>
+size_t streambuff<CharT, Traits>::capacity() const noexcept {
   return m_capacity;
 }
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 std::ostream &streambuff<CharT, Traits>::print(std::ostream &os,
                                                bool show_content) const {
   const auto sz = size();
@@ -170,10 +181,13 @@ std::ostream &streambuff<CharT, Traits>::print(std::ostream &os,
   return os;
 }
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 std::streamsize
 streambuff<CharT, Traits>::xsputn(const streambuff<CharT, Traits>::char_type *s,
                                   std::streamsize count) {
+  if (count <= 0) {
+    return 0;
+  }
   if (static_cast<size_t>(count) + size() > capacity()) {
     return static_cast<std::streamsize>(0);
   }
@@ -193,13 +207,16 @@ std::streamsize streamvec<CharT, Traits>::xsgetn(
 }
 */
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 void streambuff<CharT, Traits>::shrink_to_fit() {
   const auto sz = size();
-  const auto sz_read = static_cast<size_t>(this->gptr() - this->eback());
+  const auto sz_read = this->eback() == nullptr
+                           ? 0
+                           : static_cast<size_t>(this->gptr() - this->eback());
 
-  auto const new_end = buf + sz;
-  auto const new_read = buf + std::min(sz, sz_read);
+  auto const new_end = sz == 0 ? buf : buf + sz;
+  const auto read_offset = std::min(sz, sz_read);
+  auto const new_read = read_offset == 0 ? buf : buf + read_offset;
 
   this->setg(buf, new_read, new_end); // set eback, gptr, and egptr
   this->setp(buf, new_end);           // set pbase and epptr

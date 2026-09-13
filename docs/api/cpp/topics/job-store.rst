@@ -7,8 +7,8 @@ writes simulated-job output.
 
 .. only:: doxygen
 
-   .. doxygentypedef:: dr_evt::Trace
-      :project: dr_evt
+   ``Trace`` is the standard-policy alias
+   ``BasicTrace<Standard_Trace_Policy>``.
 
    .. doxygenclass:: dr_evt::BasicTrace
       :project: dr_evt

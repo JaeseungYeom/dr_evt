@@ -47,13 +47,12 @@ set(DR_EVT_VERSION_MAJOR 0)
 set(DR_EVT_VERSION_MINOR 1)
 set(DR_EVT_VERSION_PATCH 0)
 
-# Build with at least C++17 standard; allow newer standards.
-if (NOT CMAKE_CXX_STANDARD OR CMAKE_CXX_STANDARD EQUAL 98
-    OR CMAKE_CXX_STANDARD EQUAL 11)
-  set(CMAKE_CXX_STANDARD 17)
-  set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
-  set(CMAKE_CXX_EXTENSIONS ON)
+# Build with at least C++20; allow newer standards.
+if (NOT CMAKE_CXX_STANDARD OR CMAKE_CXX_STANDARD LESS 20)
+  set(CMAKE_CXX_STANDARD 20)
 endif ()
+set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # This will help define some targets later
 if (CMAKE_VERSION VERSION_LESS 3.9)
@@ -109,8 +108,8 @@ endif ()
 
 option(DR_EVT_64BIT_CNT "Enable 64-bit species counter. The default is 32-bit." OFF)
 
-# Cereal is going to be required.
-option(DR_EVT_WITH_CEREAL "Include Cereal" ON)
+# Ser20 provides binary state serialization for RNGen.
+option(DR_EVT_WITH_SER20 "Include Ser20" ON)
 
 option(DR_EVT_WITH_OPENMP "Enable OpenMP" OFF)
 
@@ -150,7 +149,7 @@ mark_as_advanced(DR_EVT_WARNINGS_AS_ERRORS)
 #
 #  Choose either `USE_GCC_LIBCXX` for option 1 or `USE_CLANG_LIBCXX` for
 #  option 2 if needed. Usually, option 1 works best. Option 0 does not work
-#  well especially with Catch2 due to the incomplete support for C++17.
+#  well especially with Catch2 due to incomplete support in older toolchains.
 #  If neither is chosen, the build relies on the system default, which is
 #  on LC with `USE_GCC_LIBCXX` on and `GCC_TOOLCHAIN_VER` set to "4.9.3".
 #  If both are on, `USE_GCC_LIBCXX` is turned off. When `USE_GCC_LIBCXX`
@@ -290,9 +289,9 @@ endif ()
 
 # Optional dependencies
 
-if (DR_EVT_WITH_CEREAL)
-  include(SetupCereal)
-endif (DR_EVT_WITH_CEREAL)
+if (DR_EVT_WITH_SER20)
+  include(SetupSer20)
+endif (DR_EVT_WITH_SER20)
 
 
 if (OpenMP_CXX_FOUND)
@@ -335,6 +334,7 @@ message(STATUS "DR_EVT_SOURCES: ${DR_EVT_SOURCES}")
 
 # Create the DR_EVT library
 add_library(dr_evt ${DR_EVT_SOURCES} ${DR_EVT_HEADERS})
+target_compile_features(dr_evt PUBLIC cxx_std_20)
 if (DR_EVT_HAS_PROTOBUF)
   # protobuf::libprotobuf must be linked, not just add_dependencies'd,
   # so its include directories propagate to dr_evt's own compilation -
@@ -367,12 +367,9 @@ target_include_directories(dr_evt SYSTEM PUBLIC
 # Use the IMPORTED targets when possible.
 
 
-if (DR_EVT_HAS_CEREAL)
-  add_dependencies(dr_evt CEREAL-download)
-  target_include_directories(dr_evt PUBLIC
-    $<BUILD_INTERFACE:${CEREAL_HEADER_DIR}>
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}>)
-endif (DR_EVT_HAS_CEREAL)
+if (DR_EVT_HAS_SER20)
+  target_link_libraries(dr_evt PUBLIC ser20::ser20)
+endif (DR_EVT_HAS_SER20)
 
 if (DR_EVT_WITH_UNIT_TESTING)
   target_include_directories(dr_evt PUBLIC
@@ -508,18 +505,20 @@ set_target_properties(t_state_rngen-bin PROPERTIES CMAKE_INSTALL_RPATH
 
 list(APPEND DR_EVT_UNIT_TEST_TARGETS t_state_rngen-bin)
 
-add_executable( t_state_cereal-bin src/utils/unit_tests/t_state_cereal.cpp )
-target_include_directories(t_state_cereal-bin PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
-  $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
-  $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}>)
+if (DR_EVT_HAS_SER20)
+  add_executable( t_state_ser20-bin src/utils/unit_tests/t_state_ser20.cpp )
+  target_include_directories(t_state_ser20-bin PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}>)
 
-target_link_libraries(t_state_cereal-bin PRIVATE dr_evt ${LIB_FILESYSTEM})
-set_target_properties(t_state_cereal-bin PROPERTIES OUTPUT_NAME t_state_cereal)
-set_target_properties(t_state_cereal-bin PROPERTIES CMAKE_INSTALL_RPATH
-                      "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
+  target_link_libraries(t_state_ser20-bin PRIVATE dr_evt ${LIB_FILESYSTEM})
+  set_target_properties(t_state_ser20-bin PROPERTIES OUTPUT_NAME t_state_ser20)
+  set_target_properties(t_state_ser20-bin PROPERTIES CMAKE_INSTALL_RPATH
+                        "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
 
-list(APPEND DR_EVT_UNIT_TEST_TARGETS t_state_cereal-bin)
+  list(APPEND DR_EVT_UNIT_TEST_TARGETS t_state_ser20-bin)
+endif (DR_EVT_HAS_SER20)
 
 
 add_executable( t_state-bin src/utils/unit_tests/t_state.cpp )
@@ -602,6 +601,13 @@ if (DR_EVT_WITH_UNIT_TESTING)
   add_test(
     NAME test_state_rngen
     COMMAND $<TARGET_FILE:t_state_rngen-bin>)
+  if (DR_EVT_HAS_SER20)
+    add_test(
+      NAME test_state_ser20
+      COMMAND $<TARGET_FILE:t_state_ser20-bin>)
+    set_tests_properties(test_state_ser20 PROPERTIES
+      LABELS "unit;serialization")
+  endif ()
   add_test(
     NAME test_trace_type_cli
     COMMAND ${CMAKE_COMMAND}
@@ -949,13 +955,6 @@ if (DR_EVT_HAS_EXPRTK)
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 endif ()
 
-# TODO: either need to install the whole directory or not at all
-if (DR_EVT_HAS_CEREAL)
-  install(
-    DIRECTORY "${CEREAL_HEADER_DIR}/cereal"
-    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
-endif ()
-
 # Install contributor list, license, readme
 install(
   FILES #"${PROJECT_SOURCE_DIR}/CONTRIBUTORS"
@@ -1017,7 +1016,7 @@ string(APPEND _str "\n")
 #Print the true/false guys
 append_str_tf(_str
   DR_EVT_GNU_LINUX
-  DR_EVT_HAS_CEREAL
+  DR_EVT_HAS_SER20
   DR_EVT_HAS_CATCH2
   DR_EVT_HAS_DOXYGEN
   DR_EVT_HAS_OPENMP

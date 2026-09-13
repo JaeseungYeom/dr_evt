@@ -165,23 +165,21 @@ RNGen<D, V>::distribution() const {
 
 template <template <typename> typename D, typename V>
 constexpr unsigned RNGen<D, V>::get_state_size() {
-  if constexpr (std::is_same<generator_type, std::mt19937>::value) {
+  if constexpr (std::is_same_v<generator_type, std::mt19937>) {
     return std::max(static_cast<unsigned>(std::mt19937::state_size), 5000u);
-  } else if constexpr (std::is_same<generator_type, std::mt19937_64>::value) {
+  } else if constexpr (std::is_same_v<generator_type, std::mt19937_64>) {
     return std::max(static_cast<unsigned>(std::mt19937_64::state_size), 2504u);
-  } else if constexpr (std::is_same<generator_type, std::minstd_rand0>::value) {
+  } else if constexpr (std::is_same_v<generator_type, std::minstd_rand0>) {
     return 2u;
-  } else if constexpr (std::is_same<generator_type, std::minstd_rand>::value) {
+  } else if constexpr (std::is_same_v<generator_type, std::minstd_rand>) {
     return 2u;
-  } else if constexpr (std::is_same<generator_type,
-                                    std::ranlux24_base>::value) {
+  } else if constexpr (std::is_same_v<generator_type, std::ranlux24_base>) {
     return 208u;
-  } else if constexpr (std::is_same<generator_type, std::ranlux24>::value) {
+  } else if constexpr (std::is_same_v<generator_type, std::ranlux24>) {
     return 216u;
-  } else if constexpr (std::is_same<generator_type,
-                                    std::ranlux48_base>::value) {
+  } else if constexpr (std::is_same_v<generator_type, std::ranlux48_base>) {
     return 112u;
-  } else if constexpr (std::is_same<generator_type, std::ranlux48>::value) {
+  } else if constexpr (std::is_same_v<generator_type, std::ranlux48>) {
     return 120u;
   }
   // This size is only used in determining seed_seq length, and it is not
@@ -282,7 +280,7 @@ inline S &RNGen<D, V>::load_bits(S &is) {
 template <template <typename> typename D, typename V>
 inline size_t RNGen<D, V>::byte_size() const {
   // It is also assumed that the generator_type is a POD structure
-  assert(std::is_trivially_copyable<generator_type>::value);
+  static_assert(std::is_trivially_copyable_v<generator_type>);
 #if DR_EVT_THREAD_PRIVATE_RNG
   assert(m_gen.size() > 0u);
   return (sizeof(m_seed) + sizeof(m_sseq_used) +

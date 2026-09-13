@@ -1,8 +1,8 @@
 # Quick Start
 
 This guide builds DR_EVT and runs a small scheduler simulation. A basic build
-requires CMake 3.24 or later, a C++17 compiler, and Boost. Optional Python,
-Protobuf, gRPC, MPI, and testing dependencies are covered in
+requires CMake 3.24 or later, a C++20 compiler, Boost, and Ser20. Ser20 is
+resolved automatically. Optional Python, Protobuf, gRPC, MPI, and testing dependencies are covered in
 [Installation](installation.md).
 
 ## Build

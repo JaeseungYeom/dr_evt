@@ -4,11 +4,12 @@
 
 ### Required
  + **Platforms**: Linux-based systems (macOS may work but not officially supported)
- + **C++ compiler**: C++17 support (GCC 7+, Clang 5+, or newer)
+ + **C++ compiler**: C++20 concepts support (GCC 10+, Clang 13+, or newer)
  + **CMake**: 3.24 or later
  + **Boost**: Components required: `regex`, `filesystem`, `system`, `program_options`, `serialization`, `container`, `multi_index`, `circular_buffer`
    - Tested with Boost 1.70+
    - Install: `apt-get install libboost-all-dev` (Ubuntu/Debian) or `brew install boost` (macOS)
+ + **Ser20**: RNG-state serialization; an installed package is used when available, otherwise CMake uses `external/ser20` or fetches the pinned release
 
 ### Optional (for full features)
 
@@ -73,11 +74,11 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator --help
 Livermore Computing users should follow the
 [LC HPC system build instructions](#livermore-computing-lc-hpc-systems) below.
 
-**Note**: The plain build shown above only needs Boost - it does not build
-Protobuf or gRPC (both are opt-in, see below). If Boost isn't found on your
-system, the first build downloads and compiles it via FetchContent
-(~10-15 minutes); enabling Protobuf and/or gRPC adds their own download/build
-time on top of that if they aren't found either. Subsequent builds are fast.
+**Note**: The plain build shown above needs Boost and Ser20; it does not build
+Protobuf or gRPC (both are opt-in, see below). If Boost or Ser20 is not found,
+the first build obtains and compiles it via FetchContent. Boost can take
+~10-15 minutes; enabling Protobuf and/or gRPC adds their own download/build
+time when they are not found either. Subsequent builds reuse populated sources.
 
 **CMake warnings**: You will see deprecation warnings from third-party dependencies (Boost, pybind11). These are harmless and come from their old cmake_minimum_required versions. To suppress them:
 ```bash
@@ -100,6 +101,21 @@ cmake -S . -B build -DAVOID_SYSTEM_BOOST=ON
 
 `CMAKE_PREFIX_PATH` remains active with `AVOID_SYSTEM_BOOST=ON`; only default
 system locations are excluded.
+
+**Ser20:**
+```bash
+cmake -S . -B build -DSER20_ROOT=/path/to/ser20
+# or select the directory containing ser20Config.cmake directly
+cmake -S . -B build -Dser20_DIR=/path/to/lib/cmake/ser20
+
+# Skip default system paths while retaining explicit roots and prefixes
+cmake -S . -B build -DAVOID_SYSTEM_SER20=ON
+```
+
+When no installed package is found, DR_EVT builds `external/ser20` through
+FetchContent. If that checkout is absent, it downloads the pinned release.
+Because Ser20 is part of DR_EVT's public interface, a fallback build installs
+Ser20's library, headers, and CMake package files alongside DR_EVT.
 
 **gRPC:**
 ```bash
@@ -306,12 +322,12 @@ sudo apt-get install cmake
 brew install cmake
 ```
 
-### Compiler not C++17 compatible
+### Compiler not C++20 compatible
 
 ```bash
 # Ubuntu/Debian
-sudo apt-get install g++-9
-export CXX=g++-9
+sudo apt-get install g++-13
+export CXX=g++-13
 
 # macOS
 xcode-select --install

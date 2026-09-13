@@ -32,9 +32,10 @@ Another use case is the [Fugaku Power-Usage Simulation Experiment](https://dr-ev
 
 ### Requirements
 
-A basic Linux build requires CMake 3.24 or later, a C++17 compiler, and Boost
-1.70 or later. If Boost is unavailable, CMake can fetch it during
-configuration. The
+A basic Linux build requires CMake 3.24 or later, a C++20 compiler, and Boost
+1.70 or later. Ser20 supplies RNG-state serialization and is fetched during
+configuration when it is not already installed or present under
+`external/ser20`. If Boost is unavailable, CMake can fetch it too. The
 [Installation Guide](https://dr-evt.readthedocs.io/en/latest/getting-started/installation.html)
 covers dependency selection, optional features, and platform-specific setup.
 
@@ -316,11 +317,6 @@ the
 and
 [Podman](https://github.com/LLNL/dr_evt/blob/main/containers/podman/README.md)
 files.
-
-## What's next
-
-- Migrate the codebase to C++20 and improve serialization portability and
-  version compatibility.
 
 ## Contributing
 

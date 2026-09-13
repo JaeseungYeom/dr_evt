@@ -44,9 +44,12 @@ myst_heading_anchors = 4
 
 # Responsibility pages and source-directory pages deliberately present the
 # same generated C++ declarations through two complementary navigation paths.
-# Breathe registers a C++ domain target for each rendering, so these expected
-# duplicate anchors are not actionable documentation warnings.
-suppress_warnings = ['duplicate_declaration.cpp']
+# Breathe registers C and C++ domain targets for each rendering, so these
+# expected duplicate anchors are not actionable documentation warnings.
+suppress_warnings = [
+    'duplicate_declaration.c',
+    'duplicate_declaration.cpp',
+]
 
 # Mermaid configuration
 mermaid_version = "10.6.1"  # Use specific stable version

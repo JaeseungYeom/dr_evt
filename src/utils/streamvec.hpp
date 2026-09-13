@@ -8,7 +8,11 @@
 #ifndef DR_EVT_UTILS_STREAMVEC_HPP
 #define DR_EVT_UTILS_STREAMVEC_HPP
 
+#include "traits.hpp"
+#include <cstddef>
+#include <ostream>
 #include <streambuf>
+#include <vector>
 
 namespace dr_evt {
 /** \addtogroup dr_evt_utils
@@ -24,9 +28,9 @@ namespace dr_evt {
  * In addition, the space reserving method is provided such that users can
  * preallocate the necessary space in advance to avoid the reallocation
  * overhead. Users have no way to avoid such an overhead when using stringstream
- * with a binary archive in Cereal.
+ * with a binary archive in Ser20.
  */
-template <typename CharT, typename Traits = std::char_traits<CharT>>
+template <binary_character CharT, typename Traits = std::char_traits<CharT>>
 class ostreamvec : public std::basic_streambuf<CharT, Traits> {
 public:
   using char_type = typename std::basic_streambuf<
@@ -56,7 +60,7 @@ public:
    * is set and ready.
    * @param[in,out] vec Vector that receives stream output.
    */
-  ostreamvec(std::vector<CharT> &vec);
+  explicit ostreamvec(std::vector<CharT> &vec) noexcept;
 
   /**
    * @brief Finalize the caller-owned output vector.
@@ -64,18 +68,18 @@ public:
    * Before the end, make sure the size of the external vector is set to the
    * exact amount of data it contains.
    */
-  ~ostreamvec();
+  ~ostreamvec() override;
 
   /// @brief Return the amount of data currently in the buffer.
   /// @return Number of written characters as size_t.
-  size_t size() const;
+  [[nodiscard]] size_t size() const noexcept;
 
   /**
    * Return the total capacity of the underlying buffer (size of the external
    * vector).
    * @return Allocated character capacity as size_t.
    */
-  size_t capacity() const;
+  [[nodiscard]] size_t capacity() const noexcept;
 
   /** @brief Show the buffer state for debugging.
    * @param[in,out] os Destination stream.
@@ -132,7 +136,7 @@ private:
  * Users must make sure that the external vector object outlives the object of
  * this type.
  */
-template <typename CharT, typename Traits = std::char_traits<CharT>>
+template <binary_character CharT, typename Traits = std::char_traits<CharT>>
 class istreamvec : public std::basic_streambuf<CharT, Traits> {
 public:
   using char_type = typename std::basic_streambuf<
@@ -155,11 +159,11 @@ public:
 
   /** @brief Bind the stream to a caller-owned read-only vector.
    * @param[in] vec Vector supplying stream input. */
-  istreamvec(const std::vector<CharT> &vec);
+  explicit istreamvec(const std::vector<CharT> &vec) noexcept;
 
   /// @brief Return the amount of data currently in the buffer.
   /// @return Number of readable characters as size_t.
-  size_t size() const;
+  [[nodiscard]] size_t size() const noexcept;
 
   /** @brief Show the buffer state for debugging.
    * @param[in,out] os Destination stream.
@@ -180,7 +184,7 @@ private:
  * this type. This streambuf will increase the size of the underlying buffer
  * as needed.
  */
-template <typename CharT, typename Traits = std::char_traits<CharT>>
+template <binary_character CharT, typename Traits = std::char_traits<CharT>>
 class streamvec : public std::basic_streambuf<CharT, Traits> {
 public:
   using char_type = typename std::basic_streambuf<
@@ -213,7 +217,8 @@ public:
    * @param[in] with_initial_data Whether existing vector elements are
    * initially available for reading.
    */
-  streamvec(std::vector<CharT> &vec, bool with_initial_data = false);
+  explicit streamvec(std::vector<CharT> &vec,
+                     bool with_initial_data = false) noexcept;
 
   /**
    * @brief Finalize the caller-owned bidirectional vector.
@@ -221,18 +226,18 @@ public:
    * Before the end, make sure the size of the external vector is set to the
    * exact amount of data it contains.
    */
-  ~streamvec();
+  ~streamvec() override;
 
   /// @brief Return the amount of data currently in the buffer.
   /// @return Number of written characters as size_t.
-  size_t size() const;
+  [[nodiscard]] size_t size() const noexcept;
 
   /**
    * Return the total capacity of the underlying buffer (size of the external
    * vector).
    * @return Allocated character capacity as size_t.
    */
-  size_t capacity() const;
+  [[nodiscard]] size_t capacity() const noexcept;
 
   /** @brief Show the buffer state for debugging.
    * @param[in,out] os Destination stream.

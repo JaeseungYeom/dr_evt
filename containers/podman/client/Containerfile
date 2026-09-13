@@ -8,7 +8,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         build-essential \
+        ca-certificates \
         cmake \
+        git \
         ninja-build \
         pkg-config \
         libboost-all-dev \
@@ -26,6 +28,7 @@ RUN cmake -S . -B /build -G Ninja \
         -DCMAKE_INSTALL_PREFIX=/opt/dr-evt \
         -DDR_EVT_ENABLE_PROTOBUF=ON \
         -DDR_EVT_ENABLE_GRPC=ON \
+        -DDR_EVT_WITH_SER20=ON \
     && cmake --build /build \
     && cmake --install /build
 

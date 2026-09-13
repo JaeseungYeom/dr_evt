@@ -8,6 +8,10 @@
 #ifndef DR_EVT_UTILS_STREAMBUFF_HPP
 #define DR_EVT_UTILS_STREAMBUFF_HPP
 
+#include "traits.hpp"
+#include <cstddef>
+#include <ostream>
+#include <span>
 #include <streambuf>
 
 namespace dr_evt {
@@ -22,7 +26,7 @@ namespace dr_evt {
  * this type. The capacity of this streambuf is limited by the size of the
  * underlying buffer space, which is specified in the constructor.
  */
-template <typename CharT, typename Traits = std::char_traits<CharT>>
+template <binary_character CharT, typename Traits = std::char_traits<CharT>>
 class ostreambuff : public std::basic_streambuf<CharT, Traits> {
 public:
   using char_type = typename std::basic_streambuf<
@@ -53,7 +57,10 @@ public:
    * @param[in,out] buff Writable storage used by the stream buffer.
    * @param[in] max_size Capacity of @p buff in characters.
    */
-  ostreambuff(CharT *buff, size_t max_size);
+  ostreambuff(CharT *buff, size_t max_size) noexcept;
+
+  /** @brief Bind an output stream buffer to a writable contiguous range. */
+  explicit ostreambuff(std::span<CharT> storage) noexcept;
 
   /**
    * @brief Finalize the caller-owned output range.
@@ -61,18 +68,18 @@ public:
    * Before the end, make sure the size of the external vector is set to the
    * exact amount of data it contains.
    */
-  ~ostreambuff();
+  ~ostreambuff() override = default;
 
   /// @brief Return the amount of data currently in the buffer.
   /// @return Number of written characters as size_t.
-  size_t size() const;
+  [[nodiscard]] size_t size() const noexcept;
 
   /**
    * Return the total capacity of the underlying buffer (size of the external
    * vector).
    * @return Maximum number of characters as size_t.
    */
-  size_t capacity() const;
+  [[nodiscard]] size_t capacity() const noexcept;
 
   /** @brief Show the buffer state for debugging.
    * @param[in,out] os Destination stream.
@@ -99,7 +106,7 @@ private:
  * Users must make sure that the external vector object outlives the object of
  * this type.
  */
-template <typename CharT, typename Traits = std::char_traits<CharT>>
+template <binary_character CharT, typename Traits = std::char_traits<CharT>>
 class istreambuff : public std::basic_streambuf<CharT, Traits> {
 public:
   using char_type = typename std::basic_streambuf<
@@ -123,11 +130,14 @@ public:
   /** @brief Bind the stream to an existing read-only character range.
    * @param[in] data Beginning of the caller-owned character range.
    * @param[in] sz Number of readable characters. */
-  istreambuff(const CharT *data, size_t sz);
+  istreambuff(const CharT *data, size_t sz) noexcept;
+
+  /** @brief Bind an input stream buffer to a read-only contiguous range. */
+  explicit istreambuff(std::span<const CharT> storage) noexcept;
 
   /// @brief Return the amount of data currently in the buffer.
   /// @return Number of readable characters as size_t.
-  size_t size() const;
+  [[nodiscard]] size_t size() const noexcept;
 
   /** @brief Show the buffer state for debugging.
    * @param[in,out] os Destination stream.
@@ -147,7 +157,7 @@ private:
  * from it). Users must make sure that the external buffer allocation outlives
  * the object of this type.
  */
-template <typename CharT, typename Traits = std::char_traits<CharT>>
+template <binary_character CharT, typename Traits = std::char_traits<CharT>>
 class streambuff : public std::basic_streambuf<CharT, Traits> {
 public:
   using char_type = typename std::basic_streambuf<
@@ -180,7 +190,11 @@ public:
    * @param[in] max_size Capacity of @p vec in characters.
    * @param[in] cur_size Number of characters initially available to read.
    */
-  streambuff(CharT *vec, size_t max_size, size_t cur_size = 0ul);
+  streambuff(CharT *vec, size_t max_size, size_t cur_size = 0ul) noexcept;
+
+  /** @brief Bind a bidirectional stream to a writable contiguous range. */
+  explicit streambuff(std::span<CharT> storage,
+                      size_t current_size = 0ul) noexcept;
 
   /**
    * @brief Finalize the caller-owned bidirectional range.
@@ -188,18 +202,18 @@ public:
    * Before the end, make sure the size of the external vector is set to the
    * exact amount of data it contains.
    */
-  ~streambuff();
+  ~streambuff() override = default;
 
   /// @brief Return the amount of data currently in the buffer.
   /// @return Number of written characters as size_t.
-  size_t size() const;
+  [[nodiscard]] size_t size() const noexcept;
 
   /**
    * Return the total capacity of the underlying buffer (size of the external
    * vector).
    * @return Maximum number of characters as size_t.
    */
-  size_t capacity() const;
+  [[nodiscard]] size_t capacity() const noexcept;
 
   /** @brief Show the buffer state for debugging.
    * @param[in,out] os Destination stream.

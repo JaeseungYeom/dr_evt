@@ -22,22 +22,22 @@
 #error "no config"
 #endif
 
-#if defined(DR_EVT_HAS_CEREAL)
-#include "utils/state_io_cereal.hpp"
-#include <cereal/archives/binary.hpp>
-#include <cereal/types/memory.hpp>
-#include <cereal/types/vector.hpp>
-ENABLE_CUSTOM_CEREAL(std::minstd_rand);
-ENABLE_CUSTOM_CEREAL(std::minstd_rand0);
-ENABLE_CUSTOM_CEREAL(std::mt19937)
-ENABLE_CUSTOM_CEREAL(std::mt19937_64)
-ENABLE_CUSTOM_CEREAL(std::uniform_int_distribution<unsigned long long>)
-ENABLE_CUSTOM_CEREAL(std::uniform_int_distribution<long long>)
-ENABLE_CUSTOM_CEREAL(std::uniform_int_distribution<uint32_t>)
-ENABLE_CUSTOM_CEREAL(std::uniform_int_distribution<int>)
-ENABLE_CUSTOM_CEREAL(std::uniform_real_distribution<double>)
-ENABLE_CUSTOM_CEREAL(std::uniform_real_distribution<float>)
-#endif // DR_EVT_HAS_CEREAL
+#if defined(DR_EVT_HAS_SER20)
+#include "utils/state_io_ser20.hpp"
+#include <ser20/archives/binary.hpp>
+#include <ser20/types/memory.hpp>
+#include <ser20/types/vector.hpp>
+ENABLE_CUSTOM_SER20(std::minstd_rand);
+ENABLE_CUSTOM_SER20(std::minstd_rand0);
+ENABLE_CUSTOM_SER20(std::mt19937)
+ENABLE_CUSTOM_SER20(std::mt19937_64)
+ENABLE_CUSTOM_SER20(std::uniform_int_distribution<unsigned long long>)
+ENABLE_CUSTOM_SER20(std::uniform_int_distribution<long long>)
+ENABLE_CUSTOM_SER20(std::uniform_int_distribution<uint32_t>)
+ENABLE_CUSTOM_SER20(std::uniform_int_distribution<int>)
+ENABLE_CUSTOM_SER20(std::uniform_real_distribution<double>)
+ENABLE_CUSTOM_SER20(std::uniform_real_distribution<float>)
+#endif // DR_EVT_HAS_SER20
 
 #include "utils/seed.hpp"
 #include "utils/state_io.hpp"
@@ -177,16 +177,16 @@ public:
   const generator_type &engine() const;
 #endif // DR_EVT_THREAD_PRIVATE_RNG
 
-#if defined(DR_EVT_HAS_CEREAL)
+#if defined(DR_EVT_HAS_SER20)
   /** @brief Serialize or deserialize the complete generator state.
-   * @tparam Archive Cereal archive type.
+   * @tparam Archive Ser20 archive type.
    * @param[in,out] ar Archive receiving or supplying the state. */
   template <class Archive> void serialize(Archive &ar) {
     ar(m_seed, m_sseq_used, m_sseq_param, m_gen, m_distribution);
     // ar(m_seed, m_sseq_used, m_gen, m_distribution);
   }
-  friend class cereal::access;
-#endif // defined(DR_EVT_HAS_CEREAL)
+  friend class ser20::access;
+#endif // defined(DR_EVT_HAS_SER20)
 
   /** @brief Check whether a binary stream has compatible element widths.
    * @tparam S Binary stream type exposing char_type.

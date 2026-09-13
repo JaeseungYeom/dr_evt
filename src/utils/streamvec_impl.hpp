@@ -8,7 +8,10 @@
 #ifndef DR_EVT_UTILS_STREAMVEC_IMPL_HPP
 #define DR_EVT_UTILS_STREAMVEC_IMPL_HPP
 
+#include <algorithm>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 
 namespace dr_evt {
 /** \addtogroup dr_evt_utils
@@ -16,29 +19,32 @@ namespace dr_evt {
 
 //---------------------------- ostreamvec --------------------------------
 
-template <typename CharT, typename Traits>
-ostreamvec<CharT, Traits>::ostreamvec(std::vector<CharT> &vec) : buf(vec) {
-  static_assert(std::is_same<CharT, char_type>::value, "Invalid char_type");
+template <binary_character CharT, typename Traits>
+ostreamvec<CharT, Traits>::ostreamvec(std::vector<CharT> &vec) noexcept
+    : buf(vec) {
   auto const p = vec.data();
-  this->setp(p, p + vec.size()); // set pbase and epptr
+  this->setp(p, vec.empty() ? p : p + vec.size()); // set pbase and epptr
 }
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 ostreamvec<CharT, Traits>::~ostreamvec() {
   buf.resize(size());
 }
 
-template <typename CharT, typename Traits>
-size_t ostreamvec<CharT, Traits>::size() const {
+template <binary_character CharT, typename Traits>
+size_t ostreamvec<CharT, Traits>::size() const noexcept {
+  if (this->pbase() == nullptr) {
+    return 0;
+  }
   return static_cast<size_t>(this->pptr() - this->pbase());
 }
 
-template <typename CharT, typename Traits>
-size_t ostreamvec<CharT, Traits>::capacity() const {
+template <binary_character CharT, typename Traits>
+size_t ostreamvec<CharT, Traits>::capacity() const noexcept {
   return buf.size();
 }
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 std::ostream &ostreamvec<CharT, Traits>::print(std::ostream &os,
                                                bool show_content) const {
   const auto sz = size();
@@ -63,65 +69,70 @@ std::ostream &ostreamvec<CharT, Traits>::print(std::ostream &os,
   return os;
 }
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 void ostreamvec<CharT, Traits>::shrink_to_fit() {
   const auto sz = size();
   buf.resize(sz);
   buf.shrink_to_fit();
 
   auto const new_base = buf.data();
-  auto const new_end = new_base + sz;
+  auto const new_end = sz == 0 ? new_base : new_base + sz;
 
   this->setp(new_base, new_end); // set pbase and epptr
   this->pbump(sz);               // set pptr
 }
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 void ostreamvec<CharT, Traits>::reserve(size_t n) {
   const auto sz = std::min(size(), n);
   buf.resize(n);
 
   auto const new_base = buf.data();
-  auto const new_end = new_base + buf.size();
+  auto const new_end = buf.empty() ? new_base : new_base + buf.size();
 
   this->setp(new_base, new_end); // set pbase and epptr
   this->pbump(sz);               // set pptr
 }
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 std::streamsize
 ostreamvec<CharT, Traits>::xsputn(const ostreamvec<CharT, Traits>::char_type *s,
                                   std::streamsize count) {
+  if (count <= 0) {
+    return 0;
+  }
   if (static_cast<size_t>(count) + size() > capacity()) {
     reserve(size() + static_cast<size_t>(count));
   }
   return std::basic_streambuf<CharT, Traits>::xsputn(s, count);
 }
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 typename ostreamvec<CharT, Traits>::int_type
 ostreamvec<CharT, Traits>::overflow(ostreamvec<CharT, Traits>::int_type c) {
+  if (traits_type::eq_int_type(c, traits_type::eof())) {
+    return traits_type::not_eof(c);
+  }
   reserve(size() + 1ul);
-  *(this->pptr()) = c;
+  *(this->pptr()) = traits_type::to_char_type(c);
   this->pbump(1);
   return c;
 }
 
 //---------------------------- istreamvec --------------------------------
-template <typename CharT, typename Traits>
-istreamvec<CharT, Traits>::istreamvec(const std::vector<CharT> &vec)
+template <binary_character CharT, typename Traits>
+istreamvec<CharT, Traits>::istreamvec(const std::vector<CharT> &vec) noexcept
     : buf(vec) {
-  static_assert(std::is_same<CharT, char_type>::value, "Invalid char_type");
   auto const p = const_cast<CharT *>(vec.data());
-  this->setg(p, p, p + vec.size()); // set eback, gptr, and egptr
+  this->setg(p, p, vec.empty() ? p : p + vec.size());
 }
 
-template <typename CharT, typename Traits>
-size_t istreamvec<CharT, Traits>::size() const {
+template <binary_character CharT, typename Traits>
+size_t istreamvec<CharT, Traits>::size() const noexcept {
   return buf.size();
 }
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 std::ostream &istreamvec<CharT, Traits>::print(std::ostream &os,
                                                bool show_content) const {
   const auto sz = size();
@@ -148,14 +159,13 @@ std::ostream &istreamvec<CharT, Traits>::print(std::ostream &os,
 
 //---------------------------- streamvec --------------------------------
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 streamvec<CharT, Traits>::streamvec(std::vector<CharT> &vec,
-                                    bool with_initial_data)
+                                    bool with_initial_data) noexcept
     : buf(vec) {
-  static_assert(std::is_same<CharT, char_type>::value, "Invalid char_type");
   auto const sz = vec.size();
   auto const p = vec.data();
-  auto const p_end = p + sz;
+  auto const p_end = vec.empty() ? p : p + sz;
 
   if (with_initial_data) {
     this->setg(p, p, p_end); // set eback, gptr, and egptr
@@ -167,22 +177,25 @@ streamvec<CharT, Traits>::streamvec(std::vector<CharT> &vec,
   }
 }
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 streamvec<CharT, Traits>::~streamvec() {
   buf.resize(size());
 }
 
-template <typename CharT, typename Traits>
-size_t streamvec<CharT, Traits>::size() const {
+template <binary_character CharT, typename Traits>
+size_t streamvec<CharT, Traits>::size() const noexcept {
+  if (this->pbase() == nullptr) {
+    return 0;
+  }
   return static_cast<size_t>(this->pptr() - this->pbase());
 }
 
-template <typename CharT, typename Traits>
-size_t streamvec<CharT, Traits>::capacity() const {
+template <binary_character CharT, typename Traits>
+size_t streamvec<CharT, Traits>::capacity() const noexcept {
   return buf.size();
 }
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 std::ostream &streamvec<CharT, Traits>::print(std::ostream &os,
                                               bool show_content) const {
   const auto sz = size();
@@ -212,27 +225,32 @@ std::ostream &streamvec<CharT, Traits>::print(std::ostream &os,
   return os;
 }
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 void streamvec<CharT, Traits>::shrink_to_fit() {
   const auto sz = size();
-  const auto sz_read = static_cast<size_t>(this->gptr() - this->eback());
+  const auto sz_read = this->eback() == nullptr
+                           ? 0
+                           : static_cast<size_t>(this->gptr() - this->eback());
 
   buf.resize(sz);
   buf.shrink_to_fit();
 
   auto const new_base = buf.data();
-  auto const new_end = new_base + sz;
-  auto const new_read = new_base + std::min(sz, sz_read);
+  auto const new_end = sz == 0 ? new_base : new_base + sz;
+  const auto read_offset = std::min(sz, sz_read);
+  auto const new_read = read_offset == 0 ? new_base : new_base + read_offset;
 
   this->setg(new_base, new_read, new_end); // set eback, gptr, and egptr
   this->setp(new_base, new_end);           // set pbase and epptr
   this->pbump(sz);                         // set pptr
 }
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 void streamvec<CharT, Traits>::reserve(size_t n) {
   const auto sz = std::min(size(), n);
-  const auto sz_read = static_cast<size_t>(this->gptr() - this->eback());
+  const auto sz_read = this->eback() == nullptr
+                           ? 0
+                           : static_cast<size_t>(this->gptr() - this->eback());
 
   /* If n is less than size(), it may not need to actually resize the vector
    * buf. However, by doing so, it is clear how much space is actually needed,
@@ -241,17 +259,23 @@ void streamvec<CharT, Traits>::reserve(size_t n) {
   buf.resize(n);
 
   auto const new_base = buf.data();
-  auto const new_read = new_base + std::min(sz, sz_read);
+  const auto read_offset = std::min(sz, sz_read);
+  auto const new_read = read_offset == 0 ? new_base : new_base + read_offset;
+  auto const new_write_end = n == 0 ? new_base : new_base + n;
+  auto const new_read_end = sz == 0 ? new_base : new_base + sz;
 
-  this->setg(new_base, new_read, new_base + sz); // set eback, gptr, and egptr
-  this->setp(new_base, new_base + n);            // set pbase and epptr
-  this->pbump(sz);                               // set pptr
+  this->setg(new_base, new_read, new_read_end); // set eback, gptr, and egptr
+  this->setp(new_base, new_write_end);          // set pbase and epptr
+  this->pbump(sz);                              // set pptr
 }
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 std::streamsize
 streamvec<CharT, Traits>::xsputn(const streamvec<CharT, Traits>::char_type *s,
                                  std::streamsize count) {
+  if (count <= 0) {
+    return 0;
+  }
   if (static_cast<size_t>(count) + size() > capacity()) {
     reserve(size() + static_cast<size_t>(count));
   }
@@ -271,13 +295,16 @@ print();
 }
 */
 
-template <typename CharT, typename Traits>
+template <binary_character CharT, typename Traits>
 typename streamvec<CharT, Traits>::int_type
 streamvec<CharT, Traits>::overflow(streamvec<CharT, Traits>::int_type c) {
+  if (traits_type::eq_int_type(c, traits_type::eof())) {
+    return traits_type::not_eof(c);
+  }
   reserve(size() + 1ul);
-  *(this->pptr()) = c;
+  *(this->pptr()) = traits_type::to_char_type(c);
   this->pbump(1);
-  this->setg(this->eback(), this->gptr(), this->pptr() + 1u);
+  this->setg(this->eback(), this->gptr(), this->pptr());
   return c;
 }
 

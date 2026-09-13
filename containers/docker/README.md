@@ -15,6 +15,10 @@ The containers are deliberately given narrow host filesystem access:
   at `/input` from `DR_EVT_DATA_DIR`. The client streams the rows; the server
   reads only the CSV header during session initialization.
 
+The Ubuntu 24.04 build stage uses GCC 13 with C++20 enabled. It builds Ser20
+through the same FetchContent fallback used by a normal DR_EVT build when no
+installed Ser20 package is available.
+
 From the repository root, create the two host directories and start the
 server:
 

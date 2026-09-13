@@ -7,16 +7,10 @@
 
 #ifndef DR_EVT_UTILS_TRAITS_HPP
 #define DR_EVT_UTILS_TRAITS_HPP
+#include <cstddef>
+#include <concepts>
 #include <type_traits>
 #include <vector>
-
-#if defined(__GLIBCXX__) && __GLIBCXX__ < 20150801
-namespace std {
-template <typename T>
-struct is_trivially_copyable : integral_constant<bool, __has_trivial_copy(T)> {
-};
-} // namespace std
-#endif
 
 namespace dr_evt {
 /** \addtogroup dr_evt_utils
@@ -29,18 +23,38 @@ template <typename T> struct is_vector : public std::false_type {};
 template <typename T, typename A>
 struct is_vector<std::vector<T, A>> : public std::true_type {};
 
-template <typename T, typename A>
-struct is_vector<const std::vector<T, A>> : public std::true_type {};
+template <typename T>
+inline constexpr bool is_vector_v =
+    is_vector<std::remove_cvref_t<T>>::value;
 
-template <typename T, typename A>
-struct is_vector<const std::vector<T, A> &> : public std::true_type {};
+/** One-byte character type suitable for raw binary stream storage. */
+template <typename T>
+concept binary_character =
+    std::same_as<std::remove_cv_t<T>, char> ||
+    std::same_as<std::remove_cv_t<T>, signed char> ||
+    std::same_as<std::remove_cv_t<T>, unsigned char> ||
+    std::same_as<std::remove_cv_t<T>, std::byte>;
+
+/** Non-container value whose object representation may be copied as bytes. */
+template <typename T>
+concept raw_binary_scalar =
+    !is_vector_v<T> && std::is_trivially_copyable_v<std::remove_cvref_t<T>>;
+
+/** std::vector with elements whose representations may be copied as bytes. */
+template <typename T>
+concept raw_binary_vector =
+    is_vector_v<T> &&
+    (!std::same_as<typename std::remove_cvref_t<T>::value_type, bool>) &&
+    std::is_trivially_copyable_v<
+        typename std::remove_cvref_t<T>::value_type>;
+
+/** Value supported by DR_EVT's raw binary state helpers. */
+template <typename T>
+concept raw_binary_serializable = raw_binary_scalar<T> || raw_binary_vector<T>;
 
 template <typename T>
-struct is_bool
-    : std::integral_constant<
-          bool, std::is_same<typename std::remove_reference<
-                                 typename std::remove_cv<T>::type>::type,
-                             bool>::value> {};
+struct is_bool : std::bool_constant<std::same_as<std::remove_cvref_t<T>, bool>> {
+};
 
 /**@}*/
 } // end of namespace dr_evt

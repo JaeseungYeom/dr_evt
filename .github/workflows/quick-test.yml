@@ -1,8 +1,9 @@
-name: Quick Test (Scheduler Correctness + Trace Schema)
+name: Quick Test (Scheduler + Serialization + Trace Schema)
 
 # Fast CI for quick validation (runs on every commit)
-# Runs scheduler correctness plus the lightweight C++ trace-schema API suite.
-# Full test suite runs on PR and main branch
+# Runs scheduler correctness, Ser20 memory serialization, and the lightweight
+# C++ trace-schema API suite.
+# Full test suite runs on pull requests and pushes to main or develop.
 
 on:
   push:
@@ -12,7 +13,7 @@ on:
 
 jobs:
   quick-test:
-    name: Quick Scheduler Correctness and Trace Schema Check
+    name: Quick Scheduler, Serialization, and Trace Schema Check
     runs-on: ubuntu-latest
     env:
       CMAKE_INSTALL_PREFIX: ${{ github.workspace }}/install
@@ -40,7 +41,10 @@ jobs:
         run: |
           mkdir -p build
           cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/install
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/install \
+            -DDR_EVT_WITH_SER20=ON
           make -j$(nproc)
           make install
 
@@ -58,6 +62,10 @@ jobs:
           $GITHUB_WORKSPACE/install/bin/tests/test_progressive_load
           $GITHUB_WORKSPACE/install/bin/tests/test_queue_input
 
+      - name: Run Ser20 Memory Serialization Test
+        id: serialization
+        run: $GITHUB_WORKSPACE/install/bin/tests/t_state_ser20
+
       - name: Summary
         if: always()
         run: |
@@ -65,5 +73,6 @@ jobs:
           echo "Quick Test Complete"
           echo "Scheduler correctness: 34/34 fixtures (verified in a manual session pass;"
           echo "this echo does not itself re-check the actual result above)"
+          echo "Ser20 memory serialization: ${{ steps.serialization.outcome }}"
           echo "Trace schema / progressive-loading API: ${{ steps.trace-schema.outcome }}"
           echo "========================================"

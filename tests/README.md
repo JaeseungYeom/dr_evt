@@ -58,7 +58,7 @@ or are reported as skipped.
 | Append-job | 18 | `run_append_job_tests.sh` | Streaming insertion and advancement |
 | Progressive loading | 15 | `run_progressive_load_tests.sh` | 11 C++ checks plus 4 CLI checks for multi-file loading, bounded storage, and memory checks |
 | Protobuf configuration | 9 | `run_configs_tests.sh` | Configuration/CLI parity and documented examples |
-| Native CTest | 10, plus 1 with MPI | CTest | RNG, trace policies, replay reclamation, append/streaming APIs, queue implementations, and CLI dispatch |
+| Native CTest | 11, plus 1 with MPI | CTest | RNG and binary serialization, trace policies, replay reclamation, append/streaming APIs, queue implementations, and CLI dispatch |
 
 The gRPC portion of the append-job runner is skipped when gRPC support was not
 built. Additional gRPC, MPI, Python, queue-differential, column-alias, and
