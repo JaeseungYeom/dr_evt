@@ -326,8 +326,8 @@ brew install cmake
 
 ```bash
 # Ubuntu/Debian
-sudo apt-get install g++-9
-export CXX=g++-9
+sudo apt-get install g++-13
+export CXX=g++-13
 
 # macOS
 xcode-select --install

@@ -40,17 +40,19 @@ This directory contains GitHub Actions workflows for automated testing.
 
 **Duration:** ~5-10 minutes
 
-### 2. `quick-test.yml` - Quick Comprehensive Check
+### 2. `quick-test.yml` - Quick Scheduler and Trace-Schema Check
 
 **Triggers:**
 - Push to any branch (except `main`)
 - Manual trigger
 
 **What it runs:**
-- Comprehensive tests only (34) - `tests/run_scheduler_correctness_tests.sh`
+- Scheduler correctness fixtures (34) - `tests/run_scheduler_correctness_tests.sh`
+- Progressive-loading C++ API test - installed `test_progressive_load`
+- Queue-input schema test - installed `test_queue_input`
 
 **Compiler:**
-- GCC 11 only
+- GCC 13 only
 
 **Duration:** ~2-3 minutes
 
@@ -106,6 +108,7 @@ cmake -S . -B build \
   -DCMAKE_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}" \
   -DDR_EVT_BUILD_PYTHON=ON \
   -DDR_EVT_ENABLE_GRPC=ON \
+  -DDR_EVT_WITH_SER20=ON \
   -DDR_EVT_WITH_UNIT_TESTING=ON
 cmake --build build -j4
 cmake --install build
@@ -142,7 +145,9 @@ runner is `run_scheduler_correctness_tests.sh`.
 ### Build Steps
 
 1. Install dependencies (CMake, Boost, Protobuf/gRPC, MPI, Python, compilers)
-2. Configure a Release build with Python bindings, Protobuf, and gRPC enabled
+2. Configure a C++20 Release build with Ser20, Python bindings, Protobuf, and
+   gRPC enabled. CI exercises Ser20's FetchContent fallback because no system
+   Ser20 package is installed.
 3. Build with all CPU cores (`make -j$(nproc)`). You may cap it to -j2
    as defense-in-depth against the gRPC/BoringSSL FetchContent OOM
    issue; see `docs/getting-started/installation.md`)
@@ -177,7 +182,8 @@ When you add a new test:
 
 ### Workflow fails but tests pass locally
 
-- Check compiler version (CI matrix uses GCC 11 and Clang 14)
+- Check compiler version (the full CI matrix uses GCC 13 and Clang 18; the
+  quick workflow uses GCC 13)
 - Check Boost version
 - Run with same flags as CI: `-DCMAKE_BUILD_TYPE=Release`
 

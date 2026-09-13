@@ -11,6 +11,10 @@ the runtime commands use `--userns=keep-id` so processes use your host UID/GID.
 Consequently, files written into a bind mount are owned by your regular host
 user instead of by root.
 
+The Ubuntu 24.04 build stage uses GCC 13 with C++20 enabled. It builds Ser20
+through the same FetchContent fallback used by a normal DR_EVT build when no
+installed Ser20 package is available.
+
 First confirm that Podman is rootless:
 
 ```bash

@@ -2,7 +2,7 @@ name: Quick Test (Scheduler Correctness + Trace Schema)
 
 # Fast CI for quick validation (runs on every commit)
 # Runs scheduler correctness plus the lightweight C++ trace-schema API suite.
-# Full test suite runs on PR and main branch
+# Full test suite runs on pull requests and pushes to main or develop.
 
 on:
   push:
@@ -40,7 +40,10 @@ jobs:
         run: |
           mkdir -p build
           cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/install
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/install \
+            -DDR_EVT_WITH_SER20=ON
           make -j$(nproc)
           make install
 

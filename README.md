@@ -318,11 +318,6 @@ and
 [Podman](https://github.com/LLNL/dr_evt/blob/main/containers/podman/README.md)
 files.
 
-## What's next
-
-- Migrate the codebase to C++20 and improve serialization portability and
-  version compatibility.
-
 ## Contributing
 
 Please submit bug fixes and improvements as
