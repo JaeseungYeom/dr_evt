@@ -3,10 +3,10 @@
 #
 # Tests the dr_evt_server/dr_evt_client gRPC streaming interface:
 # - A basic, single-pair server/client session (no MPI) - dr_evt_client
-#   demonstrates append: it reads job data from a file *only*
-#   client-side and sends each job to the server via AppendJobRequest,
-#   which has never loaded that file itself (no InitializeTraceRequest
-#   is sent at all - see dr_evt_client.cpp)
+#   demonstrates append: it reads job rows client-side and sends each job to
+#   the server via AppendJobRequest. The server reads the same file's header
+#   during initialization but does not load its job rows (no
+#   InitializeTraceRequest is sent - see dr_evt_client.cpp).
 # - The MPI-based multi-client/multi-server harness, verifying the
 #   lockstep cross-client synchronization produces the expected,
 #   hand-computed schedule for two independent, interleaved-arrival-time
@@ -69,7 +69,11 @@ PORT=53001
 SERVER_PID=$!
 sleep 1
 
-CLIENT_OUT=$($CLIENT "127.0.0.1:${PORT}" "$TRACE_DIR/trace_a.csv" 2>&1) || true
+if CLIENT_OUT=$("$CLIENT" "127.0.0.1:${PORT}" "$TRACE_DIR/trace_a.csv" 2>&1); then
+    CLIENT_STATUS=0
+else
+    CLIENT_STATUS=$?
+fi
 kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true
 SERVER_PID=""
@@ -77,7 +81,8 @@ SERVER_PID=""
 # trace_a.csv (100 nodes, ample capacity, no queuing): job 0 (0->20),
 # job 1 (10->25 - overlaps job 0, but both fit within 100 nodes), job 2
 # (30->40) - hand-computed makespan is 40.
-if echo "$CLIENT_OUT" | grep -q "Jobs completed:  3" && \
+if [ "$CLIENT_STATUS" -eq 0 ] && \
+   echo "$CLIENT_OUT" | grep -q "Jobs completed:  3" && \
    echo "$CLIENT_OUT" | grep -q "Makespan:        40"; then
     echo "  ✓ PASS"
     PASS=$((PASS + 1))
@@ -86,6 +91,7 @@ else
     echo "     Server log:"
     sed 's/^/       /' "$RUN_DIR/basic-server.log"
     echo "     Client output:"
+    echo "       Exit status: $CLIENT_STATUS"
     echo "$CLIENT_OUT" | sed 's/^/       /'
     FAIL=$((FAIL + 1))
 fi

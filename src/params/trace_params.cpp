@@ -38,8 +38,8 @@ static const struct option trace_longopts[] = {
 };
 
 Trace_Params::Trace_Params()
-    : m_max_jobs(10u), m_max_time(dr_evt::max_tstamp), m_datfile("out-dat.txt"),
-      m_subfile(), m_subsumfile(),
+    : m_max_jobs(10u), m_max_time(dr_evt::max_tstamp), m_datfile(), m_subfile(),
+      m_subsumfile(),
       m_resource_history_capacity(0), m_total_nodes(dr_evt::total_nodes),
       m_is_jobs_set(false), m_is_time_set(false) {}
 
@@ -124,16 +124,17 @@ void Trace_Params::print_usage(const std::string exec, int code) {
          "\n"
          "  OPTIONS:\n"
          "    -d, --datfile\n"
-         "        Specify the out file name for DAT sessions detected.\n"
+         "        Optionally write detected DAT sessions.\n"
+         "        No DAT report is written when this option is omitted.\n"
          "\n"
          "    -h, --help\n"
          "        Display this usage information\n"
          "\n"
          "    -i, --infile\n"
-         "        Specify the input file name for simulation.\n"
+         "        Specify the input schedule file for replay.\n"
          "\n"
          "    -j, --max_jobs\n"
-         "        Specify the maximum number of jobs to run.\n"
+         "        Specify the maximum number of jobs to process.\n"
          "\n"
          "    -o, --outfile\n"
          "        Optionally write a CSV per-job analysis report.\n"
@@ -148,7 +149,7 @@ void Trace_Params::print_usage(const std::string exec, int code) {
          "        hour of week. No summary is written when omitted.\n"
          "\n"
          "    -t, --max_time\n"
-         "        Specify the upper limit of simulation time to run.\n"
+         "        Specify the upper timestamp limit to process.\n"
          "\n"
          "    -n, --total_nodes\n"
          "        Pool size for the resource trace. Only used to derive\n"

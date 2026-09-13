@@ -43,8 +43,8 @@ job_submit_time,begin_time,end_time,num_nodes,time_limit
 ### Power-Usage Simulation Mode
 ```text
 job_submit_time,num_nodes,time_limit,avgpcon,minpcon,maxpcon
-0,2,3,1.5,2.0,3.0
-0,1,1,0.5,1.0,1.5
+0,2,3,2.0,1.5,3.0
+0,1,1,1.0,0.5,1.5
 ```
 
 Use this form with `--trace_type pcon`. `q_id` remains optional and defaults

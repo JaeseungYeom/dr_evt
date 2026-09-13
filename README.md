@@ -28,48 +28,6 @@ Another use case is the [Fugaku Power-Usage Simulation Experiment](https://dr-ev
 - **Implementation choices:** `deque`, `multimap`, `circular`, and `block`
   wait queues for comparison and scaling studies.
 
-### APIs and integration
-
-- **C++ streaming API:** append jobs and advance simulation time incrementally.
-- **Python bindings:** control an in-process simulation from Python.
-- **gRPC service:** expose the streaming API to remote clients and distributed
-  controllers.
-- **Protobuf configuration:** provide structured configuration files instead
-  of long command lines; explicit command-line values take precedence.
-
-See the [User Guide](https://dr-evt.readthedocs.io/en/latest/user-guide/overview.html)
-for the documentation map.
-
-Most users can run the native C++ `simulator` directly, as shown in the
-[Quick Start](https://dr-evt.readthedocs.io/en/latest/getting-started/quickstart.html),
-or use the in-process
-[Python API](https://dr-evt.readthedocs.io/en/latest/api/PYTHON_API.html).
-Neither interface requires client/server setup; the distributed gRPC service
-below is optional.
-
-## Distributed gRPC deployment
-
-Clients and digital-twin controllers can open independent gRPC sessions to any
-number of server processes. Each session owns an isolated simulation, so the
-numbers of clients and servers can be scaled independently. Containers are
-available for remote deployment, while MPI provides an optional test and
-experiment launcher.
-
-**Architecture:**
-
-<p align="center">
-  <a href="https://dr-evt.readthedocs.io/en/latest/user-guide/client-server-use-cases.html">
-    <img src="docs/_static/client-server-architecture.svg"
-         alt="Clients connect over gRPC to servers that own independent simulations"
-         width="900">
-  </a>
-</p>
-
-Deployment patterns are described in
-[Client/Server Use Cases](https://dr-evt.readthedocs.io/en/latest/user-guide/client-server-use-cases.html).
-The internal execution flow is described in
-[Simulation Pipeline and Job Lifecycle](https://dr-evt.readthedocs.io/en/latest/dev/JOB_LIFECYCLE.html).
-
 ## Build and quick start
 
 ### Requirements
@@ -94,7 +52,27 @@ cmake --build build -j4
 cmake --install build
 ```
 
-### Run a simulation
+## Simulation and replay
+
+### Simulation
+
+`simulator` reads job submissions and invokes the selected scheduler. Its
+minimum input fields are `job_submit_time`, `num_nodes`, and `time_limit`.
+`time_limit` is always the scheduler's estimate for reservation planning. The
+job's execution duration is selected separately with `--run_time_mode`:
+
+- `actual` (default) uses `actual_run_time` from the input trace (also accepted as
+  `duration`, `actual_duration`, or `run_time`).
+- `limit` runs each job for exactly its requested `time_limit`.
+- `distribution` draws a duration from the selected `normal`, `lognormal`, or
+  `uniform` distribution using `--run_time_scale`, `--run_time_stddev`, and
+  `--seed`.
+
+Normal and lognormal samples are bounded by the requested time limit. Uniform
+sampling uses its configured lower and upper bounds directly. Simulation
+produces scheduled-job and resource traces.
+
+#### Example: run a simulation
 
 The included example submits two 60-node jobs at time zero to a 100-node
 system. Its input file, `tests/test_traces/unit/simple_2jobs.csv`, contains:
@@ -162,7 +140,7 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator input.csv \
   --backfill_policy none
 ```
 
-### Using Protocol Buffer configuration files
+#### Using Protocol Buffer configuration files
 
 A build configured with `-DDR_EVT_ENABLE_PROTOBUF=ON` can read simulator
 options from a Protobuf text file. For example, `sim_config.textproto` can
@@ -196,28 +174,6 @@ For a guided example, see the
 All flags are listed in the
 [Command-Line Reference](https://dr-evt.readthedocs.io/en/latest/user-guide/command-line.html).
 
-## Simulation and replay
-
-### Simulation
-
-`simulator` reads job submissions and invokes the selected scheduler. Its
-minimum input fields are `job_submit_time`, `num_nodes`, and `time_limit`.
-`time_limit` is always the scheduler's estimate for reservation planning. The
-job's execution duration is selected separately with `--run_time_mode`:
-
-- `actual` (default) uses `actual_run_time` from the input trace (also accepted as
-  `duration`, `actual_duration`, or `run_time`).
-- `limit` runs each job for exactly its requested `time_limit`.
-- `distribution` draws a duration from the selected `normal`, `lognormal`, or
-  `uniform` distribution using `--run_time_scale`, `--run_time_stddev`, and
-  `--seed`.
-
-Normal and lognormal samples are bounded by the requested time limit. Uniform
-sampling uses its configured lower and upper bounds directly.
-
-Simulation produces the scheduled-job and resource traces illustrated in the
-first example above.
-
 ### Replay
 
 `tracer` reconstructs resource use from an existing historical or simulated
@@ -235,11 +191,11 @@ derive the free-node count.
 
 Replay writes:
 
-- `--resource_trace`: free and allocated nodes over time;
-- optional per-job and submission-analysis reports when requested.
+- `--resource_trace`: free and allocated nodes over time; and
+- optional per-job, submission-analysis, and DAT-period reports when requested.
 
-It also prints the number of loaded jobs, trace span, number of weeks, and
-wall-clock processing time.
+It also prints the number of loaded jobs, trace span, and wall-clock processing
+time. The number of weeks is printed when a submission report is requested.
 
 Use simulation for policy comparisons and capacity studies. Use replay to
 analyze a historical or precomputed schedule without changing its scheduling
@@ -264,10 +220,8 @@ for the fields needed by each mode and
 [Output Trace Files](https://dr-evt.readthedocs.io/en/latest/user-guide/output-traces.html)
 for the optional analysis reports.
 
-## Optional interfaces and configuration
+## Optional interfaces
 
-- Enable Protobuf configuration with `-DDR_EVT_ENABLE_PROTOBUF=ON` and pass a
-  text-format configuration with `--config`.
 - Enable Python bindings with `-DDR_EVT_BUILD_PYTHON=ON` for in-process Python
   control.
 - Enable the network service with `-DDR_EVT_ENABLE_GRPC=ON`; this also enables
@@ -280,17 +234,53 @@ For example, an all-interface build uses:
 cmake -S . -B build \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}" \
-  -DDR_EVT_ENABLE_PROTOBUF=ON \
   -DDR_EVT_BUILD_PYTHON=ON \
   -DDR_EVT_ENABLE_GRPC=ON
 cmake --build build -j4
 cmake --install build
 ```
 
-See [Protobuf Configuration](https://dr-evt.readthedocs.io/en/latest/user-guide/protobuf-config.html),
-the [Python API](https://dr-evt.readthedocs.io/en/latest/api/PYTHON_API.html),
-and the [gRPC setup guide](https://dr-evt.readthedocs.io/en/latest/user-guide/grpc-setup.html)
+See the [Python API](https://dr-evt.readthedocs.io/en/latest/api/PYTHON_API.html)
+and [gRPC setup guide](https://dr-evt.readthedocs.io/en/latest/user-guide/grpc-setup.html)
 for usage.
+
+## APIs and integration
+
+- **C++ streaming API:** append jobs and advance simulation time incrementally.
+- **Python bindings:** control an in-process simulation from Python.
+- **gRPC service:** expose the streaming API to remote clients and distributed
+  controllers.
+
+See the [User Guide](https://dr-evt.readthedocs.io/en/latest/user-guide/overview.html)
+for the documentation map.
+
+Most users can run the native C++ `simulator` directly, as shown in the
+[Quick Start](https://dr-evt.readthedocs.io/en/latest/getting-started/quickstart.html),
+or use the in-process
+[Python API](https://dr-evt.readthedocs.io/en/latest/api/PYTHON_API.html).
+Neither interface requires client/server setup; the distributed gRPC service
+below is optional.
+
+## Distributed gRPC deployment
+
+Clients and digital-twin controllers can open independent gRPC sessions to any
+number of server processes. Each session owns an isolated simulation, so the
+numbers of clients and servers can be scaled independently. Containers are
+available for remote deployment, while MPI provides an optional test and
+experiment launcher.
+
+<p align="center">
+  <a href="https://dr-evt.readthedocs.io/en/latest/user-guide/client-server-use-cases.html">
+    <img src="docs/_static/client-server-architecture.svg"
+         alt="Clients connect over gRPC to servers that own independent simulations"
+         width="900">
+  </a>
+</p>
+
+Deployment patterns are described in
+[Client/Server Use Cases](https://dr-evt.readthedocs.io/en/latest/user-guide/client-server-use-cases.html).
+The internal execution flow is described in
+[Simulation Pipeline and Job Lifecycle](https://dr-evt.readthedocs.io/en/latest/dev/JOB_LIFECYCLE.html).
 
 ## Documentation
 

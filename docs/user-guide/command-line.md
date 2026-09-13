@@ -24,7 +24,7 @@ Complete reference for all DR_EVT command-line options for the `simulator` binar
 | Storage | `-H, --resource_history_capacity SIZE` | Set resource-history capacity. |
 | Trace | `--trace_type TYPE` | Select the standard or experimental record model. |
 | Trace | `-f, --trace_format FORMAT` | Select the input trace schema. |
-| Trace | `-T, --timestamp_format FORMAT` | Select epoch or ISO output timestamps. |
+| Trace | `-T, --timestamp_format FORMAT` | Select epoch or ISO input/output timestamps. |
 | Trace | `-z, --timezone TIMEZONE` | Set the timezone for ISO output timestamps. |
 | Trace | `-M, --msec_output` | Preserve millisecond precision in output timestamps. |
 | Runtime | `-r, --run_time_mode MODE` | Select how actual execution lengths are determined. |
@@ -340,7 +340,7 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator traces/simple.csv --trace_format simple
 ```
 
 ### `-T, --timestamp_format FORMAT`
-Timestamp format in output.
+Timestamp format used to parse input and write output.
 
 **Options:**
 - `epoch` - Unix epoch seconds (e.g., `1693234567.0`)
@@ -463,7 +463,8 @@ Maximum simulation time (in trace time units).
 
 **Example:**
 ```bash
-${CMAKE_INSTALL_PREFIX}/bin/simulator traces/jobs.csv --max_time 3600.0
+${CMAKE_INSTALL_PREFIX}/bin/simulator traces/jobs.csv \
+    --timestamp_format epoch --max_time 3600.0
 ```
 
 ### `-s, --seed VALUE`

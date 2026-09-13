@@ -9,10 +9,11 @@ containers/docker/
 
 The containers are deliberately given narrow host filesystem access:
 
-- `server` can write only to the host directory mounted at `/data` from
-  `DR_EVT_RESULTS_DIR`. This is where simulation result files persist.
-- `client` can read files from the host directory mounted at `/data` from
-  `DR_EVT_DATA_DIR`. Put CSV trace inputs there.
+- `server` writes simulation results to the host directory mounted at `/data`
+  from `DR_EVT_RESULTS_DIR`.
+- Both containers read trace inputs from the host directory mounted read-only
+  at `/input` from `DR_EVT_DATA_DIR`. The client streams the rows; the server
+  reads only the CSV header during session initialization.
 
 From the repository root, create the two host directories and start the
 server:
@@ -31,10 +32,10 @@ DR_EVT_RESULTS_DIR="$PWD/results" DR_EVT_DATA_DIR="$PWD/data" \
 ```
 
 Inside that shell, files from the host's `data/` directory are available at
-`/data`. For example:
+`/input`. For example:
 
 ```bash
-/opt/dr-evt/bin/dr_evt_client server:50051 /data/my-trace.csv
+/opt/dr-evt/bin/dr_evt_client server:50051 /input/my-trace.csv
 ```
 
 Stop the server when finished:

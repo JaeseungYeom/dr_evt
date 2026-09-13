@@ -267,7 +267,7 @@ void run_batch_mode(const std::string &input_file,
                     const std::string &output_file) {
   Sim_Params params;
   params.m_infile = input_file;
-  params.m_total_nodes = 100;
+  params.m_total_nodes = 795;
   params.m_trace_format = "simple";
   params.m_timestamp_format = "epoch";
   params.m_run_time_mode = RunTimeMode::LIMIT;
@@ -287,7 +287,7 @@ void run_streaming_mode(const std::string &input_file,
                         const std::string &output_file) {
   Sim_Params params;
   params.m_infile = input_file;
-  params.m_total_nodes = 100;
+  params.m_total_nodes = 795;
   params.m_trace_format = "simple";
   params.m_timestamp_format = "epoch";
   params.m_run_time_mode = RunTimeMode::LIMIT;

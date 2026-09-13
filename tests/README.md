@@ -6,11 +6,13 @@ validation methodology.
 
 ## Build and run
 
-Configure and build before invoking the shell runners:
+Configure, build, and install before invoking the shell runners:
 
 ```bash
-cmake -S . -B build
+export CMAKE_INSTALL_PREFIX="${PWD}/install"
+cmake -S . -B build -DCMAKE_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
 cmake --build build -j4
+cmake --install build
 ```
 
 Run the ordinary CTest tests enabled by the current configuration with:
@@ -48,16 +50,15 @@ or are reported as skipped.
 | Scheduler correctness | 34 | `run_scheduler_correctness_tests.sh` | C++/Python schedule and resource-trace consistency |
 | Unit | 7 | `run_unit_tests.sh` | Basic parsing, formats, and execution |
 | Feature | 6 | `run_feature_tests.sh` | Policies, modes, rejection, and output formats |
-| Scale | 7 | `run_scale_tests.sh` | Workloads from 10 to 2,000 jobs |
+| Scale | 7 | `run_scale_tests.sh` | Workloads from 10 to 10,000 jobs |
 | Conservative backfilling | 2 | two conservative runners above | Behavioral and C++/Python comparisons |
 | Replay | 5 | `run_replay_tests.sh` | Resource equivalence and reclamation safety |
 | Resource history | 5 | `run_resource_history_tests.sh` | Circular-buffer output and capacity handling |
 | Job store | 6 | `run_job_store_tests.sh` | Capacity, growth/abort, reclamation, and statistics |
 | Append-job | 18 | `run_append_job_tests.sh` | Streaming insertion and advancement |
-| Progressive loading | 14 | `run_progressive_load_tests.sh` | Multi-file loading, bounded storage, and memory checks |
+| Progressive loading | 15 | `run_progressive_load_tests.sh` | 11 C++ checks plus 4 CLI checks for multi-file loading, bounded storage, and memory checks |
 | Protobuf configuration | 9 | `run_configs_tests.sh` | Configuration/CLI parity and documented examples |
-| Core CTest | 4 | CTest | RNG generation/state restoration, power trace storage, and CLI dispatch |
-| **Total** | **117** | | |
+| Native CTest | 10, plus 1 with MPI | CTest | RNG, trace policies, replay reclamation, append/streaming APIs, queue implementations, and CLI dispatch |
 
 The gRPC portion of the append-job runner is skipped when gRPC support was not
 built. Additional gRPC, MPI, Python, queue-differential, column-alias, and
@@ -91,7 +92,15 @@ proof of the algorithm.
 Replay tests contain four simulation/replay CLI comparisons and the
 `test_replay_reclamation` binary. The latter covers explicit, periodic, and
 capacity-triggered flushing; final output; equal-time departures;
-out-of-order completion; front-prefix blocking; and exactly-once output.
+out-of-order completion; front-prefix blocking; and exactly-once output. The
+CLI coverage also verifies the default and explicitly enabled replay report
+sets, including byte-for-byte report contents.
+
+Run the complete replay suite under Valgrind with:
+
+```bash
+./tests/run_replay_tests.sh --valgrind
+```
 
 ### Progressive-loading tests
 
@@ -153,7 +162,10 @@ time advancement, statistics, output, and error handling.
 After building with `DR_EVT_ENABLE_GRPC=ON`, run:
 
 ```bash
+python3 -m pip install grpcio grpcio-tools protobuf
 ./tests/run_grpc_tests.sh
+python3 tests/test_grpc_single_coordinator.py \
+  "${CMAKE_INSTALL_PREFIX}/bin/dr_evt_server"
 ```
 
 The [gRPC runner](run_grpc_tests.sh) covers

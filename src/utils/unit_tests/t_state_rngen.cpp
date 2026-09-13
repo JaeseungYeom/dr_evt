@@ -218,7 +218,8 @@ TEST_CASE("RNGen State IO", "[state I/O]")
 #else
 #define CHECK_RESULT                                                           \
   std::cout << sstr.str();                                                     \
-  std::cout << (ok ? "PASS" : "FAILED") << std::endl << std::endl;
+  std::cout << (ok ? "PASS" : "FAILED") << std::endl << std::endl;           \
+  all_ok = all_ok && ok
 #define SECTION(T) std::cout << T << std::endl;
 
 int main(int argc, char **argv)
@@ -228,6 +229,9 @@ int main(int argc, char **argv)
   using rng_double_t = dr_evt::RNGen<std::uniform_real_distribution, double>;
 
   bool ok = false;
+#if !defined(DR_EVT_HAS_CATCH2)
+  bool all_ok = true;
+#endif
 
   // StreamVec
   SECTION("Save and load the state of RNGen based on integer type uniform "
@@ -358,6 +362,6 @@ int main(int argc, char **argv)
     CHECK_RESULT;
   }
 #if !defined(DR_EVT_HAS_CATCH2)
-  return 0;
+  return all_ok ? 0 : 1;
 #endif
 }

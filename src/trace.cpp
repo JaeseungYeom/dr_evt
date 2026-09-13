@@ -57,9 +57,14 @@ int process_trace(const dr_evt::Trace_Params &cfg) {
   }
 
 #if MARK_DAT_PERIOD
-  std::ofstream of_dat(cfg.get_datfile());
-  trace.print_DAT(of_dat);
-  of_dat.close();
+  if (!cfg.get_datfile().empty()) {
+    std::ofstream of_dat(cfg.get_datfile());
+    if (!of_dat) {
+      throw std::runtime_error("Failed to open DAT-session output file: " +
+                               cfg.get_datfile());
+    }
+    trace.print_DAT(of_dat);
+  }
 #endif
 
   if (!cfg.get_subfile().empty() || !cfg.get_subsumfile().empty()) {

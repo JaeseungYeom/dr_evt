@@ -38,7 +38,7 @@ Determine the simulation node count by replaying the historical trace first:
 ```bash
 RESULTS=/tmp/dr_evt_fugaku_power
 mkdir -p "$RESULTS"
-TRACER=/path/to/tracer
+TRACER="${CMAKE_INSTALL_PREFIX}/bin/tracer"
 
 "$TRACER" \
   f-data/traces/24_04_scheduling_trace.csv \
@@ -67,7 +67,7 @@ requirements, and commands.
 A normal single-file run loads all 420,450 jobs before simulation:
 
 ```bash
-SIMULATOR=/path/to/simulator
+SIMULATOR="${CMAKE_INSTALL_PREFIX}/bin/simulator"
 
 "$SIMULATOR" \
   f-data/traces_no_times/24_04_scheduling_trace.csv \

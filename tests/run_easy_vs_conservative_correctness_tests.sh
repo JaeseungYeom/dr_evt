@@ -136,17 +136,25 @@ cons_actual = read_schedule(sys.argv[2])
 easy_expected = read_schedule(sys.argv[3])
 cons_expected = read_schedule(sys.argv[4])
 
+if len(easy_actual) != len(easy_expected):
+    print(f"❌ EASY row-count mismatch: expected {len(easy_expected)}, got {len(easy_actual)}")
+    sys.exit(1)
+if len(cons_actual) != len(cons_expected):
+    print(f"❌ CONSERVATIVE row-count mismatch: expected {len(cons_expected)}, got {len(cons_actual)}")
+    sys.exit(1)
+
 print("EASY Backfilling Results:")
 print("-" * 70)
 print(f"{'Job':<6} {'Expected Start':<15} {'Actual Start':<15} {'Match':<10}")
 print("-" * 70)
 
 easy_pass = True
-for i in range(len(easy_expected)):
-    exp_start = easy_expected[i]['start']
-    act_start = easy_actual[i]['start'] if i < len(easy_actual) else None
-    match = "✓" if exp_start == act_start else "✗"
-    if exp_start != act_start:
+for i, (expected, actual) in enumerate(zip(easy_expected, easy_actual)):
+    exp_start = expected['start']
+    act_start = actual['start']
+    row_matches = expected == actual
+    match = "✓" if row_matches else "✗"
+    if not row_matches:
         easy_pass = False
     print(f"Job {i:<3} {exp_start:<15.1f} {act_start if act_start is not None else 'None':<15} {match:<10}")
 
@@ -159,11 +167,12 @@ print(f"{'Job':<6} {'Expected Start':<15} {'Actual Start':<15} {'Match':<10}")
 print("-" * 70)
 
 cons_pass = True
-for i in range(len(cons_expected)):
-    exp_start = cons_expected[i]['start']
-    act_start = cons_actual[i]['start'] if i < len(cons_actual) else None
-    match = "✓" if exp_start == act_start else "✗"
-    if exp_start != act_start:
+for i, (expected, actual) in enumerate(zip(cons_expected, cons_actual)):
+    exp_start = expected['start']
+    act_start = actual['start']
+    row_matches = expected == actual
+    match = "✓" if row_matches else "✗"
+    if not row_matches:
         cons_pass = False
     print(f"Job {i:<3} {exp_start:<15.1f} {act_start if act_start is not None else 'None':<15} {match:<10}")
 

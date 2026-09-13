@@ -41,7 +41,7 @@ RUN apt-get update \
 
 COPY --from=build /opt/dr-evt /opt/dr-evt
 
-WORKDIR /data
-VOLUME ["/data"]
+WORKDIR /input
+VOLUME ["/input"]
 
 ENTRYPOINT ["/bin/bash"]

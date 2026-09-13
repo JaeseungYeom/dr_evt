@@ -45,6 +45,8 @@ echo ""
 
 PASS=0
 FAIL=0
+TEST_WORK_DIR=$(mktemp -d "/tmp/dr-evt-resource-history.XXXXXXXX")
+trap 'rm -rf -- "$TEST_WORK_DIR"' EXIT INT TERM
 
 # Forces reclaiming on nearly every insert - the most thorough test of the
 # reclaiming/flush path's correctness.
@@ -67,15 +69,15 @@ for test_base in "${RH_SIM_TESTS[@]}"; do
         continue
     fi
 
-    default_res="/tmp/rh_${test_base}_default_resources.csv"
-    tiny_res="/tmp/rh_${test_base}_tiny_resources.csv"
+    default_res="$TEST_WORK_DIR/${test_base}_default_resources.csv"
+    tiny_res="$TEST_WORK_DIR/${test_base}_tiny_resources.csv"
 
     $SIMULATOR "$input_trace" \
         --total_nodes 100 \
         --trace_format simple \
         --timestamp_format epoch \
         --run_time_mode limit \
-        --outfile "/tmp/rh_${test_base}_default_jobs.csv" \
+        --outfile "$TEST_WORK_DIR/${test_base}_default_jobs.csv" \
         --resource_trace "$default_res" \
         > /dev/null 2>&1
 
@@ -85,7 +87,7 @@ for test_base in "${RH_SIM_TESTS[@]}"; do
         --timestamp_format epoch \
         --run_time_mode limit \
         --resource_history_capacity $TINY_CAPACITY \
-        --outfile "/tmp/rh_${test_base}_tiny_jobs.csv" \
+        --outfile "$TEST_WORK_DIR/${test_base}_tiny_jobs.csv" \
         --resource_trace "$tiny_res" \
         > /dev/null 2>&1
 
@@ -113,40 +115,40 @@ echo "Testing: tracer (run_job_trace(), replay-format input)"
 # run_job_trace() only replays begin_time/end_time that's already set,
 # it never schedules anything itself (see run_job_trace()'s own upfront
 # validation, tested separately below).
-replay_input="/tmp/rh_tracer_replay_input.csv"
+replay_input="$TEST_WORK_DIR/tracer_replay_input.csv"
 $SIMULATOR "tests/test_traces/feature/huge_2000jobs.csv" \
     --total_nodes 500 \
     --trace_format simple \
     --timestamp_format epoch \
     --run_time_mode limit \
     --outfile "$replay_input" \
-    --resource_trace /tmp/rh_tracer_sim_resources.csv \
+    --resource_trace "$TEST_WORK_DIR/tracer_sim_resources.csv" \
     > /dev/null 2>&1
 
 if [ ! -f "$replay_input" ]; then
     echo "  ✗ Failed to generate replay-format input"
     FAIL=$((FAIL + 1))
 else
-    tracer_default_res="/tmp/rh_tracer_default_resources.csv"
-    tracer_tiny_res="/tmp/rh_tracer_tiny_resources.csv"
+    tracer_default_res="$TEST_WORK_DIR/tracer_default_resources.csv"
+    tracer_tiny_res="$TEST_WORK_DIR/tracer_tiny_resources.csv"
 
     $TRACER --infile "$replay_input" \
         --total_nodes 500 \
-        --datfile /tmp/rh_tracer_default_dat.txt \
-        --outfile /tmp/rh_tracer_default_out.csv \
+        --datfile "$TEST_WORK_DIR/tracer_default_dat.txt" \
+        --outfile "$TEST_WORK_DIR/tracer_default_out.csv" \
         --resource_trace "$tracer_default_res" \
-        --subfile /tmp/rh_tracer_default_sub.csv \
-        --subsumf /tmp/rh_tracer_default_subsum.csv \
+        --subfile "$TEST_WORK_DIR/tracer_default_sub.csv" \
+        --subsumf "$TEST_WORK_DIR/tracer_default_subsum.csv" \
         > /dev/null 2>&1
 
     $TRACER --infile "$replay_input" \
         --total_nodes 500 \
         --resource_history_capacity $TINY_CAPACITY \
-        --datfile /tmp/rh_tracer_tiny_dat.txt \
-        --outfile /tmp/rh_tracer_tiny_out.csv \
+        --datfile "$TEST_WORK_DIR/tracer_tiny_dat.txt" \
+        --outfile "$TEST_WORK_DIR/tracer_tiny_out.csv" \
         --resource_trace "$tracer_tiny_res" \
-        --subfile /tmp/rh_tracer_tiny_sub.csv \
-        --subsumf /tmp/rh_tracer_tiny_subsum.csv \
+        --subfile "$TEST_WORK_DIR/tracer_tiny_sub.csv" \
+        --subsumf "$TEST_WORK_DIR/tracer_tiny_subsum.csv" \
         > /dev/null 2>&1
 
     if [ ! -f "$tracer_default_res" ] || [ ! -f "$tracer_tiny_res" ]; then
@@ -173,11 +175,11 @@ echo "Testing: tracer rejects simulation-format input upfront"
 set +e
 misuse_output=$($TRACER --infile "tests/test_traces/feature/huge_2000jobs.csv" \
     --total_nodes 500 \
-    --datfile /tmp/rh_misuse_dat.txt \
-    --outfile /tmp/rh_misuse_out.csv \
-    --resource_trace /tmp/rh_misuse_resources.csv \
-    --subfile /tmp/rh_misuse_sub.csv \
-    --subsumf /tmp/rh_misuse_subsum.csv 2>&1)
+    --datfile "$TEST_WORK_DIR/misuse_dat.txt" \
+    --outfile "$TEST_WORK_DIR/misuse_out.csv" \
+    --resource_trace "$TEST_WORK_DIR/misuse_resources.csv" \
+    --subfile "$TEST_WORK_DIR/misuse_sub.csv" \
+    --subsumf "$TEST_WORK_DIR/misuse_subsum.csv" 2>&1)
 misuse_rc=$?
 set -e
 
@@ -209,7 +211,8 @@ RH_GROW_TRACE="tests/test_traces/feature/huge_10000jobs.csv"
 RH_GROW_TRIALS=3
 
 if [ ! -f "$RH_GROW_TRACE" ]; then
-    echo "  ⚠ SKIP - $RH_GROW_TRACE not found"
+    echo "  ✗ FAIL - $RH_GROW_TRACE not found"
+    FAIL=$((FAIL + 1))
 else
     sufficient_total=0
     tiny_total=0
@@ -222,8 +225,8 @@ else
             --timestamp_format epoch \
             --run_time_mode limit \
             --resource_history_capacity 20000 \
-            --outfile /tmp/rh_flush_sufficient_out.csv \
-            --resource_trace /tmp/rh_flush_sufficient_resources.csv \
+            --outfile "$TEST_WORK_DIR/flush_sufficient_out.csv" \
+            --resource_trace "$TEST_WORK_DIR/flush_sufficient_resources.csv" \
             > /dev/null 2>&1
         t1=$(date +%s.%N)
         sufficient_total=$(echo "$sufficient_total + ($t1 - $t0)" | bc)
@@ -235,8 +238,8 @@ else
             --timestamp_format epoch \
             --run_time_mode limit \
             --resource_history_capacity $TINY_CAPACITY \
-            --outfile /tmp/rh_flush_tiny_out.csv \
-            --resource_trace /tmp/rh_flush_tiny_resources.csv \
+            --outfile "$TEST_WORK_DIR/flush_tiny_out.csv" \
+            --resource_trace "$TEST_WORK_DIR/flush_tiny_resources.csv" \
             > /dev/null 2>&1
         t1=$(date +%s.%N)
         tiny_total=$(echo "$tiny_total + ($t1 - $t0)" | bc)
@@ -250,7 +253,7 @@ else
     echo "  Tiny capacity ($TINY_CAPACITY, flushes repeatedly all run): ${tiny_avg}s avg over $RH_GROW_TRIALS runs"
     echo "  Difference: ${diff_pct}%"
 
-    if diff -q /tmp/rh_flush_sufficient_resources.csv /tmp/rh_flush_tiny_resources.csv > /dev/null; then
+    if diff -q "$TEST_WORK_DIR/flush_sufficient_resources.csv" "$TEST_WORK_DIR/flush_tiny_resources.csv" > /dev/null; then
         echo "  ✓ Resource trace identical either way (correctness unaffected by capacity choice)"
         PASS=$((PASS + 1))
     else

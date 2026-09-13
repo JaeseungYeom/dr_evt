@@ -15,6 +15,9 @@ cd "$REPO_ROOT"
 # Source common simulator path finder
 source "$SCRIPT_DIR/set_simulator_path.sh"
 
+TEST_WORK_DIR=$(mktemp -d "/tmp/dr-evt-fcfs-queues.XXXXXXXX")
+trap 'rm -rf -- "$TEST_WORK_DIR"' EXIT INT TERM
+
 # Parse command-line options
 MODE="both"  # Default: run both tests
 VERBOSE=false
@@ -110,6 +113,14 @@ run_correctness_tests() {
         fi
 
         test_name=$(basename "$test_file" .csv)
+        fcfs_out="$TEST_WORK_DIR/fcfs_${test_name}.csv"
+        fcfs_res="$TEST_WORK_DIR/fcfs_${test_name}_resources.csv"
+        alt_out="$TEST_WORK_DIR/fcfs_alt_${test_name}.csv"
+        alt_res="$TEST_WORK_DIR/fcfs_alt_${test_name}_resources.csv"
+        block_out="$TEST_WORK_DIR/fcfs_block_${test_name}.csv"
+        block_res="$TEST_WORK_DIR/fcfs_block_${test_name}_resources.csv"
+        circular_out="$TEST_WORK_DIR/fcfs_circular_${test_name}.csv"
+        circular_res="$TEST_WORK_DIR/fcfs_circular_${test_name}_resources.csv"
 
         # Detect run_time_mode
         run_time_mode=$(detect_run_time_mode "$test_file")
@@ -126,8 +137,8 @@ run_correctness_tests() {
             --timestamp_format epoch \
             --run_time_mode "$run_time_mode" \
             --backfill_policy easy \
-            --outfile "/tmp/fcfs_${test_name}.csv" \
-            --resource_trace "/tmp/fcfs_${test_name}_resources.csv" \
+            --outfile "$fcfs_out" \
+            --resource_trace "$fcfs_res" \
             > /dev/null 2>&1
 
         # Run with scheduler_fcfs_alt (priority_policy=fcfs_alt)
@@ -141,8 +152,8 @@ run_correctness_tests() {
             --timestamp_format epoch \
             --run_time_mode "$run_time_mode" \
             --backfill_policy easy \
-            --outfile "/tmp/fcfs_alt_${test_name}.csv" \
-            --resource_trace "/tmp/fcfs_alt_${test_name}_resources.csv" \
+            --outfile "$alt_out" \
+            --resource_trace "$alt_res" \
             > /dev/null 2>&1
 
         # Run with block queue (priority_policy=fcfs, queue_impl=block)
@@ -157,8 +168,8 @@ run_correctness_tests() {
             --timestamp_format epoch \
             --run_time_mode "$run_time_mode" \
             --backfill_policy easy \
-            --outfile "/tmp/fcfs_block_${test_name}.csv" \
-            --resource_trace "/tmp/fcfs_block_${test_name}_resources.csv" \
+            --outfile "$block_out" \
+            --resource_trace "$block_res" \
             > /dev/null 2>&1
 
         # Run with circular queue (priority_policy=fcfs, queue_impl=circular)
@@ -173,8 +184,8 @@ run_correctness_tests() {
             --timestamp_format epoch \
             --run_time_mode "$run_time_mode" \
             --backfill_policy easy \
-            --outfile "/tmp/fcfs_circular_${test_name}.csv" \
-            --resource_trace "/tmp/fcfs_circular_${test_name}_resources.csv" \
+            --outfile "$circular_out" \
+            --resource_trace "$circular_res" \
             > /dev/null 2>&1
 
         # Compare job schedules (all four must match)
@@ -185,28 +196,28 @@ run_correctness_tests() {
         RESOURCE_MATCH_BLOCK=0
         RESOURCE_MATCH_CIRCULAR=0
 
-        if ! diff -q "/tmp/fcfs_${test_name}.csv" "/tmp/fcfs_alt_${test_name}.csv" > /dev/null 2>&1; then
+        if ! diff -q "$fcfs_out" "$alt_out" > /dev/null 2>&1; then
             SCHEDULE_MATCH_ALT=1
         fi
 
-        if ! diff -q "/tmp/fcfs_${test_name}.csv" "/tmp/fcfs_block_${test_name}.csv" > /dev/null 2>&1; then
+        if ! diff -q "$fcfs_out" "$block_out" > /dev/null 2>&1; then
             SCHEDULE_MATCH_BLOCK=1
         fi
 
-        if ! diff -q "/tmp/fcfs_${test_name}.csv" "/tmp/fcfs_circular_${test_name}.csv" > /dev/null 2>&1; then
+        if ! diff -q "$fcfs_out" "$circular_out" > /dev/null 2>&1; then
             SCHEDULE_MATCH_CIRCULAR=1
         fi
 
         # Compare resource traces (all four must match)
-        if ! diff -q "/tmp/fcfs_${test_name}_resources.csv" "/tmp/fcfs_alt_${test_name}_resources.csv" > /dev/null 2>&1; then
+        if ! diff -q "$fcfs_res" "$alt_res" > /dev/null 2>&1; then
             RESOURCE_MATCH_ALT=1
         fi
 
-        if ! diff -q "/tmp/fcfs_${test_name}_resources.csv" "/tmp/fcfs_block_${test_name}_resources.csv" > /dev/null 2>&1; then
+        if ! diff -q "$fcfs_res" "$block_res" > /dev/null 2>&1; then
             RESOURCE_MATCH_BLOCK=1
         fi
 
-        if ! diff -q "/tmp/fcfs_${test_name}_resources.csv" "/tmp/fcfs_circular_${test_name}_resources.csv" > /dev/null 2>&1; then
+        if ! diff -q "$fcfs_res" "$circular_res" > /dev/null 2>&1; then
             RESOURCE_MATCH_CIRCULAR=1
         fi
 
@@ -219,39 +230,39 @@ run_correctness_tests() {
             echo "✗ $test_name - MISMATCH"
             if [ $SCHEDULE_MATCH_ALT -ne 0 ]; then
                 echo "  Job schedules differ (deque vs multimap):"
-                echo "  fcfs:     /tmp/fcfs_${test_name}.csv"
-                echo "  fcfs_alt: /tmp/fcfs_alt_${test_name}.csv"
-                [ "$VERBOSE" = true ] && diff "/tmp/fcfs_${test_name}.csv" "/tmp/fcfs_alt_${test_name}.csv" | head -10
+                echo "  fcfs:     $fcfs_out"
+                echo "  fcfs_alt: $alt_out"
+                [ "$VERBOSE" = true ] && diff "$fcfs_out" "$alt_out" | head -10
             fi
             if [ $SCHEDULE_MATCH_BLOCK -ne 0 ]; then
                 echo "  Job schedules differ (deque vs block):"
-                echo "  fcfs:       /tmp/fcfs_${test_name}.csv"
-                echo "  fcfs_block: /tmp/fcfs_block_${test_name}.csv"
-                [ "$VERBOSE" = true ] && diff "/tmp/fcfs_${test_name}.csv" "/tmp/fcfs_block_${test_name}.csv" | head -10
+                echo "  fcfs:       $fcfs_out"
+                echo "  fcfs_block: $block_out"
+                [ "$VERBOSE" = true ] && diff "$fcfs_out" "$block_out" | head -10
             fi
             if [ $SCHEDULE_MATCH_CIRCULAR -ne 0 ]; then
                 echo "  Job schedules differ (deque vs circular):"
-                echo "  fcfs:          /tmp/fcfs_${test_name}.csv"
-                echo "  fcfs_circular: /tmp/fcfs_circular_${test_name}.csv"
-                [ "$VERBOSE" = true ] && diff "/tmp/fcfs_${test_name}.csv" "/tmp/fcfs_circular_${test_name}.csv" | head -10
+                echo "  fcfs:          $fcfs_out"
+                echo "  fcfs_circular: $circular_out"
+                [ "$VERBOSE" = true ] && diff "$fcfs_out" "$circular_out" | head -10
             fi
             if [ $RESOURCE_MATCH_ALT -ne 0 ]; then
                 echo "  Resource traces differ (deque vs multimap):"
-                echo "  fcfs:     /tmp/fcfs_${test_name}_resources.csv"
-                echo "  fcfs_alt: /tmp/fcfs_alt_${test_name}_resources.csv"
-                [ "$VERBOSE" = true ] && diff "/tmp/fcfs_${test_name}_resources.csv" "/tmp/fcfs_alt_${test_name}_resources.csv" | head -10
+                echo "  fcfs:     $fcfs_res"
+                echo "  fcfs_alt: $alt_res"
+                [ "$VERBOSE" = true ] && diff "$fcfs_res" "$alt_res" | head -10
             fi
             if [ $RESOURCE_MATCH_BLOCK -ne 0 ]; then
                 echo "  Resource traces differ (deque vs block):"
-                echo "  fcfs:       /tmp/fcfs_${test_name}_resources.csv"
-                echo "  fcfs_block: /tmp/fcfs_block_${test_name}_resources.csv"
-                [ "$VERBOSE" = true ] && diff "/tmp/fcfs_${test_name}_resources.csv" "/tmp/fcfs_block_${test_name}_resources.csv" | head -10
+                echo "  fcfs:       $fcfs_res"
+                echo "  fcfs_block: $block_res"
+                [ "$VERBOSE" = true ] && diff "$fcfs_res" "$block_res" | head -10
             fi
             if [ $RESOURCE_MATCH_CIRCULAR -ne 0 ]; then
                 echo "  Resource traces differ (deque vs circular):"
-                echo "  fcfs:          /tmp/fcfs_${test_name}_resources.csv"
-                echo "  fcfs_circular: /tmp/fcfs_circular_${test_name}_resources.csv"
-                [ "$VERBOSE" = true ] && diff "/tmp/fcfs_${test_name}_resources.csv" "/tmp/fcfs_circular_${test_name}_resources.csv" | head -10
+                echo "  fcfs:          $fcfs_res"
+                echo "  fcfs_circular: $circular_res"
+                [ "$VERBOSE" = true ] && diff "$fcfs_res" "$circular_res" | head -10
             fi
             FAIL=$((FAIL + 1))
         fi
@@ -304,9 +315,8 @@ run_performance_tests() {
 
     # Check if Python script exists
     if [ ! -f "scripts/python_reference_scheduler.py" ]; then
-        echo "Warning: scripts/python_reference_scheduler.py not found"
-        echo "Skipping performance comparison"
-        return 0
+        echo "Error: scripts/python_reference_scheduler.py not found"
+        return 1
     fi
 
     # Test files - comprehensive and scale tests
@@ -321,19 +331,25 @@ run_performance_tests() {
     )
 
     # Create results file
-    CSV_FILE="/tmp/performance_results.csv"
+    CSV_FILE=$(mktemp "/tmp/dr-evt-performance-results.XXXXXXXX.csv")
 
     echo "test,jobs,python_time,fcfs_time,fcfs_alt_time,python_vs_fcfs,python_vs_alt" > "$CSV_FILE"
 
     for test_file in "${TEST_FILES[@]}"; do
         if [ ! -f "$test_file" ]; then
-            continue
+            echo "Error: performance fixture not found: $test_file"
+            return 1
         fi
 
         test_name=$(basename "$test_file" .csv)
 
         # Count jobs
         num_jobs=$(($(wc -l < "$test_file") - 1))
+        if [[ "$test_file" == tests/test_traces/scale/* ]]; then
+            total_nodes=795
+        else
+            total_nodes=100
+        fi
 
         echo ""
         echo "Testing: $test_name ($num_jobs jobs)"
@@ -342,7 +358,10 @@ run_performance_tests() {
         # 1. Python reference implementation
         echo -n "  Python reference:  "
         PYTHON_START=$(date +%s.%N)
-        python3 scripts/python_reference_scheduler.py "$test_file" --nodes 100 > /tmp/python_out.csv 2>/dev/null
+        python_out="$TEST_WORK_DIR/python_${test_name}.csv"
+        fcfs_perf_out="$TEST_WORK_DIR/perf_fcfs_${test_name}.csv"
+        alt_perf_out="$TEST_WORK_DIR/perf_alt_${test_name}.csv"
+        python3 scripts/python_reference_scheduler.py "$test_file" --nodes "$total_nodes" > "$python_out" 2>/dev/null
         PYTHON_END=$(date +%s.%N)
         PYTHON_TIME=$(echo "$PYTHON_END - $PYTHON_START" | bc)
         printf "%8.4f sec\n" "$PYTHON_TIME"
@@ -353,12 +372,12 @@ run_performance_tests() {
         # Comprehensive test traces lack actual_run_time column, so use run_time_mode=limit
         $SIMULATOR "$test_file" \
             --priority_policy fcfs \
-            --total_nodes 100 \
+            --total_nodes "$total_nodes" \
             --trace_format simple \
             --timestamp_format epoch \
             --run_time_mode limit \
             --backfill_policy easy \
-            --outfile /tmp/fcfs_out.csv \
+            --outfile "$fcfs_perf_out" \
             > /dev/null 2>&1
         FCFS_END=$(date +%s.%N)
         FCFS_TIME=$(echo "$FCFS_END - $FCFS_START" | bc)
@@ -377,12 +396,12 @@ run_performance_tests() {
         ALT_START=$(date +%s.%N)
         $SIMULATOR "$test_file" \
             --priority_policy fcfs_alt \
-            --total_nodes 100 \
+            --total_nodes "$total_nodes" \
             --trace_format simple \
             --timestamp_format epoch \
             --run_time_mode limit \
             --backfill_policy easy \
-            --outfile /tmp/fcfs_alt_out.csv \
+            --outfile "$alt_perf_out" \
             > /dev/null 2>&1
         ALT_END=$(date +%s.%N)
         ALT_TIME=$(echo "$ALT_END - $ALT_START" | bc)
@@ -503,9 +522,13 @@ if [ "$MODE" = "correctness" ]; then
         exit 1
     fi
 elif [ "$MODE" = "performance" ]; then
-    echo "✅ Performance: Complete"
-    echo "   Results saved to /tmp/performance_results.csv"
-    exit 0
+    if [ $PERFORMANCE_RESULT -eq 0 ]; then
+        echo "✅ Performance: Complete"
+        echo "   Results saved to $CSV_FILE"
+        exit 0
+    fi
+    echo "❌ Performance: FAILED"
+    exit 1
 else
     # Both tests
     if [ $CORRECTNESS_RESULT -eq 0 ]; then
@@ -513,14 +536,18 @@ else
     else
         echo "❌ Correctness: FAILED"
     fi
-    echo "✅ Performance: Complete"
+    if [ $PERFORMANCE_RESULT -eq 0 ]; then
+        echo "✅ Performance: Complete"
+    else
+        echo "❌ Performance: FAILED"
+    fi
     echo ""
 
-    if [ $CORRECTNESS_RESULT -eq 0 ]; then
+    if [ $CORRECTNESS_RESULT -eq 0 ] && [ $PERFORMANCE_RESULT -eq 0 ]; then
         echo "🎉 All tests complete!"
         exit 0
     else
-        echo "⚠️  Performance tests complete, but correctness tests failed"
+        echo "❌ One or more test phases failed"
         exit 1
     fi
 fi

@@ -23,7 +23,7 @@ sequenceDiagram
     S-->>C: InitResponse(session_id, report paths)
     Note over S: Creates one Simulation for this session
     loop Arrivals and simulation control
-        C->>S: AppendJob(s) / SubmitJob / AdvanceTo / queries
+        C->>S: AppendJob(s) / AdvanceTo / queries
         S-->>C: Matching response and statistics
     end
     C->>S: FinishSimulationRequest
@@ -59,8 +59,10 @@ DR_EVT simulation server listening on 0.0.0.0:50051
 
 and otherwise runs silently, one `Simulation` instance per connected
 session, until stopped (e.g. `Ctrl-C`, or however your process
-supervisor manages it). A server starts with no job samples and does not
-need, load, or have prior knowledge of the workload it will receive.
+supervisor manages it). A server starts with no job samples and does not load
+the input file's data rows. The current `InitRequest` does require a
+server-readable CSV path so the simulator can validate its header before jobs
+are streamed.
 
 Bind `0.0.0.0` (shown above) so the server is reachable from other
 machines; bind `127.0.0.1` instead if you only need same-machine access.
@@ -72,20 +74,22 @@ ${CMAKE_INSTALL_PREFIX}/bin/dr_evt_client <server_host>:50051 /path/to/trace.csv
 ```
 
 Both arguments are required by this *example* program (server address,
-then a job data file). The file is simply a convenient way to give the
-client a set of job samples to send. It is read by the client only; it
-is not a requirement of the client API and is not an input the server is
-expected to load or know about.
+then a job data file). The client reads and streams its rows. It also sends the
+path in `InitRequest`, so the current server must be able to read a CSV with a
+compatible header at the same path; the server validates that header but does
+not load the rows. Custom clients can use a different server-side header file
+path in `InitRequest.infile`.
 
 The API's core is the bidirectional session stream. A client initializes
 simulation settings, sends each arrival with `AppendJobRequest` (which
 immediately enqueues it), advances simulated time with
 `AdvanceToRequest`, and obtains events or statistics from the responses.
 An application can generate those messages from a live digital twin, a
-database, another simulator, or any other source--no input trace is
-needed. `dr_evt_client` merely demonstrates that sequence and prints
-final statistics; it is a reference for writing your own client against
-the same `.proto` service. Its
+database, another simulator, or any other source, so no client-side job trace
+is required. The server still needs a readable CSV header during
+initialization. `dr_evt_client` merely demonstrates that sequence and prints
+final statistics; it is a reference for writing your own client against the
+same `.proto` service. Its
 [C++ source](https://github.com/LLNL/dr_evt/blob/main/src/proto/dr_evt_client.cpp)
 is a complete usage example. See the full guide for what each RPC
 corresponds to in the in-process [streaming API](../api/STREAMING_API.md).
@@ -111,7 +115,7 @@ Finish a simulation before reusing its stream. The request/response order is:
 
 ```text
 InitRequest(session_name="run-a")
-... AppendJob(s), SubmitJob, AdvanceTo, and optional queries ...
+... AppendJob(s), AdvanceTo, and optional queries ...
 FinishSimulationRequest
 FinishSimulationResponse
 InitRequest(session_name="run-b")   # optional: begin a new simulation on this stream

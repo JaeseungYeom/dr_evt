@@ -50,7 +50,8 @@ public:
   /** @brief Return the optional per-job analysis output filename.
    * @return Output path, or an empty string when the report is disabled. */
   std::string get_outfile() const { return m_outfile; }
-  /** @brief Return DAT-session output filename. @return Output path. */
+  /** @brief Return the optional DAT-session output filename.
+   * @return Output path, or an empty string when the report is disabled. */
   std::string get_datfile() const { return m_datfile; }
   /** @brief Return the optional detailed submission-statistics filename.
    * @return Output path, or an empty string when the report is disabled. */
@@ -81,7 +82,7 @@ public:
   std::string m_infile;
   /// Optional per-job analysis output filename; empty disables the report.
   std::string m_outfile;
-  std::string m_datfile;    ///< Outfile name for detected DAT sessions
+  std::string m_datfile;    ///< Optional DAT-session output filename.
   std::string m_subfile;    ///< Optional detailed submission-statistics file.
   std::string m_subsumfile; ///< Optional submission-summary file.
   std::string

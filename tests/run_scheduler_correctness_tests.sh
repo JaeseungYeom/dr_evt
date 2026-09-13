@@ -11,6 +11,8 @@ source "$SCRIPT_DIR/set_simulator_path.sh"
 
 TRACE_DIR="tests/test_traces/scheduler_correctness"
 TOTAL_NODES=100
+TEST_WORK_DIR=$(mktemp -d "/tmp/dr-evt-scheduler-correctness.XXXXXXXX")
+trap 'rm -rf -- "$TEST_WORK_DIR"' EXIT INT TERM
 
 # Test list - all 34 tests
 TESTS=(
@@ -65,8 +67,11 @@ echo ""
 for TEST in "${TESTS[@]}"; do
     INPUT="${TRACE_DIR}/${TEST}.csv"
     EXPECTED="${TRACE_DIR}/${TEST}.expected_output.csv"
-    OUTPUT="/tmp/${TEST}.cpp_output.csv"
-    SIM_OUT="/tmp/${TEST}.sim.out"
+    EXPECTED_RESOURCES="${TRACE_DIR}/${TEST}.expected_resources.csv"
+    OUTPUT="$TEST_WORK_DIR/${TEST}.cpp_output.csv"
+    SIM_OUT="$TEST_WORK_DIR/${TEST}.sim.csv"
+    SIM_RESOURCES="$TEST_WORK_DIR/${TEST}.resources.csv"
+    SIM_LOG="$TEST_WORK_DIR/${TEST}.log"
 
     # Check if input exists
     if [ ! -f "$INPUT" ]; then
@@ -77,7 +82,13 @@ for TEST in "${TESTS[@]}"; do
 
     # Check if expected output exists
     if [ ! -f "$EXPECTED" ]; then
-        echo "⊘ $TEST - No expected output (skipped)"
+        echo "✗ $TEST - Expected job schedule not found"
+        ((MISSING++))
+        continue
+    fi
+
+    if [ ! -f "$EXPECTED_RESOURCES" ]; then
+        echo "✗ $TEST - Expected resource trace not found"
         ((MISSING++))
         continue
     fi
@@ -93,12 +104,17 @@ for TEST in "${TESTS[@]}"; do
     # Run simulator with resource trace
     # Scheduler uses time_limit as the best estimator for planning.
     # --run_time_mode controls job execution behavior.
-    "$SIMULATOR" "$INPUT" --total_nodes "$TOTAL_NODES" --trace_format simple \
+    if ! "$SIMULATOR" "$INPUT" --total_nodes "$TOTAL_NODES" --trace_format simple \
         --timestamp_format epoch --run_time_mode "$RUN_TIME_MODE" --outfile "$SIM_OUT" \
-        --backfill_policy easy --resource_trace "${SIM_OUT}_resources.csv" > /dev/null 2>&1
+        --backfill_policy easy --resource_trace "$SIM_RESOURCES" > "$SIM_LOG" 2>&1; then
+        echo "✗ $TEST - Simulator process failed"
+        sed 's/^/    /' "$SIM_LOG"
+        ((FAILED++))
+        continue
+    fi
 
-    if [ ! -f "$SIM_OUT" ]; then
-        echo "✗ $TEST - Simulator failed to produce output"
+    if [ ! -f "$SIM_OUT" ] || [ ! -f "$SIM_RESOURCES" ]; then
+        echo "✗ $TEST - Simulator did not produce both requested traces"
         ((FAILED++))
         continue
     fi
@@ -113,19 +129,22 @@ for TEST in "${TESTS[@]}"; do
     JOB_MATCH=$?
 
     # Compare resource traces
-    EXPECTED_RESOURCES="${TRACE_DIR}/${TEST}.expected_resources.csv"
-    ACTUAL_RESOURCES="${SIM_OUT}_resources.csv"
+    ACTUAL_RESOURCES="$SIM_RESOURCES"
     RESOURCE_MATCH=0
 
     if [ -f "$EXPECTED_RESOURCES" ] && [ -f "$ACTUAL_RESOURCES" ]; then
         # Convert C++ format (time,free_nodes,allocated_nodes) to expected format (time,nodes_used,nodes_free)
         # Skip initial idle state (time=0, nodes_used=0) if present
+        CPP_RESOURCES_RAW="$TEST_WORK_DIR/${TEST}.cpp_resources_raw.csv"
+        EXPECTED_RESOURCES_RAW="$TEST_WORK_DIR/${TEST}.expected_resources_raw.csv"
+        CPP_RESOURCES="$TEST_WORK_DIR/${TEST}.cpp_resources.csv"
+        EXPECTED_RESOURCES_COMPARE="$TEST_WORK_DIR/${TEST}.expected_resources_compare.csv"
         awk -F, 'NR==1 {print "time,nodes_used,nodes_free"; next}
                  NR==2 && $1=="0" && $3=="0" {next}
-                 {print $1","$3","$2}' "$ACTUAL_RESOURCES" > "/tmp/${TEST}.cpp_resources_raw.csv"
+                 {print $1","$3","$2}' "$ACTUAL_RESOURCES" > "$CPP_RESOURCES_RAW"
 
         # Compare first 3 columns only (ignore running_jobs column)
-        awk -F, '{print $1","$2","$3}' "$EXPECTED_RESOURCES" > "/tmp/${TEST}.expected_resources_raw.csv"
+        awk -F, '{print $1","$2","$3}' "$EXPECTED_RESOURCES" > "$EXPECTED_RESOURCES_RAW"
 
         # Consolidate: when multiple jobs start/end at the same timestamp,
         # the C++ simulator and the Python reference can record the
@@ -139,12 +158,12 @@ for TEST in "${TESTS[@]}"; do
         # differences as failures.
         awk -F, 'NR==1 {header=$0; next} {rows[$1]=$0; order[$1]=(($1 in order)?order[$1]:++n)}
                  END {print header; for (i=1;i<=n;i++) for (t in order) if (order[t]==i) print rows[t]}' \
-            "/tmp/${TEST}.cpp_resources_raw.csv" > "/tmp/${TEST}.cpp_resources.csv"
+            "$CPP_RESOURCES_RAW" > "$CPP_RESOURCES"
         awk -F, 'NR==1 {header=$0; next} {rows[$1]=$0; order[$1]=(($1 in order)?order[$1]:++n)}
                  END {print header; for (i=1;i<=n;i++) for (t in order) if (order[t]==i) print rows[t]}' \
-            "/tmp/${TEST}.expected_resources_raw.csv" > "/tmp/${TEST}.expected_resources_compare.csv"
+            "$EXPECTED_RESOURCES_RAW" > "$EXPECTED_RESOURCES_COMPARE"
 
-        diff -w "/tmp/${TEST}.expected_resources_compare.csv" "/tmp/${TEST}.cpp_resources.csv" > /dev/null 2>&1
+        diff -w "$EXPECTED_RESOURCES_COMPARE" "$CPP_RESOURCES" > /dev/null 2>&1
         RESOURCE_MATCH=$?
     fi
 
@@ -166,15 +185,13 @@ for TEST in "${TESTS[@]}"; do
         if [ -f "$EXPECTED_RESOURCES" ] && [ $RESOURCE_MATCH -ne 0 ]; then
             echo "  Resource trace mismatch:"
             echo "    Expected:"
-            head -10 "/tmp/${TEST}.expected_resources_compare.csv" | sed 's/^/      /'
+            head -10 "$EXPECTED_RESOURCES_COMPARE" | sed 's/^/      /'
             echo "    Actual:"
-            head -10 "/tmp/${TEST}.cpp_resources.csv" | sed 's/^/      /'
+            head -10 "$CPP_RESOURCES" | sed 's/^/      /'
         fi
         echo ""
     fi
 
-    # Cleanup intermediate files
-    rm -f "$SIM_OUT"
 done
 
 echo ""
@@ -191,8 +208,8 @@ if [ $FAILED -eq 0 ] && [ $MISSING -eq 0 ]; then
     echo "🎉 ALL TESTS PASSED!"
     exit 0
 elif [ $FAILED -eq 0 ]; then
-    echo "⚠️  All available tests passed, but some expected outputs missing"
-    exit 0
+    echo "❌ TEST FIXTURES ARE MISSING"
+    exit 1
 else
     echo "❌ SOME TESTS FAILED"
     exit 1

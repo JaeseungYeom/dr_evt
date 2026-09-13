@@ -81,21 +81,21 @@ time on top of that if they aren't found either. Subsequent builds are fast.
 
 **CMake warnings**: You will see deprecation warnings from third-party dependencies (Boost, pybind11). These are harmless and come from their old cmake_minimum_required versions. To suppress them:
 ```bash
-cmake .. -Wno-author -Wno-dev -DDR_EVT_BUILD_PYTHON=ON
+cmake -S . -B build -Wno-author -Wno-dev -DDR_EVT_BUILD_PYTHON=ON
 ```
 
 ### CMake Configuration Options
 
 **Boost:**
 ```bash
-cmake .. -DBOOST_ROOT=/path/to/boost
+cmake -S . -B build -DBOOST_ROOT=/path/to/boost
 # or search one or more dependency prefixes
-cmake .. -DCMAKE_PREFIX_PATH=/path/to/dependencies
+cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/dependencies
 # or use environment variable
 export BOOST_ROOT=/path/to/boost
 
 # Skip system paths (useful if system install is broken or mismatched by version)
-cmake .. -DAVOID_SYSTEM_BOOST=ON
+cmake -S . -B build -DAVOID_SYSTEM_BOOST=ON
 ```
 
 `CMAKE_PREFIX_PATH` remains active with `AVOID_SYSTEM_BOOST=ON`; only default
@@ -104,40 +104,40 @@ system locations are excluded.
 **gRPC:**
 ```bash
 # Enable gRPC support (auto-enables Protobuf)
-cmake .. -DDR_EVT_ENABLE_GRPC=ON
+cmake -S . -B build -DDR_EVT_ENABLE_GRPC=ON
 
 # Skip system path search (useful if system install is broken or mismatched by version)
-cmake .. -DDR_EVT_ENABLE_GRPC=ON -DAVOID_SYSTEM_GRPC=ON
+cmake -S . -B build -DDR_EVT_ENABLE_GRPC=ON -DAVOID_SYSTEM_GRPC=ON
 
 # Reuse an explicit/local gRPC install, otherwise fall back to FetchContent
-cmake .. -DDR_EVT_ENABLE_GRPC=ON -DAVOID_SYSTEM_GRPC=ON \
+cmake -S . -B build -DDR_EVT_ENABLE_GRPC=ON -DAVOID_SYSTEM_GRPC=ON \
   -DCMAKE_INSTALL_PREFIX=/path/to/local/prefix
 ```
 
 **Protobuf (standalone, only when gRPC is not used):**
 ```bash
-cmake .. -DPROTOBUF_ROOT=/path/to/protobuf
+cmake -S . -B build -DPROTOBUF_ROOT=/path/to/protobuf
 
 # Skip system paths (useful if system install is broken or mismatched by version)
-cmake .. -DDR_EVT_ENABLE_PROTOBUF=ON -DAVOID_SYSTEM_PROTOBUF=ON
+cmake -S . -B build -DDR_EVT_ENABLE_PROTOBUF=ON -DAVOID_SYSTEM_PROTOBUF=ON
 ```
 
 **Python bindings:**
 ```bash
 # Enable Python bindings
-cmake .. -DDR_EVT_BUILD_PYTHON=ON
+cmake -S . -B build -DDR_EVT_BUILD_PYTHON=ON
 
 # Specify Python executable
-cmake .. -DDR_EVT_BUILD_PYTHON=ON -DPython3_EXECUTABLE=/path/to/python3
+cmake -S . -B build -DDR_EVT_BUILD_PYTHON=ON -DPython3_EXECUTABLE=/path/to/python3
 ```
 
 **Testing:**
 ```bash
 # Register ordinary CTest tests
-cmake .. -DBUILD_TESTING=ON
+cmake -S . -B build -DBUILD_TESTING=ON
 
 # Enable the Catch2-based unit-test framework
-cmake .. -DDR_EVT_WITH_UNIT_TESTING=ON
+cmake -S . -B build -DDR_EVT_WITH_UNIT_TESTING=ON
 ```
 
 `BUILD_TESTING` controls ordinary CTest registration. `DR_EVT_WITH_UNIT_TESTING`
@@ -146,10 +146,10 @@ enables the separate Catch2-based unit-test framework.
 **Build type:**
 ```bash
 # Debug build (symbols, no optimization)
-cmake .. -DCMAKE_BUILD_TYPE=Debug
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 
 # Release build (optimized, default)
-cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 ```
 
 **Complete example with all features:**
@@ -170,18 +170,17 @@ described in [Livermore Computing (LC) HPC systems](#livermore-computing-lc-hpc-
 ### Livermore Computing (LC) HPC systems
 
 ```bash
-mkdir build && cd build
-cmake .. \
+export CMAKE_INSTALL_PREFIX=$(realpath install)
+cmake -S . -B build \
   -DDR_EVT_ENABLE_GRPC=ON \
   -DDR_EVT_BUILD_PYTHON=ON \
   -DAVOID_SYSTEM_GRPC=ON \
   -DAVOID_SYSTEM_BOOST=ON \
-  -DCMAKE_INSTALL_PREFIX=$(realpath ../install)
-make -j4
-make install
+  -DCMAKE_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
+cmake --build build -j4
+cmake --install build
 
 # Set up environment
-export CMAKE_INSTALL_PREFIX=$(realpath ../install)
 export DR_EVT_INSTALL_LIBDIR=lib  # Use the configured CMAKE_INSTALL_LIBDIR value (often lib64 on HPC systems)
 export PATH=${CMAKE_INSTALL_PREFIX}/bin:$PATH
 export PYTHONPATH=${CMAKE_INSTALL_PREFIX}/${DR_EVT_INSTALL_LIBDIR}/python:$PYTHONPATH
@@ -204,12 +203,10 @@ When using pre-built gRPC, `make -j$(nproc)` should still be ok.
 ## Installation
 
 ```bash
-# Install to system (requires sudo)
-sudo make install
-
-# Or install to custom location
-cmake -DCMAKE_INSTALL_PREFIX=/path/to/install ..
-make install
+export CMAKE_INSTALL_PREFIX=/path/to/install
+cmake -S . -B build -DCMAKE_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
+cmake --build build
+cmake --install build
 ```
 
 ## Python environments
@@ -225,8 +222,7 @@ Sphinx build commands are maintained in
 Run CTest to verify the features enabled in the current build:
 
 ```bash
-cd build
-ctest --output-on-failure
+ctest --test-dir build --output-on-failure
 ```
 
 The [Test Suite README](https://github.com/LLNL/dr_evt/blob/main/tests/README.md#build-and-run)
@@ -239,14 +235,14 @@ lists focused regression runners and prerequisites. The
 
 ```bash
 # On macOS with Homebrew
-cmake .. -DBOOST_ROOT=/opt/homebrew/opt/boost
+cmake -S . -B build -DBOOST_ROOT=/opt/homebrew/opt/boost
 
 # On Linux
-cmake .. -DBOOST_ROOT=/usr/include/boost
+cmake -S . -B build -DBOOST_ROOT=/usr/include/boost
 
 # Or set environment variable
 export BOOST_ROOT=/path/to/boost
-cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 ```
 
 ### Build fails during Protobuf/gRPC download
@@ -254,10 +250,10 @@ cmake .. -DCMAKE_BUILD_TYPE=Release
 ```bash
 # Check internet connection
 # Or download manually and use:
-cmake .. -DPROTOBUF_ROOT=/path/to/protobuf
+cmake -S . -B build -DPROTOBUF_ROOT=/path/to/protobuf
 
 # For gRPC, skip system search; use an explicit/local package or FetchContent:
-cmake .. -DDR_EVT_ENABLE_GRPC=ON -DAVOID_SYSTEM_GRPC=ON
+cmake -S . -B build -DDR_EVT_ENABLE_GRPC=ON -DAVOID_SYSTEM_GRPC=ON
 ```
 
 ### gRPC/Protobuf version mismatch
@@ -265,7 +261,7 @@ cmake .. -DDR_EVT_ENABLE_GRPC=ON -DAVOID_SYSTEM_GRPC=ON
 ```bash
 # System install conflicts with FetchContent version
 # Solution: Skip system path search
-cmake .. -DDR_EVT_ENABLE_GRPC=ON -DAVOID_SYSTEM_GRPC=ON
+cmake -S . -B build -DDR_EVT_ENABLE_GRPC=ON -DAVOID_SYSTEM_GRPC=ON
 ```
 
 ### Python bindings fail to build
@@ -279,7 +275,8 @@ sudo apt-get install python3-dev
 brew install python3
 
 # Specify Python version explicitly
-cmake .. -DDR_EVT_BUILD_PYTHON=ON -DPython3_EXECUTABLE=$(which python3)
+cmake -S . -B build -DDR_EVT_BUILD_PYTHON=ON \
+  -DPython3_EXECUTABLE=$(command -v python3)
 ```
 
 ### MPI not found (optional dependency)
@@ -293,7 +290,7 @@ brew install open-mpi
 
 # Set MPI path
 export MPI_HOME=/path/to/mpi
-cmake -DMPI_HOME=$MPI_HOME ..
+cmake -S . -B build -DMPI_HOME="${MPI_HOME}"
 ```
 
 ### CMake version too old
@@ -322,11 +319,10 @@ xcode-select --install
 
 ### "No such file or directory" errors
 
-Make sure you're in the build directory:
+Reconfigure and build from the repository root:
 ```bash
-cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
 ```
 
 ## Next Steps

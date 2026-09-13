@@ -33,6 +33,8 @@ echo ""
 
 PASS=0
 FAIL=0
+TEST_WORK_DIR=$(mktemp -d "/tmp/dr-evt-column-aliases.XXXXXXXX")
+trap 'rm -rf -- "$TEST_WORK_DIR"' EXIT INT TERM
 
 # ------------------------------------------------------------------------
 # time_limit aliases
@@ -40,25 +42,27 @@ FAIL=0
 echo "--- time_limit column aliases ---"
 
 for alias in time_limit timelimit walltime; do
-    cat > "/tmp/alias_tl_${alias}.csv" << EOF
+    INPUT="$TEST_WORK_DIR/tl_${alias}.csv"
+    OUTPUT="$TEST_WORK_DIR/tl_${alias}_out.csv"
+    LOG="$TEST_WORK_DIR/tl_${alias}.log"
+    cat > "$INPUT" << EOF
 job_submit_time,num_nodes,${alias}
 0,70,200
 EOF
 
-    $SIMULATOR "/tmp/alias_tl_${alias}.csv" \
+    if "$SIMULATOR" "$INPUT" \
         --priority_policy fcfs \
         --total_nodes 100 \
         --trace_format simple \
         --timestamp_format epoch \
         --run_time_mode limit \
         --backfill_policy easy \
-        --outfile "/tmp/alias_tl_${alias}_out.csv" \
-        > "/tmp/alias_tl_${alias}_err.txt" 2>&1
+        --outfile "$OUTPUT" \
+        > "$LOG" 2>&1; then
 
-    if [ $? -eq 0 ]; then
         # run_time_mode=limit should use the column's value (200) as the
         # job's execution time, regardless of which alias named it.
-        LINE=$(awk -F, '$1 == 0' "/tmp/alias_tl_${alias}_out.csv")
+        LINE=$(awk -F, '$1 == 0' "$OUTPUT")
         BEGIN=$(echo "$LINE" | cut -d, -f2)
         END=$(echo "$LINE" | cut -d, -f3)
         EXEC_TIME=$((END - BEGIN))
@@ -71,7 +75,7 @@ EOF
         fi
     else
         echo "✗ FAIL: '$alias' not recognized as time_limit"
-        cat "/tmp/alias_tl_${alias}_err.txt"
+        cat "$LOG"
         FAIL=$((FAIL + 1))
     fi
 done
@@ -84,25 +88,27 @@ echo ""
 echo "--- actual_run_time column aliases (run_time_mode=actual) ---"
 
 for alias in actual_run_time duration actual_duration run_time; do
-    cat > "/tmp/alias_ar_${alias}.csv" << EOF
+    INPUT="$TEST_WORK_DIR/ar_${alias}.csv"
+    OUTPUT="$TEST_WORK_DIR/ar_${alias}_out.csv"
+    LOG="$TEST_WORK_DIR/ar_${alias}.log"
+    cat > "$INPUT" << EOF
 job_submit_time,num_nodes,time_limit,${alias}
 0,70,200,50
 EOF
 
-    $SIMULATOR "/tmp/alias_ar_${alias}.csv" \
+    if "$SIMULATOR" "$INPUT" \
         --priority_policy fcfs \
         --total_nodes 100 \
         --trace_format simple \
         --timestamp_format epoch \
         --run_time_mode actual \
         --backfill_policy easy \
-        --outfile "/tmp/alias_ar_${alias}_out.csv" \
-        > "/tmp/alias_ar_${alias}_err.txt" 2>&1
+        --outfile "$OUTPUT" \
+        > "$LOG" 2>&1; then
 
-    if [ $? -eq 0 ]; then
         # run_time_mode=actual should read the real run time (50), not
         # time_limit (200), from whichever alias named the column.
-        LINE=$(awk -F, '$1 == 0' "/tmp/alias_ar_${alias}_out.csv")
+        LINE=$(awk -F, '$1 == 0' "$OUTPUT")
         BEGIN=$(echo "$LINE" | cut -d, -f2)
         END=$(echo "$LINE" | cut -d, -f3)
         EXEC_TIME=$((END - BEGIN))
@@ -115,7 +121,7 @@ EOF
         fi
     else
         echo "✗ FAIL: '$alias' not recognized as actual_run_time"
-        cat "/tmp/alias_ar_${alias}_err.txt"
+        cat "$LOG"
         FAIL=$((FAIL + 1))
     fi
 done
@@ -127,35 +133,34 @@ echo ""
 # ------------------------------------------------------------------------
 echo "--- Missing time_limit column (should reject clearly) ---"
 
-cat > /tmp/alias_no_time_limit.csv << 'EOF'
+MISSING_INPUT="$TEST_WORK_DIR/no_time_limit.csv"
+cat > "$MISSING_INPUT" << 'EOF'
 job_submit_time,num_nodes
 0,70
 EOF
 
-ERR_MSG=$($SIMULATOR /tmp/alias_no_time_limit.csv \
+if ERR_MSG=$("$SIMULATOR" "$MISSING_INPUT" \
     --priority_policy fcfs \
     --total_nodes 100 \
     --trace_format simple \
     --timestamp_format epoch \
     --run_time_mode limit \
     --backfill_policy easy \
-    --outfile /tmp/alias_no_tl_out.csv 2>&1) || true
-
-if echo "$ERR_MSG" | grep -q "time_limit.*not found\|not found.*time_limit"; then
-    echo "✓ PASS: missing time_limit (and all aliases) rejected with a clear error"
-    PASS=$((PASS + 1))
-else
-    echo "✗ FAIL: expected a clear 'column not found' error, got:"
-    echo "$ERR_MSG"
+    --outfile "$TEST_WORK_DIR/no_time_limit_out.csv" 2>&1); then
+    echo "✗ FAIL: missing time_limit was accepted"
     FAIL=$((FAIL + 1))
+else
+    if echo "$ERR_MSG" | grep -q "time_limit.*not found\|not found.*time_limit"; then
+        echo "✓ PASS: missing time_limit (and all aliases) rejected with a clear error"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL: expected a clear 'column not found' error, got:"
+        echo "$ERR_MSG"
+        FAIL=$((FAIL + 1))
+    fi
 fi
 
 echo ""
-
-# Cleanup
-rm -f /tmp/alias_tl_*.csv /tmp/alias_tl_*_out.csv /tmp/alias_tl_*_err.txt
-rm -f /tmp/alias_ar_*.csv /tmp/alias_ar_*_out.csv /tmp/alias_ar_*_err.txt
-rm -f /tmp/alias_no_time_limit.csv /tmp/alias_no_tl_out.csv
 
 echo "=========================================="
 echo "Results: $PASS passed, $FAIL failed"

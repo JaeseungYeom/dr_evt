@@ -10,15 +10,16 @@ Create a simple test trace with 3 jobs:
 cat > my_first_trace.csv << EOF
 job_submit_time,num_nodes,time_limit
 0,80,100
-10,15,30
-20,60,50
+10,30,50
+20,15,30
 EOF
 ```
 
 **What this means:**
+
 - Job 0: Arrives at t=0, needs 80 nodes, duration 100 seconds
-- Job 1: Arrives at t=10, needs 15 nodes, duration 30 seconds
-- Job 2: Arrives at t=20, needs 60 nodes, duration 50 seconds
+- Job 1: Arrives at t=10, needs 30 nodes, duration 50 seconds
+- Job 2: Arrives at t=20, needs 15 nodes, duration 30 seconds
 
 ## Step 2: Run the Simulation
 
@@ -34,19 +35,18 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator my_first_trace.csv \
 
 ## Step 3: Understand the Output
 
-The simulator will display:
+The simulator's statistics summary includes:
 
 ```
 === Simulation Statistics ===
 Total jobs: 3
 Jobs submitted: 3
 Jobs completed: 3
-Current time: 150
 Total nodes: 100
-Average wait time: 26.67 sec
-Average turnaround time: 86.67 sec
+Average wait time: 30 sec
+Average turnaround time: 90 sec
 Makespan: 150 sec
-Average queue length: 0 jobs
+Average queue length: 0.333333 jobs
 Peak queue length: 1 jobs
 ```
 
@@ -60,19 +60,21 @@ cat results.csv
 
 Expected output:
 ```text
-job_submit_time,begin_time,end_time,num_nodes,exit_status,q_id,time_limit
-0,0,100,80,0,1,100
-10,10,40,15,0,1,30
-20,100,150,60,0,1,50
+job_submit_time,begin_time,end_time,num_nodes,exit_status,time_limit
+0,0,100,80,0,100
+10,100,150,30,0,50
+20,20,50,15,0,30
 ```
 
 **What happened:**
+
 1. **t=0**: Job 0 starts (80 nodes)
-2. **t=10**: Job 1 arrives and **backfills** (15 nodes fit in remaining 20)
-3. **t=20**: Job 2 arrives but must wait (needs 60 nodes, only 5 free)
-4. **t=40**: Job 1 completes
-5. **t=100**: Job 0 completes, Job 2 can now start
-6. **t=150**: Job 2 completes
+2. **t=10**: Job 1 arrives but must wait (needs 30 nodes, only 20 are free)
+3. **t=20**: Job 2 arrives and **backfills** (15 nodes fit and it can finish
+   before Job 1's reservation)
+4. **t=50**: Job 2 completes
+5. **t=100**: Job 0 completes, and Job 1 starts
+6. **t=150**: Job 1 completes
 
 ## Step 5: Visualize (Optional)
 
@@ -99,11 +101,12 @@ plt.savefig('timeline.png')
 
 ## Understanding Backfilling
 
-In this example, Job 1 **backfilled**:
-- Job 2 was waiting for Job 0 to complete (FCFS head)
-- Job 1 arrived later but was small enough to fit
-- Job 1 would complete (t=40) before Job 2's reservation (t=100)
-- So Job 1 ran ahead of Job 2
+In this example, Job 2 **backfilled**:
+
+- Job 1 was waiting for Job 0 to complete (FCFS head)
+- Job 2 arrived later but was small enough to fit
+- Job 2 would complete (t=50) before Job 1's reservation (t=100)
+- So Job 2 ran ahead of Job 1
 
 This is **EASY backfilling** - it improves system utilization without delaying the waiting job.
 
@@ -119,7 +122,7 @@ This is **EASY backfilling** - it improves system utilization without delaying t
 Try these modifications:
 
 1. **Add more jobs** - What happens with 10 jobs?
-2. **Change resources** - Use `--total_nodes 50` - does Job 1 still backfill?
-3. **Different durations** - Make Job 1 duration 100 instead of 30
+2. **Change resources** - Use `--total_nodes 50` - does Job 2 still backfill?
+3. **Different durations** - Make Job 2 duration 100 instead of 30
 4. **Real trace** - Try one of the test traces in
    `tests/test_traces/scheduler_correctness/`

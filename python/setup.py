@@ -18,6 +18,10 @@ import sys
 import os
 import subprocess
 
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+
+
 class CMakeExtension(Extension):
     def __init__(self, name, sourcedir=''):
         Extension.__init__(self, name, sources=[])
@@ -39,15 +43,14 @@ class CMakeBuild(build_ext):
 
         cmake_args = [
             f'-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={extdir}',
-            f'-DPYTHON_EXECUTABLE={sys.executable}',
+            f'-DPython3_EXECUTABLE={sys.executable}',
             '-DDR_EVT_BUILD_PYTHON=ON',
         ]
 
         cfg = 'Debug' if self.debug else 'Release'
-        build_args = ['--config', cfg]
+        build_args = ['--config', cfg, '--parallel', '4']
 
         cmake_args += [f'-DCMAKE_BUILD_TYPE={cfg}']
-        build_args += ['--', '-j4']
 
         env = os.environ.copy()
         env['CXXFLAGS'] = f"{env.get('CXXFLAGS', '')} -DVERSION_INFO=\\'{self.distribution.get_version()}\\'"
@@ -73,8 +76,8 @@ Provides:
 - Monitoring API for resource and queue status
 - Statistics API for performance metrics
 ''',
-    ext_modules=[CMakeExtension('dr_evt', sourcedir='..')],
+    ext_modules=[CMakeExtension('dr_evt', sourcedir=REPO_ROOT)],
     cmdclass=dict(build_ext=CMakeBuild),
     zip_safe=False,
-    python_requires='>=3.6',
+    python_requires='>=3.7',
 )

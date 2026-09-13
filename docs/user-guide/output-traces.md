@@ -75,7 +75,8 @@ Without `--resource_trace`, DR_EVT writes this output as
 ## Replay outputs
 
 The `tracer` uses the recorded `begin_time` and `end_time` values from its
-input schedule to reconstruct the resource-usage trace described above:
+input schedule to reconstruct the resource-usage trace described above when
+`--resource_trace` is requested:
 
 ```bash
 ${CMAKE_INSTALL_PREFIX}/bin/tracer \
@@ -93,10 +94,12 @@ The following analysis reports are separate from the resource trace:
   each hourly slot in the replay period.
 - `--subsumf` aggregates submission and availability statistics for each of
   the 168 hour-of-week slots across the replayed weeks.
+- `--datfile` optionally writes detected dedicated-allocation-time (DAT)
+  periods as a text report.
 
-All three reports are CSV files. Each report is disabled when its option is
-omitted. When neither submission report is requested, `tracer` skips the
-submission-statistics pass entirely.
+The per-job and submission reports are CSV files. Each report is disabled when
+its option is omitted. When neither submission report is requested, `tracer`
+skips the submission-statistics pass entirely.
 
 ## CLI summary
 

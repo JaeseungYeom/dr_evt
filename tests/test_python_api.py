@@ -30,7 +30,8 @@ try:
 except ImportError as e:
     print(f"✗ Failed to import dr_evt module: {e}", file=sys.stderr)
     print("\nBuild Python bindings with:", file=sys.stderr)
-    print("  cd build && cmake .. -DDR_EVT_BUILD_PYTHON=ON && make", file=sys.stderr)
+    print("  cmake -S . -B build -DDR_EVT_BUILD_PYTHON=ON", file=sys.stderr)
+    print("  cmake --build build -j4", file=sys.stderr)
     sys.exit(1)
 
 QUEUE_INPUT = "pbatch" if dr_evt.legacy_queue_input else "1"

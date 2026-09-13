@@ -42,7 +42,7 @@ RUN apt-get update \
 COPY --from=build /opt/dr-evt /opt/dr-evt
 
 # The Compose setup bind-mounts a host input-data directory here.
-WORKDIR /data
-VOLUME ["/data"]
+WORKDIR /input
+VOLUME ["/input"]
 
 ENTRYPOINT ["/bin/bash"]

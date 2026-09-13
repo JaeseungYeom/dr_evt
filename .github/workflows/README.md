@@ -23,18 +23,20 @@ This directory contains GitHub Actions workflows for automated testing.
 - Resource-history tests (5)
 - Job-store tests (6)
 - Config tests, including power-usage `trace_type` coverage
-- Core CTest tests (4: RNG generation/state restoration and power usage)
+- Native CTest suite (10 tests, plus MPI streaming when MPI is available)
 - Python API tests (16)
 - gRPC client/server tests (2)
 - Append-job tests (C++ + gRPC)
 - FCFS/EASY backfill-window gRPC wire test
+- Synchronized single-coordinator gRPC test
 - Progressive-loading tests (C++ + CLI)
 - Queue-input schema test
-- Scale tests (7, optional/`continue-on-error`)
+- Scale tests (7)
 
 **Matrix:**
-- GCC 11
-- Clang 14
+- GCC 13
+- Clang 18
+- Python 3.12
 
 **Duration:** ~5-10 minutes
 
@@ -71,14 +73,15 @@ Total tests referenced by the full suite:
 | Resource history | 5 | CI runner |
 | Job store | 6 | CI runner |
 | Config | 9 | CI runner; includes power-usage `trace_type` coverage |
-| Core CTest | 4 | CI runner; RNG generation/state restoration, policy/storage, and CLI dispatch coverage |
+| Native CTest | 10, plus 1 with MPI | CI runner; RNG, trace policies, replay reclamation, append/streaming APIs, queues, and CLI dispatch |
 | Python API | 16 | CI runner |
 | gRPC client/server | 2 | CI runner |
 | Append-job | 18 C++ + gRPC | CI runner |
 | FCFS/EASY backfill-window gRPC | 1 | CI runner |
+| Single-coordinator gRPC | 1 | CI runner; synchronized independent systems |
 | Progressive loading | 11 C++ + 4 CLI | CI runner |
 | Queue input schema | 1 binary | CI runner |
-| Scale | 7 | CI runner; optional/`continue-on-error` |
+| Scale | 7 | CI runner |
 
 The workflow summary in `tests.yml` is the authoritative CI-oriented list.
 See `docs/TESTING_GUIDE.md` for the fuller test catalog and the distinction
@@ -97,8 +100,17 @@ Add to main README.md:
 Run the same tests locally before pushing:
 
 ```bash
-cd build && cmake .. && make -j4
-cd ..
+export CMAKE_INSTALL_PREFIX="${PWD}/install"
+cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}" \
+  -DDR_EVT_BUILD_PYTHON=ON \
+  -DDR_EVT_ENABLE_GRPC=ON \
+  -DDR_EVT_WITH_UNIT_TESTING=ON
+cmake --build build -j4
+cmake --install build
+
+python3 -m pip install grpcio grpcio-tools protobuf
 
 ./tests/run_scheduler_correctness_tests.sh
 ./tests/run_fcfs_queue_implementation_tests.sh --correctness
@@ -115,6 +127,8 @@ cd ..
 ./tests/run_grpc_tests.sh
 ./tests/run_append_job_tests.sh
 ./tests/run_backfill_window_grpc_test.sh
+python3 tests/test_grpc_single_coordinator.py \
+  "${CMAKE_INSTALL_PREFIX}/bin/dr_evt_server"
 ./tests/run_progressive_load_tests.sh
 ./tests/run_scale_tests.sh
 ```

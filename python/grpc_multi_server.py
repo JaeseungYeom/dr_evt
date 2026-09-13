@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Drive one independent DR_EVT gRPC simulation session per server.
 
-The jobs CSV is read only by this client.  Its rows are partitioned among
-the supplied servers (round-robin by default); each server receives a
-separate Simulation and therefore has no shared scheduler state with the
-others.  This is useful for modeling independent sites or queues.
+This client reads and partitions the jobs CSV rows among the supplied servers
+(round-robin by default). Each server receives a separate Simulation and
+therefore has no shared scheduler state with the others. The server also reads
+the header of ``--server-infile`` during initialization; by default that is the
+same path as ``--jobs``. This is useful for modeling independent sites or
+queues.
 
 Install the client dependencies first:
 
@@ -19,7 +21,6 @@ legacy queue-name input option; otherwise numeric q_id values are used.
 import argparse
 import csv
 import importlib
-import itertools
 import os
 import pathlib
 import queue
@@ -154,7 +155,7 @@ def drive_server(address, jobs, args, grpc, pb, service, server_index):
             # AppendJobsRequest expects non-decreasing submit times.  A CSV used
             # for streaming must therefore be chronologically ordered.
             if any(left["submit_time"] > right["submit_time"]
-                   for left, right in itertools.pairwise(jobs)):
+                   for left, right in zip(jobs, jobs[1:])):
                 raise ValueError(f"{address}: assigned jobs are not sorted by submit time")
             append = pb.AppendJobsRequest(requests=[pb.JobAppendData(**job) for job in jobs])
             response = session.call(pb.ClientMessage(append_jobs=append))

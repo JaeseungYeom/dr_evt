@@ -699,6 +699,57 @@ if(MPI_CXX_FOUND)
   list(APPEND DR_EVT_UNIT_TEST_TARGETS test_mpi_streaming-bin)
 endif()
 
+if(DR_EVT_WITH_UNIT_TESTING)
+  add_test(
+    NAME test_append_job_api
+    COMMAND $<TARGET_FILE:test_append_job_api-bin>)
+  add_test(
+    NAME test_progressive_load
+    COMMAND $<TARGET_FILE:test_progressive_load-bin>)
+  add_test(
+    NAME test_queue_input
+    COMMAND $<TARGET_FILE:test_queue_input-bin>)
+  add_test(
+    NAME test_batch_vs_streaming
+    COMMAND $<TARGET_FILE:test_batch_vs_streaming-bin>
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_traces/scale/huge_2000jobs.csv)
+  add_test(
+    NAME test_block_queue
+    COMMAND $<TARGET_FILE:test_block_queue-bin>)
+
+  set_tests_properties(
+    test_append_job_api test_progressive_load test_queue_input
+    test_batch_vs_streaming test_block_queue
+    PROPERTIES
+      LABELS "unit;native"
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      RUN_SERIAL TRUE)
+
+  if(MPI_CXX_FOUND AND MPIEXEC_EXECUTABLE)
+    add_test(
+      NAME test_mpi_streaming
+      COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+        ${MPIEXEC_PREFLAGS} $<TARGET_FILE:test_mpi_streaming-bin>
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_traces/scale/xlarge_500jobs.csv
+        --total_nodes 795 ${MPIEXEC_POSTFLAGS})
+    set_tests_properties(test_mpi_streaming PROPERTIES
+      LABELS "unit;native;mpi"
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      RUN_SERIAL TRUE)
+  endif()
+endif()
+
+# The test sources use assert() for executable checks. Release configurations
+# define NDEBUG by default, which would otherwise compile those checks (and any
+# expressions inside them) out of the test binaries.
+foreach(DR_EVT_TEST_TARGET IN LISTS DR_EVT_UNIT_TEST_TARGETS)
+  if(MSVC)
+    target_compile_options(${DR_EVT_TEST_TARGET} PRIVATE /UNDEBUG)
+  else()
+    target_compile_options(${DR_EVT_TEST_TARGET} PRIVATE -UNDEBUG)
+  endif()
+endforeach()
+
 # Install the complete Boost development payload only when this configure
 # built Boost via FetchContent. An old _deps directory must not cause
 # installation when a system Boost was selected instead.

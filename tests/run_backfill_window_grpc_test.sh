@@ -14,7 +14,7 @@ cd "$REPO_ROOT"
 SERVER="${CMAKE_INSTALL_PREFIX:-./install}/bin/dr_evt_server"
 TEST_BIN="${CMAKE_INSTALL_PREFIX:-./install}/bin/tests/test_grpc_streaming_api"
 
-TRACE="tests/test_traces/feature/empty_trace.csv"
+TRACE="$REPO_ROOT/tests/test_traces/feature/empty_trace.csv"
 PORT="${DR_EVT_BACKFILL_WINDOW_TEST_PORT:-53211}"
 
 if [[ ! -x "$SERVER" || ! -x "$TEST_BIN" ]]; then
@@ -34,7 +34,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$SERVER" "127.0.0.1:${PORT}" >"$RUN_DIR/server.log" 2>&1 &
+(cd "$RUN_DIR" && exec "$SERVER" "127.0.0.1:${PORT}") \
+    >"$RUN_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 sleep 1
 

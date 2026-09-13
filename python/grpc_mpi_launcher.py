@@ -11,8 +11,10 @@ launcher without starting a nested MPI job.
 For example (four MPI ranks means three servers)::
 
     python3 python/grpc_mpi_launcher.py --mpi-ranks 4 \
-        --server-binary ./build/dr_evt_server --base-port 50051 -- \
-        --jobs /shared/jobs.csv --total-nodes 1000
+        --server-binary "${CMAKE_INSTALL_PREFIX}/bin/dr_evt_server" \
+        --base-port 50051 -- \
+        --jobs /shared/jobs.csv --server-infile /shared/jobs.csv \
+        --total-nodes 1000
 
 The default controller is ``grpc_multi_server.py``.  It receives its normal
 arguments after ``--``; do not provide ``--server`` yourself, since this

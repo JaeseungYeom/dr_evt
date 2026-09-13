@@ -38,23 +38,24 @@ podman run --detach --rm --name dr-evt-server \
   --network dr-evt-net --userns=keep-id \
   --publish 50051:50051 \
   --volume "$PWD/results:/data" \
+  --volume "$PWD/data:/input:ro" \
   dr-evt-server:local
 ```
 
 Open an interactive client shell. CSV inputs in the host `data/` directory are
-available in the container at `/data`:
+available in the container at `/input`:
 
 ```bash
 podman run --interactive --tty --rm \
   --network dr-evt-net --userns=keep-id \
-  --volume "$PWD/data:/data" \
+  --volume "$PWD/data:/input:ro" \
   dr-evt-client:local
 ```
 
 Inside the shell, run:
 
 ```bash
-/opt/dr-evt/bin/dr_evt_client dr-evt-server:50051 /data/my-trace.csv
+/opt/dr-evt/bin/dr_evt_client dr-evt-server:50051 /input/my-trace.csv
 ```
 
 Stop the server when finished:

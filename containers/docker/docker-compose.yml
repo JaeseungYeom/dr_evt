@@ -13,6 +13,11 @@ services:
       - type: bind
         source: ${DR_EVT_RESULTS_DIR:-../../results}
         target: /data
+      # Streaming initialization validates the input CSV header server-side.
+      - type: bind
+        source: ${DR_EVT_DATA_DIR:-../../data}
+        target: /input
+        read_only: true
 
   client:
     build:
@@ -23,9 +28,10 @@ services:
       - server
     stdin_open: true
     tty: true
-    working_dir: /data
+    working_dir: /input
     volumes:
-      # Put trace CSVs and other client inputs in this host directory.
+      # The same /input path is visible to the server for header validation.
       - type: bind
         source: ${DR_EVT_DATA_DIR:-../../data}
-        target: /data
+        target: /input
+        read_only: true

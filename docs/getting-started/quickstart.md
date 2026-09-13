@@ -11,8 +11,12 @@ Protobuf, gRPC, MPI, and testing dependencies are covered in
 git clone https://github.com/LLNL/dr_evt.git
 cd dr_evt
 
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+export CMAKE_INSTALL_PREFIX=/path/to/install
+cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
 cmake --build build -j4
+cmake --install build
 ```
 
 If Boost is not installed, configuration uses the repository's dependency
