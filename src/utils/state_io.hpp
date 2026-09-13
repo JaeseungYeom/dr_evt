@@ -10,7 +10,11 @@
 #include "streambuff.hpp"
 #include "streamvec.hpp"
 #include "traits.hpp"
-#include <iostream>
+#include <istream>
+#include <ostream>
+#include <span>
+#include <type_traits>
+#include <vector>
 
 namespace dr_evt {
 /** \addtogroup dr_evt_utils
@@ -25,59 +29,16 @@ namespace dr_evt {
  * https://stackoverflow.com/questions/1559254/are-there-binary-memory-streams-in-c
  */
 template <typename T> struct bits_t {
-  using value_type =
-      typename std::remove_reference<T>::type; ///< Unqualified payload type.
+  using value_type = std::remove_cvref_t<T>; ///< Unqualified payload type.
   T v; ///< Referenced object whose bytes are streamed.
 };
 
-/** @brief Wrap mutable scalar storage for byte-wise stream I/O.
- * @tparam T Trivially copyable, non-vector payload type.
- * @param[in,out] v Object whose bytes will be read or written.
+/** @brief Wrap scalar or contiguous vector storage for byte-wise stream I/O.
+ * @tparam T Trivially copyable scalar or vector of trivially copyable values.
+ * @param[in,out] v Object whose representation will be transferred.
  * @return bits_t<T&> retaining a reference to @p v. */
-template <typename T>
-typename std::enable_if<!is_vector<T>::value &&
-                            std::is_trivially_copyable<T>::value,
-                        bits_t<T &>>::type
-bits(T &v) {
-  return bits_t<T &>{v};
-}
-
-/** @brief Wrap immutable scalar storage for byte-wise output.
- * @tparam T Trivially copyable, non-vector payload type.
- * @param[in] v Object whose bytes will be written.
- * @return bits_t<const T&> retaining a read-only reference to @p v. */
-template <typename T>
-typename std::enable_if<!is_vector<T>::value &&
-                            std::is_trivially_copyable<T>::value,
-                        bits_t<const T &>>::type
-bits(const T &v) {
-  return bits_t<const T &>{v};
-}
-
-/** @brief Wrap mutable contiguous vector storage for byte-wise stream I/O.
- * @tparam T Vector whose element type is trivially copyable and not bool.
- * @param[in,out] v Vector whose size and elements will be transferred.
- * @return bits_t<T&> retaining a reference to @p v. */
-template <typename T>
-typename std::enable_if<
-    is_vector<T>::value && !is_bool<typename T::value_type>::value &&
-        std::is_trivially_copyable<typename T::value_type>::value,
-    bits_t<T &>>::type
-bits(T &v) {
-  return bits_t<T &>{v};
-}
-
-/** @brief Wrap immutable contiguous vector storage for byte-wise output.
- * @tparam T Vector whose element type is trivially copyable and not bool.
- * @param[in] v Vector whose size and elements will be written.
- * @return bits_t<const T&> retaining a read-only reference to @p v. */
-template <typename T>
-inline typename std::enable_if<
-    is_vector<T>::value && !is_bool<typename T::value_type>::value &&
-        std::is_trivially_copyable<typename T::value_type>::value,
-    bits_t<const T &>>::type
-bits(const T &v) {
-  return bits_t<const T &>{v};
+template <raw_binary_serializable T> bits_t<T &> bits(T &v) {
+  return {v};
 }
 
 /** @brief Write a wrapped object's binary representation.
@@ -93,37 +54,52 @@ template <typename S, typename T> S &operator<<(S &os, const bits_t<T &> &b);
  * @return S& referring to @p is. */
 template <typename S, typename T> S &operator>>(S &is, const bits_t<T &> &b);
 
-template <typename ObjT, typename CharT = char,
+template <raw_binary_serializable ObjT, binary_character CharT = char,
           typename Traits = std::char_traits<CharT>>
 /** @brief Serialize an object into a caller-owned byte vector.
- * @tparam ObjT Object implementing save_bits(). @tparam CharT Buffer element
- * type.
+ * @tparam ObjT Trivially copyable scalar or supported vector type.
+ * @tparam CharT One-byte buffer element type.
  * @tparam Traits Character traits used by the memory stream.
  * @param[in] obj Object to snapshot. @param[out] buffer Resized serialized
  * bytes.
  * @return bool indicating stream success. */
 bool save_state(const ObjT &obj, std::vector<CharT> &buffer);
 
-template <typename ObjT, typename CharT = char,
+template <raw_binary_serializable ObjT, binary_character CharT = char,
           typename Traits = std::char_traits<CharT>>
 /** @brief Restore an object from a byte vector.
- * @tparam ObjT Object implementing load_bits(). @tparam CharT Buffer element
- * type.
+ * @tparam ObjT Trivially copyable scalar or supported vector type.
+ * @tparam CharT One-byte buffer element type.
  * @tparam Traits Character traits used by the memory stream.
  * @param[out] obj Object receiving restored state. @param[in] buffer Snapshot
  * bytes.
  * @return bool indicating stream success. */
 bool load_state(ObjT &obj, const std::vector<CharT> &buffer);
 
-template <typename ObjT, typename CharT = char,
+template <raw_binary_serializable ObjT, binary_character CharT = char,
+          typename Traits = std::char_traits<CharT>>
+/** @brief Serialize an object into fixed caller-owned storage.
+ * @param[in] obj Object to snapshot. @param[out] buffer Destination storage.
+ * @return bool indicating that the entire representation fit. */
+bool save_state(const ObjT &obj, std::span<CharT> buffer);
+
+template <raw_binary_serializable ObjT, binary_character CharT = char,
+          typename Traits = std::char_traits<CharT>>
+/** @brief Restore an object from fixed caller-owned storage.
+ * @param[out] obj Object receiving restored state. @param[in] buffer Source
+ * storage.
+ * @return bool indicating that a complete representation was available. */
+bool load_state(ObjT &obj, std::span<const CharT> buffer);
+
+template <raw_binary_scalar ObjT, binary_character CharT = char,
           typename Traits = std::char_traits<CharT>>
 /** @brief Serialize an object into a preallocated byte buffer.
  * @param[in] obj Object to snapshot. @param[out] buffer Storage of at least
- * obj.byte_size() bytes.
+ * sizeof(ObjT) bytes.
  * @return bool indicating stream success. */
 bool save_state(const ObjT &obj, CharT *buffer);
 
-template <typename ObjT, typename CharT = char,
+template <raw_binary_scalar ObjT, binary_character CharT = char,
           typename Traits = std::char_traits<CharT>>
 /** @brief Restore an object from a preallocated byte buffer.
  * @param[out] obj Object receiving restored state. @param[in] buffer Complete

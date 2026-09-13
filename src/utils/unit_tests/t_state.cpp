@@ -7,6 +7,7 @@
 
 #include <cstring>
 #include <random>
+#include <span>
 #include <sstream>
 #include <vector>
 
@@ -151,8 +152,8 @@ void test_streambuff() {
   std::stringstream ss;
   ss << "Saving state: 0x" << std::hex << c << std::endl;
 
-  bool ok1 = save_state(c, buf.data());        // save state
-  bool ok2 = ok1 && load_state(d, buf.data()); // load state
+  bool ok1 = save_state(c, std::span<char>{buf});
+  bool ok2 = ok1 && load_state(d, std::span<const char>{buf});
 
   if (!ok1) {
     std::cout << "Fail to save state!" << std::endl;
@@ -171,7 +172,7 @@ void test_iostremabuff(ObjT &obj) {
   const int cnt = 10;
   std::vector<CharT> buffer;
   buffer.resize(cnt * sizeof(obj));
-  dr_evt::streambuff<CharT, Traits> strmbuf(buffer.data(), buffer.size());
+  dr_evt::streambuff<CharT, Traits> strmbuf(std::span<CharT>{buffer});
   std::basic_iostream<CharT, Traits> ss(&strmbuf);
 
   // state size grows as data accumulate

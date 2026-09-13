@@ -15,6 +15,7 @@
 #include "utils/state_io.hpp"
 #include <cstdint>
 #include <iostream>
+#include <span>
 #include <sstream>
 
 #if defined(DR_EVT_HAS_CATCH2)
@@ -75,7 +76,8 @@ template <typename RNGenT>
 bool save_to_streambuff(const MethodT method, const RNGenT &rgen, char *buf,
                         size_t capacity_preallocated) {
   // dump the serialized rgen state into buf
-  dr_evt::ostreambuff<char> ostrmbuf(buf, capacity_preallocated);
+  dr_evt::ostreambuff<char> ostrmbuf(
+      std::span<char>{buf, capacity_preallocated});
   std::ostream os(&ostrmbuf);
   save_state_os(rgen, method, os);
   return os.good();
@@ -95,7 +97,8 @@ template <typename RNGenT>
 bool load_from_streambuff(const MethodT method, RNGenT &rgen, char *buf,
                           size_t capacity_preallocated) {
   // dump the serialized rgen state into buf
-  dr_evt::istreambuff<char> istrmbuf(buf, capacity_preallocated);
+  dr_evt::istreambuff<char> istrmbuf(
+      std::span<const char>{buf, capacity_preallocated});
   std::istream is(&istrmbuf);
   load_state_is(rgen, method, is);
   return is.good();
@@ -126,7 +129,7 @@ inline bool test_RNGen_state_io(const RNGenParamT &p, const MethodT method,
                                 const StreamBufT buftype,
                                 std::stringstream &sstr,
                                 const bool reserve_space = true) {
-  static_assert(std::is_same<typename RNGenT::param_type, RNGenParamT>::value,
+  static_assert(std::is_same_v<typename RNGenT::param_type, RNGenParamT>,
                 "Invalid paramter type");
 
   // number of random numbers to show before making copy

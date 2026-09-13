@@ -601,6 +601,13 @@ if (DR_EVT_WITH_UNIT_TESTING)
   add_test(
     NAME test_state_rngen
     COMMAND $<TARGET_FILE:t_state_rngen-bin>)
+  if (DR_EVT_HAS_SER20)
+    add_test(
+      NAME test_state_ser20
+      COMMAND $<TARGET_FILE:t_state_ser20-bin>)
+    set_tests_properties(test_state_ser20 PROPERTIES
+      LABELS "unit;serialization")
+  endif ()
   add_test(
     NAME test_trace_type_cli
     COMMAND ${CMAKE_COMMAND}

@@ -28,6 +28,17 @@ with sampling.
    :members:
    :protected-members:
 
+Binary state serialization
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``serialize_binary()`` and ``deserialize_binary()`` use Ser20 with
+caller-owned memory, avoiding an intermediate ``stringstream`` and string
+copy. A ``std::vector<char>`` destination grows as needed and reuses reserved
+capacity. Fixed one-byte spans, including ``std::span<std::byte>``, perform no
+destination allocation and report the exact written byte count; pass only
+that prefix to deserialization. ``bits()`` remains the direct native binary
+path for trivially copyable scalars and vectors.
+
 Other utilities
 ~~~~~~~~~~~~~~~
 
