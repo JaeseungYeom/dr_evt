@@ -11,8 +11,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-SERVER="${CMAKE_INSTALL_PREFIX:-./install}/bin/dr_evt_server"
-TEST_BIN="${CMAKE_INSTALL_PREFIX:-./install}/bin/tests/test_grpc_streaming_api"
+INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX:-$REPO_ROOT/install}"
+if [[ "$INSTALL_PREFIX" != /* ]]; then
+    INSTALL_PREFIX="$REPO_ROOT/${INSTALL_PREFIX#./}"
+fi
+
+SERVER="$INSTALL_PREFIX/bin/dr_evt_server"
+TEST_BIN="$INSTALL_PREFIX/bin/tests/test_grpc_streaming_api"
 
 TRACE="$REPO_ROOT/tests/test_traces/feature/empty_trace.csv"
 PORT="${DR_EVT_BACKFILL_WINDOW_TEST_PORT:-53211}"
@@ -39,5 +44,15 @@ trap cleanup EXIT
 SERVER_PID=$!
 sleep 1
 
+if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    echo "dr_evt_server failed to start. Server log:" >&2
+    sed 's/^/  /' "$RUN_DIR/server.log" >&2
+    exit 1
+fi
+
 echo "Running GetBackfillWindowRequest test on 127.0.0.1:${PORT}"
-"$TEST_BIN" "127.0.0.1:${PORT}" "$TRACE"
+if ! "$TEST_BIN" "127.0.0.1:${PORT}" "$TRACE"; then
+    echo "dr_evt_server log:" >&2
+    sed 's/^/  /' "$RUN_DIR/server.log" >&2
+    exit 1
+fi

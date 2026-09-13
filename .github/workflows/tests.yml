@@ -363,3 +363,60 @@ jobs:
             /tmp/*.csv
             build/Testing/Temporary/
           retention-days: 7
+
+  ser20-disabled:
+    name: Build Without Ser20
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libboost-all-dev gcc-13 g++-13
+
+      - name: Configure without Ser20
+        env:
+          CC: gcc-13
+          CXX: g++-13
+        run: |
+          cmake -S . -B build-no-ser20 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDR_EVT_WITH_SER20=OFF \
+            -DDR_EVT_WITH_UNIT_TESTING=OFF \
+            -DDR_EVT_ENABLE_PROTOBUF=OFF \
+            -DDR_EVT_ENABLE_GRPC=OFF
+
+      - name: Build and test native serialization
+        run: |
+          cmake --build build-no-ser20 \
+            --target t_state_rngen-bin t_state-bin \
+            -j$(nproc)
+          ./build-no-ser20/t_state_rngen
+          ./build-no-ser20/t_state 10 42 4 2
+
+  documentation:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y doxygen graphviz
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install documentation dependencies
+        run: python -m pip install -r docs/requirements.txt
+
+      - name: Build documentation with warnings as errors
+        run: make -C docs html SPHINXOPTS="-W --keep-going"

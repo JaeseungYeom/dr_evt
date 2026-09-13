@@ -181,7 +181,13 @@ def run_one_example(heading, content, tmpdir, index):
         cmd.append(infile_path)
     cmd += ["--config", config_path]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd=tmpdir)
+    # stdout=PIPE/stderr=PIPE and universal_newlines are the Python 3.6
+    # spellings of capture_output=True and text=True.  This helper is used by
+    # the C++/Protobuf test suite, so it must also work on systems whose Python
+    # predates the Python-binding requirement.
+    result = subprocess.run(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        universal_newlines=True, cwd=tmpdir)
     # stderr first: the diagnostically useful part (a protobuf parse
     # error, or nothing) always lands there, while stdout's normal
     # "------ Sim params ------" dump is comparatively uninteresting

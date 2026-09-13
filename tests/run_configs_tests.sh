@@ -193,8 +193,8 @@ fi
 # trace-file argument - see tests/test_protobuf_config_doc_examples.py's
 # own docstring for the full story).
 echo "Test 7: protobuf-config.md's own documented examples"
-SIMULATOR="$SIMULATOR" python3 tests/test_protobuf_config_doc_examples.py > "$TEST_WORK_DIR/doc_examples.log" 2>&1
-if [ $? -eq 0 ]; then
+if SIMULATOR="$SIMULATOR" python3 tests/test_protobuf_config_doc_examples.py \
+    > "$TEST_WORK_DIR/doc_examples.log" 2>&1; then
     echo "  ✓ all documented config examples parse and run correctly"
     PASS=$((PASS + 1))
 else

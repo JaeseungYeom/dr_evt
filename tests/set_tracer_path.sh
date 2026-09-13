@@ -4,9 +4,14 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX:-$REPO_ROOT/install}"
+if [[ "$INSTALL_PREFIX" != /* ]]; then
+    INSTALL_PREFIX="$REPO_ROOT/${INSTALL_PREFIX#./}"
+fi
 
 if [ -n "${TRACER:-}" ] && [ -x "$TRACER" ]; then
-    : # Explicit tracer path takes precedence.
+    if [[ "$TRACER" != /* ]]; then
+        TRACER="$REPO_ROOT/${TRACER#./}"
+    fi
 elif [ -x "$INSTALL_PREFIX/bin/tracer" ]; then
     TRACER="$INSTALL_PREFIX/bin/tracer"
 else
