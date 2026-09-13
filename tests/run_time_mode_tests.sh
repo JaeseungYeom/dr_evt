@@ -34,6 +34,8 @@ echo ""
 
 PASS=0
 FAIL=0
+TEST_WORK_DIR=$(mktemp -d "/tmp/dr-evt-runtime-modes.XXXXXXXX")
+trap 'rm -rf -- "$TEST_WORK_DIR"' EXIT INT TERM
 
 # Use a trace where actual_run_time differs from time_limit
 # Job 1: time_limit=200, actual_run_time=50
@@ -45,18 +47,18 @@ TRACE="tests/test_traces/scheduler_correctness/25_early_completion_basic.csv"
 
 echo "--- Test 1: run_time_mode=actual reads actual_run_time from trace ---"
 
-$SIMULATOR "$TRACE" \
+"$SIMULATOR" "$TRACE" \
     --priority_policy fcfs \
     --total_nodes 100 \
     --trace_format simple \
     --timestamp_format epoch \
     --run_time_mode actual \
     --backfill_policy easy \
-    --outfile /tmp/runtime_test_actual.csv \
+    --outfile "$TEST_WORK_DIR/actual.csv" \
     > /dev/null 2>&1
 
 # Job 1 is job_submit_time=0, should run for actual_run_time=50s
-JOB1_LINE=$(awk -F, '$1 == 0' /tmp/runtime_test_actual.csv)
+JOB1_LINE=$(awk -F, '$1 == 0' "$TEST_WORK_DIR/actual.csv")
 BEGIN=$(echo "$JOB1_LINE" | cut -d, -f2)
 END=$(echo "$JOB1_LINE" | cut -d, -f3)
 EXEC_TIME=$((END - BEGIN))
@@ -77,18 +79,18 @@ echo ""
 
 echo "--- Test 2: run_time_mode=limit uses time_limit exactly ---"
 
-$SIMULATOR "$TRACE" \
+"$SIMULATOR" "$TRACE" \
     --priority_policy fcfs \
     --total_nodes 100 \
     --trace_format simple \
     --timestamp_format epoch \
     --run_time_mode limit \
     --backfill_policy easy \
-    --outfile /tmp/runtime_test_limit.csv \
+    --outfile "$TEST_WORK_DIR/limit.csv" \
     > /dev/null 2>&1
 
 # Job 1 should run for full time_limit=200s
-JOB1_LINE=$(awk -F, '$1 == 0' /tmp/runtime_test_limit.csv)
+JOB1_LINE=$(awk -F, '$1 == 0' "$TEST_WORK_DIR/limit.csv")
 BEGIN=$(echo "$JOB1_LINE" | cut -d, -f2)
 END=$(echo "$JOB1_LINE" | cut -d, -f3)
 EXEC_TIME=$((END - BEGIN))
@@ -109,7 +111,7 @@ echo ""
 
 echo "--- Test 3: run_time_mode=distribution samples from distribution ---"
 
-$SIMULATOR "$TRACE" \
+"$SIMULATOR" "$TRACE" \
     --priority_policy fcfs \
     --total_nodes 100 \
     --trace_format simple \
@@ -120,11 +122,11 @@ $SIMULATOR "$TRACE" \
     --run_time_stddev 0.2 \
     --seed 42 \
     --backfill_policy easy \
-    --outfile /tmp/runtime_test_dist1.csv \
+    --outfile "$TEST_WORK_DIR/dist1.csv" \
     > /dev/null 2>&1
 
 # Different seed should produce different results
-$SIMULATOR "$TRACE" \
+"$SIMULATOR" "$TRACE" \
     --priority_policy fcfs \
     --total_nodes 100 \
     --trace_format simple \
@@ -135,11 +137,11 @@ $SIMULATOR "$TRACE" \
     --run_time_stddev 0.2 \
     --seed 99 \
     --backfill_policy easy \
-    --outfile /tmp/runtime_test_dist2.csv \
+    --outfile "$TEST_WORK_DIR/dist2.csv" \
     > /dev/null 2>&1
 
 # Same seed should produce identical results
-$SIMULATOR "$TRACE" \
+"$SIMULATOR" "$TRACE" \
     --priority_policy fcfs \
     --total_nodes 100 \
     --trace_format simple \
@@ -150,13 +152,13 @@ $SIMULATOR "$TRACE" \
     --run_time_stddev 0.2 \
     --seed 42 \
     --backfill_policy easy \
-    --outfile /tmp/runtime_test_dist3.csv \
+    --outfile "$TEST_WORK_DIR/dist3.csv" \
     > /dev/null 2>&1
 
 # Different seeds should differ
-if ! diff -q /tmp/runtime_test_dist1.csv /tmp/runtime_test_dist2.csv > /dev/null 2>&1; then
+if ! diff -q "$TEST_WORK_DIR/dist1.csv" "$TEST_WORK_DIR/dist2.csv" > /dev/null 2>&1; then
     # Same seed should match
-    if diff -q /tmp/runtime_test_dist1.csv /tmp/runtime_test_dist3.csv > /dev/null 2>&1; then
+    if diff -q "$TEST_WORK_DIR/dist1.csv" "$TEST_WORK_DIR/dist3.csv" > /dev/null 2>&1; then
         echo "✓ PASS: distribution mode samples vary by seed, deterministic with same seed"
         PASS=$((PASS + 1))
     else
@@ -177,13 +179,14 @@ echo ""
 echo "--- Test 4: normal/lognormal distributions capped at time_limit ---"
 
 LARGE_TRACE="tests/test_traces/scale/huge_10000jobs.csv"
+EXPECTED_LARGE_JOBS=$(awk 'END {print NR - 1}' "$LARGE_TRACE")
 
 check_no_exceedance() {
     local dist="$1"
     local outfile="$2"
     local should_cap="$3"  # "yes" or "no"
 
-    $SIMULATOR "$LARGE_TRACE" \
+    "$SIMULATOR" "$LARGE_TRACE" \
         --priority_policy fcfs \
         --total_nodes 500 \
         --trace_format simple \
@@ -197,15 +200,17 @@ check_no_exceedance() {
         --outfile "$outfile" \
         > /dev/null 2>&1
 
-    python3 -c "
+    python3 - "$outfile" "$dist" "$should_cap" "$EXPECTED_LARGE_JOBS" <<'PY'
 import csv
 import sys
 
+outfile, distribution, cap_arg, expected_total = sys.argv[1:]
+expected_total = int(expected_total)
 exceed_count = 0
 total = 0
 max_excess = 0.0
 
-with open('$outfile') as f:
+with open(outfile) as f:
     reader = csv.DictReader(f)
     for row in reader:
         begin = float(row['begin_time'])
@@ -220,37 +225,43 @@ with open('$outfile') as f:
             exceed_count += 1
             max_excess = max(max_excess, actual_exec - limit)
 
-should_cap = '$should_cap' == 'yes'
+if total != expected_total:
+    print(f'✗ FAIL: processed {total}/{expected_total} jobs under {distribution}')
+    sys.exit(1)
+
+should_cap = cap_arg == 'yes'
 
 if should_cap:
     # Distribution should be capped
     if exceed_count > 0:
-        print(f'✗ FAIL: {exceed_count}/{total} jobs exceeded time_limit under $dist (max excess: {max_excess:.1f}s)')
+        print(f'✗ FAIL: {exceed_count}/{total} jobs exceeded time_limit under {distribution} (max excess: {max_excess:.1f}s)')
         sys.exit(1)
     else:
-        print(f'✓ PASS: 0/{total} jobs exceeded time_limit under $dist (properly capped)')
+        print(f'✓ PASS: 0/{total} jobs exceeded time_limit under {distribution} (properly capped)')
         sys.exit(0)
 else:
-    # Uniform should NOT be capped (by design)
-    # Just verify it ran successfully
-    print(f'✓ PASS: $dist distribution completed ({total} jobs)')
-    sys.exit(0)
-"
+    # The deterministic fixture and seed must demonstrate the uncapped
+    # contract, rather than merely completing without checking it.
+    if exceed_count == 0:
+        print(f'✗ FAIL: no job exceeded time_limit under uncapped {distribution}')
+        sys.exit(1)
+    print(f'✓ PASS: {exceed_count}/{total} jobs exceeded time_limit under uncapped {distribution}')
+PY
 }
 
-if check_no_exceedance "normal" "/tmp/runtime_test_normal.csv" "yes"; then
+if check_no_exceedance "normal" "$TEST_WORK_DIR/normal.csv" "yes"; then
     PASS=$((PASS + 1))
 else
     FAIL=$((FAIL + 1))
 fi
 
-if check_no_exceedance "lognormal" "/tmp/runtime_test_lognormal.csv" "yes"; then
+if check_no_exceedance "lognormal" "$TEST_WORK_DIR/lognormal.csv" "yes"; then
     PASS=$((PASS + 1))
 else
     FAIL=$((FAIL + 1))
 fi
 
-if check_no_exceedance "uniform" "/tmp/runtime_test_uniform.csv" "no"; then
+if check_no_exceedance "uniform" "$TEST_WORK_DIR/uniform.csv" "no"; then
     PASS=$((PASS + 1))
 else
     FAIL=$((FAIL + 1))
@@ -266,7 +277,8 @@ echo "--- Test 5: Scheduler planning always uses time_limit ---"
 
 # Create a simple trace where using actual_run_time for scheduling would
 # produce a different schedule than using time_limit
-cat > /tmp/scheduler_planning_test.csv <<EOF
+PLANNING_TRACE="$TEST_WORK_DIR/scheduler-planning.csv"
+cat > "$PLANNING_TRACE" <<EOF
 job_submit_time,num_nodes,time_limit,actual_run_time
 0,60,1000,10
 5,50,100,90
@@ -279,19 +291,19 @@ EOF
 # - If scheduler used actual_run_time: Job 1 could backfill (job 0 would
 #   appear to free up at t=10, not t=1000)
 
-$SIMULATOR /tmp/scheduler_planning_test.csv \
+"$SIMULATOR" "$PLANNING_TRACE" \
     --priority_policy fcfs \
     --total_nodes 100 \
     --trace_format simple \
     --timestamp_format epoch \
     --run_time_mode actual \
     --backfill_policy easy \
-    --outfile /tmp/runtime_test_sched_actual.csv \
+    --outfile "$TEST_WORK_DIR/scheduler-actual.csv" \
     > /dev/null 2>&1
 
 # Job 1 should start at t=10 (after job 0 completes), not t=5
 # because scheduler plans with time_limit (1000s), not actual_run_time (10s)
-JOB1_LINE=$(awk -F, '$1 == 5' /tmp/runtime_test_sched_actual.csv)
+JOB1_LINE=$(awk -F, '$1 == 5' "$TEST_WORK_DIR/scheduler-actual.csv")
 BEGIN=$(echo "$JOB1_LINE" | cut -d, -f2)
 
 if [ "$BEGIN" -eq 10 ]; then
@@ -304,9 +316,6 @@ else
 fi
 
 echo ""
-
-# Cleanup
-rm -f /tmp/runtime_test_*.csv /tmp/scheduler_planning_test.csv
 
 echo "=========================================="
 echo "Results: $PASS passed, $FAIL failed"

@@ -68,7 +68,8 @@ if [ ! -x "$APPEND_API_BIN" ]; then
     echo "    Expected: $APPEND_API_BIN"
     FAIL=$((FAIL + 1))
 else
-    if "$APPEND_API_BIN" > "$RUN_DIR/append_job_api_out.txt" 2>&1; then
+    if (cd "$RUN_DIR" && "$APPEND_API_BIN") \
+        > "$RUN_DIR/append_job_api_out.txt" 2>&1; then
         echo "  ✓ PASS"
         PASS=$((PASS + 1))
     else
@@ -96,12 +97,16 @@ else
     SERVER_PID=$!
     sleep 1
 
-    GRPC_OUT=$("$GRPC_TEST_BIN" "127.0.0.1:${PORT}" "$EMPTY_TRACE" 2>&1) || true
+    if GRPC_OUT=$("$GRPC_TEST_BIN" "127.0.0.1:${PORT}" "$EMPTY_TRACE" 2>&1); then
+        GRPC_STATUS=0
+    else
+        GRPC_STATUS=$?
+    fi
     kill "$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true
     SERVER_PID=""
 
-    if echo "$GRPC_OUT" | grep -q "^PASSED$"; then
+    if [ "$GRPC_STATUS" -eq 0 ] && echo "$GRPC_OUT" | grep -q "^PASSED$"; then
         echo "  ✓ PASS"
         PASS=$((PASS + 1))
     else
@@ -109,6 +114,7 @@ else
         echo "     Server log:"
         sed 's/^/       /' "$RUN_DIR/append_job_grpc_server.log"
         echo "     Client output:"
+        echo "       Exit status: $GRPC_STATUS"
         echo "$GRPC_OUT" | sed 's/^/       /'
         FAIL=$((FAIL + 1))
     fi

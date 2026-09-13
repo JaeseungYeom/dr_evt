@@ -9,11 +9,12 @@
  * Test MPI-based streaming with multiple ranks feeding jobs
  *
  * Each MPI rank:
- * - Feeds a subset of jobs (round-robin partitioning)
+ * - Feeds the complete job trace independently
  * - Coordinates time advancement via MPI_Allreduce
  * - Writes output to rank-specific file
  *
- * After all ranks complete, rank 0 merges and compares with batch mode.
+ * After all ranks complete, rank 0 verifies deterministic agreement between
+ * ranks and compares the streaming result with batch mode.
  */
 
 #define DR_EVT_HAS_CONFIG 1
@@ -47,8 +48,8 @@ struct JobInfo {
   sim_time_t submit_time;
 };
 
-// Get all jobs for this rank (each rank processes ALL jobs to test determinism)
-std::vector<JobInfo> get_rank_jobs(const Trace &trace, int rank, int size) {
+// Each rank processes all jobs independently to test determinism.
+std::vector<JobInfo> get_rank_jobs(const Trace &trace) {
   std::vector<JobInfo> my_jobs;
 
   // All ranks get ALL jobs - we're testing determinism, not partitioning
@@ -59,11 +60,13 @@ std::vector<JobInfo> get_rank_jobs(const Trace &trace, int rank, int size) {
     my_jobs.push_back({static_cast<job_no_t>(i), submit});
   }
 
-  // Sort by submit time
-  std::sort(my_jobs.begin(), my_jobs.end(),
-            [](const JobInfo &a, const JobInfo &b) {
-              return a.submit_time < b.submit_time;
-            });
+  // Preserve the trace's FCFS order for jobs with the same submit time.
+  // Simulation::initialize_trace() uses the same stable ordering, so an
+  // unstable sort here can change which tied job receives resources first.
+  std::stable_sort(my_jobs.begin(), my_jobs.end(),
+                   [](const JobInfo &a, const JobInfo &b) {
+                     return a.submit_time < b.submit_time;
+                   });
 
   return my_jobs;
 }
@@ -98,7 +101,7 @@ void run_mpi_streaming(const std::string &trace_file, int total_nodes, int rank,
                    sim.get_trace().data().end());
 
   // Get this rank's jobs
-  auto my_jobs = get_rank_jobs(sim.get_trace(), rank, size);
+  auto my_jobs = get_rank_jobs(sim.get_trace());
 
   if (rank == 0) {
     std::cout << "Total jobs: " << sim.get_trace().data().size() << std::endl;
@@ -139,15 +142,10 @@ void run_mpi_streaming(const std::string &trace_file, int total_nodes, int rank,
     sim.advance_to(global_next);
   }
 
-  // Final advance to complete all jobs
-  sim_time_t max_time = 0.0;
-  for (const auto &job : sim.get_trace().data()) {
-    sim_time_t submit = static_cast<sim_time_t>(job.get_submit_time().first) +
-                        job.get_submit_time().second;
-    sim_time_t duration = job.get_limit_time();
-    max_time = std::max(max_time, submit + duration * 2);
-  }
-  sim.advance_to(max_time);
+  // Drain every queued and running job, matching Simulation::run(). A bound
+  // derived from individual submit times and durations is not sufficient when
+  // resource contention delays jobs behind one another.
+  sim.advance_to(std::numeric_limits<sim_time_t>::max());
 
   // Write output
   sim.write_simulated_trace();
@@ -295,7 +293,8 @@ int main(int argc, char **argv) {
         std::cout << "  ✓ All " << size << " ranks agree (deterministic)"
                   << std::endl;
         std::cout << "  ✓ MPI coordination (MPI_Allreduce)" << std::endl;
-        std::cout << "  ✓ Round-robin job partitioning" << std::endl;
+        std::cout << "  ✓ Identical full-trace execution on every rank"
+                  << std::endl;
         std::cout << "  ✓ Rank-specific output files" << std::endl;
         std::cout << "  ✓ MPI streaming matches batch mode" << std::endl;
       } else {

@@ -37,10 +37,41 @@ if [ ! -f "./scripts/python_conservative_scheduler.py" ]; then
     exit 1
 fi
 
+# The reference uses the standard-library dataclasses module (Python >= 3.7).
+# On some LC allocations `python` and `python3` resolve to different module
+# installations, so do not assume the unversioned python3 is suitable.
+PYTHON_BIN="${PYTHON_EXECUTABLE:-}"
+if [ -n "$PYTHON_BIN" ]; then
+    if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 || \
+       ! "$PYTHON_BIN" -c 'import dataclasses' >/dev/null 2>&1; then
+        echo -e "${RED}Error: PYTHON_EXECUTABLE does not provide Python 3.7+ with dataclasses: $PYTHON_BIN${NC}"
+        exit 1
+    fi
+else
+    for candidate in python3 python python3.13 python3.12 python3.11 \
+        python3.10 python3.9 python3.8 python3.7; do
+        if command -v "$candidate" >/dev/null 2>&1 && \
+           "$candidate" -c 'import dataclasses' >/dev/null 2>&1; then
+            PYTHON_BIN=$(command -v "$candidate")
+            break
+        fi
+    done
+fi
+if [ -z "$PYTHON_BIN" ]; then
+    echo -e "${RED}Error: no Python 3.7+ interpreter with dataclasses was found${NC}"
+    exit 1
+fi
+
 # Parse arguments
-TRACE="${1:-tests/test_traces/scale/huge_2000jobs.csv}"
-NODES="${2:-1000}"
-OUTDIR="${3:-/tmp/conservative_comparison_$$}"
+# Keep the default large enough to exercise sustained queueing and backfilling
+# while remaining practical for routine validation. Callers can pass the
+# 2,000-job scaling fixture explicitly for a longer stress comparison.
+TRACE="${1:-tests/test_traces/scale/xlarge_500jobs.csv}"
+NODES="${2:-400}"
+OUTDIR="${3:-}"
+if [ -z "$OUTDIR" ]; then
+    OUTDIR=$(mktemp -d "/tmp/dr-evt-conservative-comparison.XXXXXXXX")
+fi
 
 mkdir -p "$OUTDIR"
 
@@ -48,6 +79,7 @@ echo "Configuration:"
 echo "  Trace:        $TRACE"
 echo "  Total nodes:  $NODES"
 echo "  Output dir:   $OUTDIR"
+echo "  Python:       $PYTHON_BIN ($("$PYTHON_BIN" --version 2>&1))"
 echo ""
 
 if [ ! -f "$TRACE" ]; then
@@ -60,10 +92,14 @@ BASENAME=$(basename "$TRACE" .csv)
 # Run Python reference
 echo -e "${YELLOW}Running Python CONSERVATIVE reference...${NC}"
 START_PY=$(date +%s)
-python3 scripts/python_conservative_scheduler.py "$TRACE" \
+if ! "$PYTHON_BIN" scripts/python_conservative_scheduler.py "$TRACE" \
     --nodes "$NODES" \
     --outdir "$OUTDIR" \
-    > "$OUTDIR/python.log" 2>&1
+    > "$OUTDIR/python.log" 2>&1; then
+    echo -e "${RED}✗ Python reference process failed${NC}"
+    sed 's/^/  /' "$OUTDIR/python.log"
+    exit 1
+fi
 
 END_PY=$(date +%s)
 PY_TIME=$((END_PY - START_PY))
@@ -85,7 +121,7 @@ echo ""
 # Run C++ implementation
 echo -e "${YELLOW}Running C++ CONSERVATIVE implementation...${NC}"
 START_CPP=$(date +%s)
-"$SIMULATOR" "$TRACE" \
+if ! "$SIMULATOR" "$TRACE" \
     --total_nodes "$NODES" \
     --priority_policy fcfs_conservative \
     --backfill_policy conservative \
@@ -93,7 +129,11 @@ START_CPP=$(date +%s)
     --max_jobs 999999 \
     --trace_format simple \
     --outfile "$OUTDIR/cpp_conservative.csv" \
-    > "$OUTDIR/cpp.log" 2>&1
+    > "$OUTDIR/cpp.log" 2>&1; then
+    echo -e "${RED}✗ C++ implementation process failed${NC}"
+    sed 's/^/  /' "$OUTDIR/cpp.log"
+    exit 1
+fi
 
 END_CPP=$(date +%s)
 CPP_TIME=$((END_CPP - START_CPP))
@@ -112,7 +152,7 @@ echo "  Jobs scheduled: $CPP_JOBS"
 echo ""
 
 # Performance comparison
-if [ $PY_TIME -gt 0 ]; then
+if [ "$PY_TIME" -gt 0 ] && [ "$CPP_TIME" -gt 0 ]; then
     SPEEDUP=$(echo "scale=1; $PY_TIME / $CPP_TIME" | bc)
     echo -e "${BLUE}Performance:${NC}"
     echo "  Python: ${PY_TIME}s"
@@ -124,7 +164,7 @@ fi
 # Compare schedules
 echo -e "${YELLOW}Comparing schedules...${NC}"
 
-python3 - "$PYTHON_OUT" "$CPP_OUT" << 'PYTHON_COMPARE'
+if "$PYTHON_BIN" - "$PYTHON_OUT" "$CPP_OUT" << 'PYTHON_COMPARE'
 import sys
 import csv
 
@@ -201,8 +241,11 @@ except Exception as e:
     traceback.print_exc()
     sys.exit(1)
 PYTHON_COMPARE
-
-COMPARE_RESULT=$?
+then
+    COMPARE_RESULT=0
+else
+    COMPARE_RESULT=$?
+fi
 
 echo ""
 if [ $COMPARE_RESULT -eq 0 ]; then
@@ -217,7 +260,7 @@ if [ $COMPARE_RESULT -eq 0 ]; then
     echo "  Mismatches:    0"
     echo "  Python time:   ${PY_TIME}s"
     echo "  C++ time:      ${CPP_TIME}s"
-    if [ $PY_TIME -gt 0 ]; then
+    if [ "$PY_TIME" -gt 0 ] && [ "$CPP_TIME" -gt 0 ]; then
         echo "  Speedup:       ${SPEEDUP}x"
     fi
     echo ""

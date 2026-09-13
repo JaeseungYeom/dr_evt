@@ -10,8 +10,9 @@ request sequence, see [Client/Server Setup](grpc-setup.md).
 
 Run `dr_evt_server` directly under your normal process supervisor on bare
 metal, or run it as a container and expose its gRPC port. In either case,
-clients connect to the server address and read their workload data themselves;
-the server needs only a writable directory for its result files. The
+clients connect to the server address and read their workload data themselves.
+The server needs a writable result directory and a readable CSV whose header
+defines the streamed record format. The
 [container setup](https://github.com/LLNL/dr_evt/blob/main/containers/docker/README.md) includes a server result
 mount and an interactive client with a host input-data mount.
 
@@ -25,7 +26,9 @@ This example uses one controller with a separate session to each server. It
 works well for independent sites or queues, and for digital twins that route
 live arrivals to the appropriate simulation. It is only one topology: clients
 and servers may both be scaled independently. Scheduler state and nodes are
-not shared between sessions.
+not shared between sessions. The current server also needs a readable CSV
+header during session initialization; use `--server-infile` when its path
+differs from the client-side `--jobs` path.
 
 :::{figure} ../_static/client-server-architecture.svg
 :alt: Workload sources feed client processes and digital-twin controllers, which open independent gRPC sessions to server processes. Each session has an isolated simulation, scheduler state, and nodes.
@@ -36,14 +39,14 @@ not shared between sessions.
 [`python/grpc_multi_server.py`](https://github.com/LLNL/dr_evt/blob/main/python/grpc_multi_server.py)
 demonstrates this arrangement. It reads the
 sample CSV on the client, partitions rows among repeated `--server` options,
-and prints one statistics row per server. The CSV is only a convenient source
-of example arrivals: servers do not load it and require no prior knowledge of
-the workload.
+and prints one statistics row per server. The CSV is a convenient source of
+example arrivals. Servers validate its header but do not load its job rows.
 
 ```bash
 python3 -m pip install grpcio grpcio-tools protobuf
 python3 python/grpc_multi_server.py \
   --jobs /shared/jobs.csv \
+  --server-infile /shared/jobs.csv \
   --session-name twin-west \
   --server server-a:50051 \
   --server server-b:50051
@@ -66,14 +69,14 @@ normally start independent bare-metal processes or containers instead.
 python3 -m pip install mpi4py grpcio grpcio-tools protobuf
 mpirun -np 4 python3 python/grpc_mpi_launcher.py \
   --server-binary ${CMAKE_INSTALL_PREFIX}/bin/dr_evt_server --base-port 50051 -- \
-  --jobs /shared/jobs.csv --total-nodes 1000
+  --jobs /shared/jobs.csv --server-infile /shared/jobs.csv --total-nodes 1000
 ```
 
 This launch starts three independent servers on ports `50051` through `50053`.
 The rank count is one client plus the number of servers. MPI determines
 placement and endpoint discovery; it does not share scheduler state. The root
-client reads the example job file and streams the arrivals, so server ranks do
-not need access to that file.
+client reads and streams the jobs; each server rank reads only the header from
+`--server-infile`, which may be a shared copy of the same file.
 
 Use your MPI launcher's host or hostfile options to distribute ranks across
 nodes. Ranks must resolve one another's hostnames, selected TCP ports must be
@@ -93,6 +96,8 @@ fragments concurrently.
 
 The coordinator is the only client that reads all three input streams. It owns
 the timing decision; the servers own only their independent scheduler state.
+Each row in `systems.csv` supplies a server-visible `server_infile` used for
+header validation.
 For one system, let `tn` be the last arrival in the ordinary batch before a
 composite event, `ta` the coordinator's advance watermark, `tc` the composite
 event time, and `t0` the first arrival in the following ordinary batch. The
@@ -138,8 +143,10 @@ ${CMAKE_INSTALL_PREFIX}/bin/dr_evt_server 127.0.0.1:50062
   --output composite-results.jsonl
 ```
 
-`systems.csv` contains `system_id,address,trace` and optional `total_nodes`.
-Its trace is a controller-side arrival source, not a server-side workload.
+`systems.csv` contains `system_id,address,trace` and optional `server_infile`
+and `total_nodes`. `trace` is the controller-side arrival source;
+`server_infile` is the server-visible file used only for header validation and
+defaults to `trace`.
 `composite_jobs.csv` contains one fragment per row with
 `composite_id,submit_time,system_id,num_nodes,q_id,time_limit`; a composite
 ID must name at least two systems.

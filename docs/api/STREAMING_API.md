@@ -67,14 +67,15 @@ job_no_t append_job(sim_time_t submit_time, num_nodes_t num_nodes,
 **Parameters:**
 - `submit_time`: When the job is submitted (must be >= current_time)
 - `num_nodes`: Number of nodes the job requests
-- `queue`: Which queue the job belongs to (e.g. `"pbatch"`)
+- `queue`: Numeric queue ID (for example, `"1"`) in the default build, or a
+  queue name (for example, `"pbatch"`) with `DR_EVT_LEGACY_QUEUE_INPUT`
 - `limit_time`: User-estimated time limit, in seconds
 
 **Returns:** the new job's `job_no`
 
 **Example:**
 ```cpp
-job_no_t j = sim.append_job(10.0, 20, "pbatch", 200.0);
+job_no_t j = sim.append_job(10.0, 20, "1", 200.0);
 sim.advance_to(10.0);
 ```
 
@@ -106,8 +107,8 @@ All returned jobs are already enqueued for scheduling.
 **Example:**
 ```cpp
 std::vector<Simulation::Job_Append_Request> batch = {
-    {10.0, 20, "pbatch", 200.0},
-    {15.0, 10, "pbatch", 100.0},
+    {10.0, 20, "1", 200.0},
+    {15.0, 10, "1", 100.0},
 };
 auto job_nos = sim.append_jobs(batch);
 ```
@@ -133,7 +134,7 @@ void advance_to(sim_time_t target_time);
 
 **Example:**
 ```cpp
-sim.append_job(0.0, 10, "pbatch", 100.0);
+sim.append_job(0.0, 10, "1", 100.0);
 sim.advance_to(0.0);  // Process job 0's START event
 // Job 0 is now running
 
@@ -172,7 +173,7 @@ void run_until_exclusive(sim_time_t target_time);
 
 **Example:**
 ```cpp
-sim.append_job(0.0, 10, "pbatch", 100.0);
+sim.append_job(0.0, 10, "1", 100.0);
 sim.run_until_exclusive(0.0);  // Does NOT process START event at t=0
 // Job 0 is still queued, not running
 

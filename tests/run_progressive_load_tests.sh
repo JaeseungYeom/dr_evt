@@ -26,6 +26,8 @@ echo ""
 PASS=0
 FAIL=0
 TRACE_DIR="tests/test_traces/progressive"
+TEST_WORK_DIR=$(mktemp -d "/tmp/dr-evt-progressive.XXXXXXXX")
+trap 'rm -rf -- "$TEST_WORK_DIR"' EXIT INT TERM
 
 # --- Test 0: the C++-level test binary (test_progressive_load.cpp) -
 # constructs Sim_Params directly, so it covers correctness and memory
@@ -41,12 +43,12 @@ if [ ! -x "$PROGRESSIVE_API_BIN" ]; then
     echo "    Expected: $PROGRESSIVE_API_BIN"
     FAIL=$((FAIL + 1))
 else
-    if "$PROGRESSIVE_API_BIN" > /tmp/progressive_load_api_out.txt 2>&1; then
+    if "$PROGRESSIVE_API_BIN" > "$TEST_WORK_DIR/api.log" 2>&1; then
         echo "  ✓ PASS"
         PASS=$((PASS + 1))
     else
         echo "  ✗ FAIL"
-        sed 's/^/    /' /tmp/progressive_load_api_out.txt
+        sed 's/^/    /' "$TEST_WORK_DIR/api.log"
         FAIL=$((FAIL + 1))
     fi
 fi
@@ -54,19 +56,26 @@ fi
 # --- Test 1: basic --infile_list run matches the combined single-file run ---
 echo "Testing: infile_list_matches_combined"
 
-OUT_LIST="/tmp/progressive_cli_list_out.csv"
-OUT_COMBINED="/tmp/progressive_cli_combined_out.csv"
-rm -f "$OUT_LIST" "$OUT_COMBINED"
+OUT_LIST="$TEST_WORK_DIR/list.csv"
+OUT_COMBINED="$TEST_WORK_DIR/combined.csv"
 
-$SIMULATOR --infile_list "$TRACE_DIR/file_list.txt" \
+list_ok=1
+if ! "$SIMULATOR" --infile_list "$TRACE_DIR/file_list.txt" \
     --total_nodes 100 --trace_format simple --timestamp_format epoch \
-    --run_time_mode limit --outfile "$OUT_LIST" > /dev/null 2>&1 || true
+    --run_time_mode limit --outfile "$OUT_LIST" > "$TEST_WORK_DIR/list.log" 2>&1; then
+    list_ok=0
+fi
 
-$SIMULATOR "$TRACE_DIR/combined.csv" \
+combined_ok=1
+if ! "$SIMULATOR" "$TRACE_DIR/combined.csv" \
     --total_nodes 100 --trace_format simple --timestamp_format epoch \
-    --run_time_mode limit --outfile "$OUT_COMBINED" > /dev/null 2>&1 || true
+    --run_time_mode limit --outfile "$OUT_COMBINED" > "$TEST_WORK_DIR/combined.log" 2>&1; then
+    combined_ok=0
+fi
 
-if [ -f "$OUT_LIST" ] && [ -f "$OUT_COMBINED" ] && diff -w "$OUT_LIST" "$OUT_COMBINED" > /dev/null 2>&1; then
+if [ "$list_ok" -eq 1 ] && [ "$combined_ok" -eq 1 ] && \
+   [ -f "$OUT_LIST" ] && [ -f "$OUT_COMBINED" ] && \
+   diff -w "$OUT_LIST" "$OUT_COMBINED" > /dev/null 2>&1; then
     echo "  ✓ PASS"
     PASS=$((PASS + 1))
 else
@@ -80,15 +89,18 @@ fi
 # succeeds end-to-end under a small capacity, not silently misbehaving) ---
 echo "Testing: infile_list_with_small_job_store_capacity"
 
-OUT_BOUNDED="/tmp/progressive_cli_bounded_out.csv"
-rm -f "$OUT_BOUNDED"
+OUT_BOUNDED="$TEST_WORK_DIR/bounded.csv"
 
-$SIMULATOR --infile_list "$TRACE_DIR/file_list.txt" \
+bounded_ok=1
+if ! "$SIMULATOR" --infile_list "$TRACE_DIR/file_list.txt" \
     --total_nodes 100 --trace_format simple --timestamp_format epoch \
     --run_time_mode limit --job_store_capacity 2 --job_store_overflow grow \
-    --outfile "$OUT_BOUNDED" > /dev/null 2>&1 || true
+    --outfile "$OUT_BOUNDED" > "$TEST_WORK_DIR/bounded.log" 2>&1; then
+    bounded_ok=0
+fi
 
-if [ -f "$OUT_BOUNDED" ] && diff -w "$OUT_BOUNDED" "$OUT_COMBINED" > /dev/null 2>&1; then
+if [ "$bounded_ok" -eq 1 ] && [ -f "$OUT_BOUNDED" ] && \
+   diff -w "$OUT_BOUNDED" "$OUT_COMBINED" > /dev/null 2>&1; then
     echo "  ✓ PASS"
     PASS=$((PASS + 1))
 else
@@ -100,19 +112,19 @@ fi
 # not a crash ---
 echo "Testing: infile_list_empty_file_rejected"
 
-EMPTY_LIST="/tmp/progressive_cli_empty_list.txt"
+EMPTY_LIST="$TEST_WORK_DIR/empty-list.txt"
 : > "$EMPTY_LIST"
 
-if $SIMULATOR --infile_list "$EMPTY_LIST" --total_nodes 100 > /tmp/progressive_cli_empty.log 2>&1; then
+if "$SIMULATOR" --infile_list "$EMPTY_LIST" --total_nodes 100 > "$TEST_WORK_DIR/empty.log" 2>&1; then
     echo "  ✗ FAIL - expected nonzero exit for an empty --infile_list file"
     FAIL=$((FAIL + 1))
 else
-    if grep -q "contains no file paths" /tmp/progressive_cli_empty.log; then
+    if grep -q "contains no file paths" "$TEST_WORK_DIR/empty.log"; then
         echo "  ✓ PASS"
         PASS=$((PASS + 1))
     else
         echo "  ✗ FAIL - wrong error message"
-        sed 's/^/     /' /tmp/progressive_cli_empty.log
+        sed 's/^/     /' "$TEST_WORK_DIR/empty.log"
         FAIL=$((FAIL + 1))
     fi
 fi
@@ -121,8 +133,8 @@ fi
 # rejected (mutually exclusive - see print_usage()'s own note) ---
 echo "Testing: infile_list_with_positional_arg_rejected"
 
-if $SIMULATOR --infile_list "$TRACE_DIR/file_list.txt" "$TRACE_DIR/combined.csv" \
-    --total_nodes 100 > /tmp/progressive_cli_both.log 2>&1; then
+if "$SIMULATOR" --infile_list "$TRACE_DIR/file_list.txt" "$TRACE_DIR/combined.csv" \
+    --total_nodes 100 > "$TEST_WORK_DIR/both.log" 2>&1; then
     echo "  ✗ FAIL - expected nonzero exit when both --infile_list and a positional file are given"
     FAIL=$((FAIL + 1))
 else

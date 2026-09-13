@@ -42,6 +42,8 @@ fi
 
 PASS=0
 FAIL=0
+TEST_WORK_DIR=$(mktemp -d "/tmp/dr-evt-config.XXXXXXXX")
+trap 'rm -rf -- "$TEST_WORK_DIR"' EXIT INT TERM
 
 # Test 1: Minimal config vs CLI
 echo "Test 1: Minimal config"
@@ -50,13 +52,13 @@ $SIMULATOR "$TEST_TRACE" \
     --trace_format simple \
     --timestamp_format epoch \
     --run_time_mode limit \
-    --outfile /tmp/cli_minimal.csv
+    --outfile "$TEST_WORK_DIR/cli_minimal.csv"
 
 $SIMULATOR "$TEST_TRACE" \
     --config tests/test_configs/minimal_config.pb \
-    --outfile /tmp/pb_minimal.csv
+    --outfile "$TEST_WORK_DIR/pb_minimal.csv"
 
-if diff -q /tmp/cli_minimal.csv /tmp/pb_minimal.csv > /dev/null; then
+if diff -q "$TEST_WORK_DIR/cli_minimal.csv" "$TEST_WORK_DIR/pb_minimal.csv" > /dev/null; then
     echo "  ✓ Minimal config matches CLI"
     PASS=$((PASS + 1))
 else
@@ -73,13 +75,13 @@ $SIMULATOR "$TEST_TRACE" \
     --run_time_mode limit \
     --backfill_policy easy \
     --priority_policy fcfs \
-    --outfile /tmp/cli_full.csv
+    --outfile "$TEST_WORK_DIR/cli_full.csv"
 
 $SIMULATOR "$TEST_TRACE" \
     --config tests/test_configs/full_config.pb \
-    --outfile /tmp/pb_full.csv
+    --outfile "$TEST_WORK_DIR/pb_full.csv"
 
-if diff -q /tmp/cli_full.csv /tmp/pb_full.csv > /dev/null; then
+if diff -q "$TEST_WORK_DIR/cli_full.csv" "$TEST_WORK_DIR/pb_full.csv" > /dev/null; then
     echo "  ✓ Full config matches CLI"
     PASS=$((PASS + 1))
 else
@@ -89,19 +91,20 @@ fi
 
 # Test 3: Conservative config vs CLI
 echo "Test 3: Conservative policy config"
-$SIMULATOR "$TEST_TRACE" \
+CONSERVATIVE_TRACE="tests/test_traces/feature/easy_vs_conservative_test.csv"
+$SIMULATOR "$CONSERVATIVE_TRACE" \
     --total_nodes 100 \
     --trace_format simple \
     --timestamp_format epoch \
     --run_time_mode limit \
     --backfill_policy conservative \
-    --outfile /tmp/cli_conservative.csv
+    --outfile "$TEST_WORK_DIR/cli_conservative.csv"
 
-$SIMULATOR "$TEST_TRACE" \
+$SIMULATOR "$CONSERVATIVE_TRACE" \
     --config tests/test_configs/conservative_config.pb \
-    --outfile /tmp/pb_conservative.csv
+    --outfile "$TEST_WORK_DIR/pb_conservative.csv"
 
-if diff -q /tmp/cli_conservative.csv /tmp/pb_conservative.csv > /dev/null; then
+if diff -q "$TEST_WORK_DIR/cli_conservative.csv" "$TEST_WORK_DIR/pb_conservative.csv" > /dev/null; then
     echo "  ✓ Conservative config matches CLI"
     PASS=$((PASS + 1))
 else
@@ -113,10 +116,20 @@ fi
 echo "Test 4: Distribution config"
 $SIMULATOR "$TEST_TRACE" \
     --config tests/test_configs/distribution_config.pb \
-    --outfile /tmp/pb_distribution.csv
+    --outfile "$TEST_WORK_DIR/pb_distribution.csv"
 
-if [ -f /tmp/pb_distribution.csv ]; then
-    echo "  ✓ Distribution config runs"
+$SIMULATOR "$TEST_TRACE" \
+    --total_nodes 100 \
+    --trace_format simple \
+    --timestamp_format epoch \
+    --run_time_mode distribution \
+    --run_time_distribution normal \
+    --run_time_scale 0.9 \
+    --run_time_stddev 0.1 \
+    --outfile "$TEST_WORK_DIR/cli_distribution.csv"
+
+if diff -q "$TEST_WORK_DIR/cli_distribution.csv" "$TEST_WORK_DIR/pb_distribution.csv" > /dev/null; then
+    echo "  ✓ Distribution config matches CLI"
     PASS=$((PASS + 1))
 else
     echo "  ✗ Distribution config failed"
@@ -133,13 +146,13 @@ $SIMULATOR \
     --trace_format simple \
     --timestamp_format epoch \
     --run_time_mode limit \
-    --outfile /tmp/cli_infile_list.csv
+    --outfile "$TEST_WORK_DIR/cli_infile_list.csv"
 
 $SIMULATOR \
     --config tests/test_configs/infile_list_config.pb \
-    --outfile /tmp/pb_infile_list.csv
+    --outfile "$TEST_WORK_DIR/pb_infile_list.csv"
 
-if diff -q /tmp/cli_infile_list.csv /tmp/pb_infile_list.csv > /dev/null; then
+if diff -q "$TEST_WORK_DIR/cli_infile_list.csv" "$TEST_WORK_DIR/pb_infile_list.csv" > /dev/null; then
     echo "  ✓ infile_list config matches CLI"
     PASS=$((PASS + 1))
 else
@@ -156,16 +169,16 @@ echo "Test 6: check_memory_pressure config (forced low memory)"
 
 if DR_EVT_TEST_AVAILABLE_MEMORY_BYTES=10 $SIMULATOR \
     --config tests/test_configs/memory_pressure_config.pb \
-    --outfile /tmp/pb_memory_pressure.csv > /tmp/pb_memory_pressure.log 2>&1; then
+    --outfile "$TEST_WORK_DIR/pb_memory_pressure.csv" > "$TEST_WORK_DIR/pb_memory_pressure.log" 2>&1; then
     echo "  ✗ FAIL - expected nonzero exit under forced low memory with check_memory_pressure enabled"
     FAIL=$((FAIL + 1))
 else
-    if grep -q "check_memory_pressure" /tmp/pb_memory_pressure.log; then
+    if grep -q "check_memory_pressure" "$TEST_WORK_DIR/pb_memory_pressure.log"; then
         echo "  ✓ check_memory_pressure config correctly refused under forced low memory"
         PASS=$((PASS + 1))
     else
         echo "  ✗ FAIL - wrong error message"
-        sed 's/^/     /' /tmp/pb_memory_pressure.log
+        sed 's/^/     /' "$TEST_WORK_DIR/pb_memory_pressure.log"
         FAIL=$((FAIL + 1))
     fi
 fi
@@ -180,13 +193,13 @@ fi
 # trace-file argument - see tests/test_protobuf_config_doc_examples.py's
 # own docstring for the full story).
 echo "Test 7: protobuf-config.md's own documented examples"
-SIMULATOR="$SIMULATOR" python3 tests/test_protobuf_config_doc_examples.py > /tmp/doc_examples.log 2>&1
+SIMULATOR="$SIMULATOR" python3 tests/test_protobuf_config_doc_examples.py > "$TEST_WORK_DIR/doc_examples.log" 2>&1
 if [ $? -eq 0 ]; then
     echo "  ✓ all documented config examples parse and run correctly"
     PASS=$((PASS + 1))
 else
     echo "  ✗ FAIL - one or more documented config examples are broken"
-    sed 's/^/     /' /tmp/doc_examples.log
+    sed 's/^/     /' "$TEST_WORK_DIR/doc_examples.log"
     FAIL=$((FAIL + 1))
 fi
 
@@ -201,16 +214,16 @@ $SIMULATOR "$PCON_TRACE" \
     --timestamp_format epoch \
     --run_time_mode limit \
     --total_nodes 4 \
-    --outfile /tmp/cli_pcon.csv \
-    --resource_trace /tmp/cli_pcon_resources.csv
+    --outfile "$TEST_WORK_DIR/cli_pcon.csv" \
+    --resource_trace "$TEST_WORK_DIR/cli_pcon_resources.csv"
 
 $SIMULATOR "$PCON_TRACE" \
     --config tests/test_configs/pcon_config.pb \
-    --outfile /tmp/pb_pcon.csv \
-    --resource_trace /tmp/pb_pcon_resources.csv
+    --outfile "$TEST_WORK_DIR/pb_pcon.csv" \
+    --resource_trace "$TEST_WORK_DIR/pb_pcon_resources.csv"
 
-if diff -q /tmp/cli_pcon.csv /tmp/pb_pcon.csv > /dev/null && \
-   diff -q /tmp/cli_pcon_resources.csv /tmp/pb_pcon_resources.csv > /dev/null; then
+if diff -q "$TEST_WORK_DIR/cli_pcon.csv" "$TEST_WORK_DIR/pb_pcon.csv" > /dev/null && \
+   diff -q "$TEST_WORK_DIR/cli_pcon_resources.csv" "$TEST_WORK_DIR/pb_pcon_resources.csv" > /dev/null; then
     echo "  ✓ Power-usage trace_type config matches CLI"
     PASS=$((PASS + 1))
 else
@@ -221,29 +234,27 @@ fi
 # Test 9: invalid trace_type supplied through protobuf config must fail with
 # the same kind of explicit diagnostic as an invalid CLI value.
 echo "Test 9: Invalid trace_type config"
-INVALID_TRACE_TYPE_CONFIG=/tmp/dr_evt_invalid_trace_type.pb
+INVALID_TRACE_TYPE_CONFIG="$TEST_WORK_DIR/invalid_trace_type.pb"
 cat > "$INVALID_TRACE_TYPE_CONFIG" <<'EOF'
 trace_type: "invalid"
 EOF
 
 if $SIMULATOR "$TEST_TRACE" \
     --config "$INVALID_TRACE_TYPE_CONFIG" \
-    --outfile /tmp/pb_invalid_trace_type.csv \
-    > /tmp/pb_invalid_trace_type.log 2>&1; then
+    --outfile "$TEST_WORK_DIR/pb_invalid_trace_type.csv" \
+    > "$TEST_WORK_DIR/pb_invalid_trace_type.log" 2>&1; then
     echo "  ✗ Invalid trace_type config unexpectedly succeeded"
     FAIL=$((FAIL + 1))
 else
-    if grep -q "Unknown trace_type in protobuf" /tmp/pb_invalid_trace_type.log; then
+    if grep -q "Unknown trace_type in protobuf" "$TEST_WORK_DIR/pb_invalid_trace_type.log"; then
         echo "  ✓ Invalid trace_type config correctly rejected"
         PASS=$((PASS + 1))
     else
         echo "  ✗ Invalid trace_type failed with unexpected error"
-        sed 's/^/     /' /tmp/pb_invalid_trace_type.log
+        sed 's/^/     /' "$TEST_WORK_DIR/pb_invalid_trace_type.log"
         FAIL=$((FAIL + 1))
     fi
 fi
-rm -f "$INVALID_TRACE_TYPE_CONFIG"
-
 echo ""
 echo "=========================================="
 echo "Results: $PASS passed, $FAIL failed"

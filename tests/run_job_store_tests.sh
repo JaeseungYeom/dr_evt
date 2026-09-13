@@ -67,6 +67,8 @@ echo ""
 
 PASS=0
 FAIL=0
+TEST_WORK_DIR=$(mktemp -d "/tmp/dr-evt-job-store.XXXXXXXX")
+trap 'rm -rf -- "$TEST_WORK_DIR"' EXIT INT TERM
 
 # Small enough to force several grow reallocations during loading -
 # not a test of repeated reclaiming during the run (see header comment
@@ -89,10 +91,10 @@ for test_base in "${JS_TESTS[@]}"; do
         continue
     fi
 
-    default_out="/tmp/js_${test_base}_default_out.csv"
-    tiny_out="/tmp/js_${test_base}_tiny_out.csv"
-    default_stats="/tmp/js_${test_base}_default_stats.txt"
-    tiny_stats="/tmp/js_${test_base}_tiny_stats.txt"
+    default_out="$TEST_WORK_DIR/${test_base}_default_out.csv"
+    tiny_out="$TEST_WORK_DIR/${test_base}_tiny_out.csv"
+    default_stats="$TEST_WORK_DIR/${test_base}_default_stats.txt"
+    tiny_stats="$TEST_WORK_DIR/${test_base}_tiny_stats.txt"
 
     $SIMULATOR "$input_trace" \
         --total_nodes 100 \
@@ -155,8 +157,8 @@ echo "Testing: default capacity on a small trace never reclaims prematurely"
 # tiny capacity above (where the buffer is always full anyway, so
 # reclaiming firing correctly coincides with reclaiming firing at all).
 small_trace="tests/test_traces/feature/01_backfill_allowed.csv"
-small_out="/tmp/js_small_default_out.csv"
-small_log="/tmp/js_small_default_log.txt"
+small_out="$TEST_WORK_DIR/small_default_out.csv"
+small_log="$TEST_WORK_DIR/small_default_log.txt"
 
 $SIMULATOR "$small_trace" \
     --total_nodes 100 \
@@ -192,8 +194,8 @@ echo "Testing: rejected job doesn't stall the front-reclaiming sweep"
 # sweep to actually reach it mid-run, not just at the final flush.
 reject_trace="tests/test_traces/feature/rejected_job.csv"
 
-reject_out="/tmp/js_reject_out.csv"
-reject_log="/tmp/js_reject_log.txt"
+reject_out="$TEST_WORK_DIR/reject_out.csv"
+reject_log="$TEST_WORK_DIR/reject_log.txt"
 
 $SIMULATOR "$reject_trace" \
     --total_nodes 100 \
@@ -239,7 +241,7 @@ abort_output=$($SIMULATOR "tests/test_traces/feature/01_backfill_allowed.csv" \
     --run_time_mode limit \
     --job_store_capacity 1 \
     --job_store_overflow abort \
-    --outfile /tmp/js_abort_out.csv 2>&1)
+    --outfile "$TEST_WORK_DIR/abort_out.csv" 2>&1)
 abort_rc=$?
 set -e
 
@@ -272,7 +274,8 @@ GROW_TRACE="tests/test_traces/feature/huge_10000jobs.csv"
 GROW_TRIALS=3
 
 if [ ! -f "$GROW_TRACE" ]; then
-    echo "  ⚠ SKIP - $GROW_TRACE not found"
+    echo "  ✗ FAIL - $GROW_TRACE not found"
+    FAIL=$((FAIL + 1))
 else
     sufficient_total=0
     tiny_total=0
@@ -285,7 +288,7 @@ else
             --timestamp_format epoch \
             --run_time_mode limit \
             --job_store_capacity 10000 \
-            --outfile /tmp/js_grow_sufficient_out.csv \
+            --outfile "$TEST_WORK_DIR/grow_sufficient_out.csv" \
             > /dev/null 2>&1
         t1=$(date +%s.%N)
         sufficient_total=$(echo "$sufficient_total + ($t1 - $t0)" | bc)
@@ -298,7 +301,7 @@ else
             --run_time_mode limit \
             --job_store_capacity 1 \
             --job_store_overflow grow \
-            --outfile /tmp/js_grow_tiny_out.csv \
+            --outfile "$TEST_WORK_DIR/grow_tiny_out.csv" \
             > /dev/null 2>&1
         t1=$(date +%s.%N)
         tiny_total=$(echo "$tiny_total + ($t1 - $t0)" | bc)
@@ -312,7 +315,7 @@ else
     echo "  Tiny initial capacity (1, grows via doubling to >=10000): ${tiny_avg}s avg over $GROW_TRIALS runs"
     echo "  Difference: ${diff_pct}%"
 
-    if diff -q /tmp/js_grow_sufficient_out.csv /tmp/js_grow_tiny_out.csv > /dev/null; then
+    if diff -q "$TEST_WORK_DIR/grow_sufficient_out.csv" "$TEST_WORK_DIR/grow_tiny_out.csv" > /dev/null; then
         echo "  ✓ Output identical either way (correctness unaffected by capacity choice)"
         PASS=$((PASS + 1))
     else

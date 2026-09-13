@@ -595,15 +595,18 @@ void BasicTrace<Policy>::run_until_inclusive(sim_time_t target_time) {
   // Process events at and before target_time
   while (!m_ctx.m_evtq.empty()) {
     const auto &event = *m_ctx.m_evtq.begin();
-    sim_time_t event_time = static_cast<sim_time_t>(event.get_time().first) +
-                            event.get_time().second;
+    const epoch_t event_timestamp = event.get_time();
+    sim_time_t event_time = static_cast<sim_time_t>(event_timestamp.first) +
+                            event_timestamp.second;
 
     if (event_time > target_time) {
       break; // Stop after processing all events <= target_time
     }
 
     // Process this event by running slightly past it
-    process_events_until(event.get_time());
+    // process_events_until() erases this event. Pass an independent timestamp
+    // instead of a reference into the set node that it is about to destroy.
+    process_events_until(event_timestamp);
   }
 }
 

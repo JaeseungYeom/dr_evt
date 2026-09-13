@@ -12,7 +12,7 @@ The `--timezone` option supplies the timezone used to interpret ISO timestamps
 without an embedded offset:
 
 ```bash
-simulator trace.csv \
+${CMAKE_INSTALL_PREFIX}/bin/simulator trace.csv \
   --timestamp_format iso \
   --timezone America/Los_Angeles
 ```

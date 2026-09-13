@@ -24,15 +24,15 @@ jobs:
         compiler: [gcc, clang]
         include:
           - compiler: gcc
-            cc: gcc-11
-            cxx: g++-11
+            cc: gcc-13
+            cxx: g++-13
           - compiler: clang
-            cc: clang-14
-            cxx: clang++-14
+            cc: clang-18
+            cxx: clang++-18
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -54,9 +54,9 @@ jobs:
             ${{ matrix.cxx }}
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
-          python-version: '3.9'
+          python-version: '3.12'
 
       - name: Display versions
         run: |
@@ -64,7 +64,7 @@ jobs:
           ${{ matrix.cc }} --version
           ${{ matrix.cxx }} --version
           cmake --version
-          python3 --version
+          python --version
           echo "=== MPI version ==="
           if command -v mpirun >/dev/null 2>&1; then
             mpirun --version
@@ -78,9 +78,10 @@ jobs:
 
       - name: Create Python virtual environment
         run: |
-          python3 -m venv venv
+          python -m venv venv
           source venv/bin/activate
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
+          python -m pip install grpcio grpcio-tools protobuf
 
       - name: Configure CMake
         env:
@@ -93,11 +94,10 @@ jobs:
           # does not reliably pick up an activated venv on its own across
           # CMake versions/environments - without this, it can silently
           # resolve to a different system Python (e.g. Ubuntu 24.04's
-          # default 3.12) even with the venv active, producing a
-          # dr_evt.cpython-312-*.so that the venv's own 3.9 interpreter
-          # can never import (compiled extension modules are ABI-specific
-          # to their build interpreter's version).
-          PYTHON_EXE=$(command -v python3)
+          # default interpreter) even with the venv active, producing an
+          # ABI-tagged extension that the active venv cannot import (compiled
+          # extension modules are ABI-specific to their build interpreter).
+          PYTHON_EXE=$(command -v python)
           echo "Building Python bindings against: $PYTHON_EXE ($($PYTHON_EXE --version))"
           # Fresh build directory: avoids picking up a stale .so left over
           # from an earlier configure against a different Python version.
@@ -214,8 +214,8 @@ jobs:
           ./tests/run_easy_vs_conservative_correctness_tests.sh
           echo ""
           echo "Test 2: Implementation Equivalence (C++ vs Python)"
-          echo "Note: Using 100 jobs for CI (full 2000-job test takes ~8 minutes)"
-          ./tests/compare_cpp_python_conservative.sh tests/test_traces/scale/large_100jobs.csv 1000
+          echo "Using 500 jobs on 400 nodes to exercise sustained contention"
+          ./tests/compare_cpp_python_conservative.sh tests/test_traces/scale/xlarge_500jobs.csv 400
 
       - name: Run Replay Tests
         id: replay
@@ -253,7 +253,7 @@ jobs:
         id: core-ctest
         run: |
           cd build
-          ctest -R '^(test_rngen|test_state_rngen|test_pcon_trace|test_trace_type_cli)$' --output-on-failure
+          ctest --output-on-failure
 
       - name: Run Python API Tests
         id: python-api
@@ -262,7 +262,7 @@ jobs:
           echo "========================================"
           echo "Running Python API Tests (16 tests)"
           echo "========================================"
-          ./tests/run_python_tests.sh
+          PYTHON_EXECUTABLE=$(command -v python) ./tests/run_python_tests.sh
 
       - name: Run gRPC Client/Server Tests
         id: grpc
@@ -288,6 +288,16 @@ jobs:
           echo "========================================"
           ./tests/run_backfill_window_grpc_test.sh
 
+      - name: Run Single-Coordinator gRPC Test
+        id: grpc-single-coordinator
+        run: |
+          source venv/bin/activate
+          echo "========================================"
+          echo "Running synchronized single-coordinator gRPC test"
+          echo "========================================"
+          python tests/test_grpc_single_coordinator.py \
+            "$GITHUB_WORKSPACE/install/bin/dr_evt_server"
+
       - name: Run Progressive Loading Tests
         id: progressive-load
         run: |
@@ -300,9 +310,8 @@ jobs:
         id: queue-input-schema
         run: $GITHUB_WORKSPACE/install/bin/tests/test_queue_input
 
-      - name: Run Scale Tests (Optional)
+      - name: Run Scale Tests
         id: scale
-        continue-on-error: true
         run: |
           echo "========================================"
           echo "Running Scale Tests (7 tests)"
@@ -329,18 +338,18 @@ jobs:
           echo "  Resource History (5 tests): ${{ steps.resource-history.outcome }}"
           echo "  Job Store (6 tests): ${{ steps.job-store.outcome }}"
           echo "  Config (9 tests): ${{ steps.config.outcome }}"
-          echo "  Core CTest tests (4 tests): ${{ steps.core-ctest.outcome }}"
+          echo "  Native CTest suite: ${{ steps.core-ctest.outcome }}"
           echo "  Python API (16 tests): ${{ steps.python-api.outcome }}"
           echo "  Append-Job (18 C++ + gRPC): ${{ steps.append-job.outcome }}"
           echo "  Backfill Window gRPC (included in Append-Job count): ${{ steps.backfill-window.outcome }}"
+          echo "  Single-Coordinator gRPC: ${{ steps.grpc-single-coordinator.outcome }}"
           echo "  Progressive Loading (11 C++ + 4 CLI): ${{ steps.progressive-load.outcome }}"
           echo "  Queue Input Schema: ${{ steps.queue-input-schema.outcome }}"
           echo "  gRPC Client/Server (2 tests): ${{ steps.grpc.outcome }}"
-          echo "  Scale (7 tests, optional): ${{ steps.scale.outcome }}"
+          echo "  Scale (7 tests): ${{ steps.scale.outcome }}"
           echo ""
           echo "Outcome values: success | failure | skipped | cancelled"
           echo ""
-          echo "Note: Scale tests use continue-on-error, so 'failure' won't fail the job."
           echo "See tests/README.md and docs/TESTING_GUIDE.md for test details."
           echo "========================================"
 
