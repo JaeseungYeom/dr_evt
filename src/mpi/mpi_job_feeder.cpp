@@ -231,16 +231,10 @@ int main(int argc, char **argv) {
       MPI_Barrier(MPI_COMM_WORLD);
     }
 
-    // Final advance to complete all jobs
-    sim_time_t max_time = 0.0;
-    for (const auto &job : sim.get_trace().data()) {
-      sim_time_t submit = static_cast<sim_time_t>(job.get_submit_time().first) +
-                          job.get_submit_time().second;
-      sim_time_t duration = job.get_limit_time();
-      max_time = std::max(max_time, submit + duration * 2);
-    }
-
-    sim.advance_to(max_time);
+    // Drain every queued and running job. A bound derived from individual
+    // submit times and durations is not sufficient when resource contention
+    // delays jobs behind one another.
+    sim.advance_to(std::numeric_limits<sim_time_t>::max());
 
     // Gather statistics from all ranks
     int total_submitted = 0;
@@ -256,8 +250,8 @@ int main(int argc, char **argv) {
                        std::to_string(total_submitted) + "\n" +
                        std::string("Jobs completed: ") +
                        std::to_string(sim.get_trace().data().size()) + "\n" +
-                       std::string("Final time: ") +
-                       std::to_string(sim.get_current_time()) + "\n" +
+                       std::string("Local makespan: ") +
+                       std::to_string(sim.get_statistics().makespan) + "\n" +
                        std::string("Nodes in use: ") +
                        std::to_string(sim.get_nodes_in_use()) + "\n\n";
 
