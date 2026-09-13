@@ -60,11 +60,13 @@ std::vector<JobInfo> get_rank_jobs(const Trace &trace) {
     my_jobs.push_back({static_cast<job_no_t>(i), submit});
   }
 
-  // Sort by submit time
-  std::sort(my_jobs.begin(), my_jobs.end(),
-            [](const JobInfo &a, const JobInfo &b) {
-              return a.submit_time < b.submit_time;
-            });
+  // Preserve the trace's FCFS order for jobs with the same submit time.
+  // Simulation::initialize_trace() uses the same stable ordering, so an
+  // unstable sort here can change which tied job receives resources first.
+  std::stable_sort(my_jobs.begin(), my_jobs.end(),
+                   [](const JobInfo &a, const JobInfo &b) {
+                     return a.submit_time < b.submit_time;
+                   });
 
   return my_jobs;
 }
