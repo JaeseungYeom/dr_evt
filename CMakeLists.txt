@@ -262,8 +262,8 @@ endif (DR_EVT_HAS_PROTOBUF)
 # Setup Boost (will use FetchContent if not found)
 include(SetupBoost)
 
-message(STATUS "Boost_INCLUDE_DIRS: " ${Boost_INCLUDE_DIRS})
-message(STATUS "Boost_LIBRARY_DIRS: " ${Boost_LIBRARY_DIRS})
+message(STATUS "Boost_INCLUDE_DIRS: ${Boost_INCLUDE_DIRS}")
+message(STATUS "Boost_LIBRARY_DIRS: ${Boost_LIBRARY_DIRS}")
 
 # Setup Python bindings (optional)
 include(SetupPybind11)

@@ -180,8 +180,6 @@ unset(DR_EVT_HAD_BOOST_INCLUDEDIR)
 unset(DR_EVT_HAD_BOOST_LIBRARYDIR)
 
 if(NOT Boost_FOUND)
-    # If Boost is missing, install it via FetchContent
-    message(STATUS "Installing Boost via FetchContent (this may take 10-15 minutes)...")
     include(FetchContent)
 
     FetchContent_Declare(
@@ -190,6 +188,27 @@ if(NOT Boost_FOUND)
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
         SYSTEM  # CMake 3.25+ marks it as SYSTEM to suppress warnings
     )
+
+    # FetchContent reuses an already populated source tree across configure
+    # runs. Report that separately from the first download so reconfiguration
+    # does not misleadingly claim that Boost is being installed again.
+    if (FETCHCONTENT_SOURCE_DIR_BOOST)
+        set(DR_EVT_BOOST_FETCHCONTENT_SOURCE_DIR
+            "${FETCHCONTENT_SOURCE_DIR_BOOST}")
+    else()
+        set(DR_EVT_BOOST_FETCHCONTENT_SOURCE_DIR
+            "${FETCHCONTENT_BASE_DIR}/boost-src")
+    endif()
+    if (EXISTS "${DR_EVT_BOOST_FETCHCONTENT_SOURCE_DIR}/CMakeLists.txt")
+        message(STATUS "Reusing Boost source already fetched under "
+                       "${DR_EVT_BOOST_FETCHCONTENT_SOURCE_DIR} "
+                       "(not re-downloading).")
+    else()
+        message(STATUS "Boost was not found as an installed package; "
+                       "fetching its source with FetchContent. The first "
+                       "download may take 10-15 minutes.")
+    endif()
+    unset(DR_EVT_BOOST_FETCHCONTENT_SOURCE_DIR)
 
     set(BOOST_INCLUDE_LIBRARIES regex filesystem system program_options serialization container multi_index circular_buffer)
     set(BOOST_ENABLE_CMAKE ON)
@@ -228,7 +247,7 @@ if(NOT Boost_FOUND)
         CACHE STRING "Boost libraries" FORCE)
     set(DR_EVT_BOOST_FETCHCONTENT ON)
 
-    message(STATUS "Boost installed via FetchContent at: ${boost_SOURCE_DIR}")
+    message(STATUS "Boost configured from FetchContent source at: ${boost_SOURCE_DIR}")
     message(STATUS "Boost imported targets available: ${Boost_LIBRARIES}")
 else()
     set(DR_EVT_BOOST_FETCHCONTENT OFF)
