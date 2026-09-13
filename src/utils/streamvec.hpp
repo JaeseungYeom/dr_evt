@@ -24,7 +24,7 @@ namespace dr_evt {
  * In addition, the space reserving method is provided such that users can
  * preallocate the necessary space in advance to avoid the reallocation
  * overhead. Users have no way to avoid such an overhead when using stringstream
- * with a binary archive in Cereal.
+ * with a binary archive in Ser20.
  */
 template <typename CharT, typename Traits = std::char_traits<CharT>>
 class ostreamvec : public std::basic_streambuf<CharT, Traits> {

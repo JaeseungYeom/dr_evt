@@ -102,7 +102,7 @@ endif
 BOOST_CFLAGS := -I$(BOOST_INC_DIR)
 BOOST_LIBS := -L$(BOOST_LIB_DIR) -lboost_program_options
 
-CXXFLAGS = -Wall -std=c++17 -m64 \
+CXXFLAGS = -Wall -std=c++20 -m64 \
            -I../.. \
            $(BOOST_CFLAGS) \
            $(PROTO_CFLAGS) \

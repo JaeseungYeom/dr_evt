@@ -84,7 +84,7 @@ Top-level ``src``
 - `omp_diagnostics.cpp <https://github.com/LLNL/dr_evt/blob/main/src/utils/omp_diagnostics.cpp>`_, `omp_diagnostics.hpp <https://github.com/LLNL/dr_evt/blob/main/src/utils/omp_diagnostics.hpp>`_
 - `rngen.hpp <https://github.com/LLNL/dr_evt/blob/main/src/utils/rngen.hpp>`_, `rngen_impl.hpp <https://github.com/LLNL/dr_evt/blob/main/src/utils/rngen_impl.hpp>`_
 - `seed.hpp <https://github.com/LLNL/dr_evt/blob/main/src/utils/seed.hpp>`_
-- `state_io.hpp <https://github.com/LLNL/dr_evt/blob/main/src/utils/state_io.hpp>`_, `state_io_cereal.hpp <https://github.com/LLNL/dr_evt/blob/main/src/utils/state_io_cereal.hpp>`_, `state_io_impl.hpp <https://github.com/LLNL/dr_evt/blob/main/src/utils/state_io_impl.hpp>`_
+- `state_io.hpp <https://github.com/LLNL/dr_evt/blob/main/src/utils/state_io.hpp>`_, `state_io_ser20.hpp <https://github.com/LLNL/dr_evt/blob/main/src/utils/state_io_ser20.hpp>`_, `state_io_impl.hpp <https://github.com/LLNL/dr_evt/blob/main/src/utils/state_io_impl.hpp>`_
 - `streambuff.hpp <https://github.com/LLNL/dr_evt/blob/main/src/utils/streambuff.hpp>`_, `streambuff_impl.hpp <https://github.com/LLNL/dr_evt/blob/main/src/utils/streambuff_impl.hpp>`_
 - `streamvec.hpp <https://github.com/LLNL/dr_evt/blob/main/src/utils/streamvec.hpp>`_, `streamvec_impl.hpp <https://github.com/LLNL/dr_evt/blob/main/src/utils/streamvec_impl.hpp>`_
 - `system_memory.cpp <https://github.com/LLNL/dr_evt/blob/main/src/utils/system_memory.cpp>`_, `system_memory.hpp <https://github.com/LLNL/dr_evt/blob/main/src/utils/system_memory.hpp>`_

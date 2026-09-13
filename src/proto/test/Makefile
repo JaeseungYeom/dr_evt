@@ -21,7 +21,7 @@ ifeq ($(strip $(PROTO_LIBS)),)
   $(error pkg-config could not find protobuf under $(PROTO_DIR))
 endif
 
-CXXFLAGS = -Wall -std=c++17 -m64 \
+CXXFLAGS = -Wall -std=c++20 -m64 \
            -I../.. \
            $(PROTO_CFLAGS) \
            -I$(CMAKE_INSTALL_PREFIX)/include

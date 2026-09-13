@@ -8,7 +8,7 @@ set_full_path(THIS_DIR_HEADERS
   seed.hpp
   state_io.hpp
   state_io_impl.hpp
-  state_io_cereal.hpp
+  state_io_ser20.hpp
   streambuff.hpp
   streambuff_impl.hpp
   streamvec.hpp

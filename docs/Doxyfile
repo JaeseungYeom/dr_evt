@@ -56,11 +56,11 @@ STRIP_CODE_COMMENTS    = NO
 ENABLE_PREPROCESSING   = YES
 MACRO_EXPANSION        = YES
 EXPAND_ONLY_PREDEF     = NO
-# Include the optional serialization API in the generated reference. Cereal is
+# Include the optional serialization API in the generated reference. Ser20 is
 # enabled in supported builds, but Doxygen does not read the generated CMake
 # configuration header.
-PREDEFINED             = DR_EVT_HAS_CEREAL=1 \
-                         "ENABLE_CUSTOM_CEREAL(x)="
+PREDEFINED             = DR_EVT_HAS_SER20=1 \
+                         "ENABLE_CUSTOM_SER20(x)="
 
 # Diagrams
 HAVE_DOT               = YES

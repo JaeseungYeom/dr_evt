@@ -23,7 +23,7 @@
 #include "catch2/catch.hpp"
 #endif // defined(DR_EVT_HAS_CATCH2)
 
-enum MethodT { Cereal, Bits };
+enum MethodT { Ser20, Bits };
 enum StreamBufT { StreamVec, StreamBuff, StringStream };
 
 template <typename RNGenT, typename CharT = char,
@@ -31,11 +31,11 @@ template <typename RNGenT, typename CharT = char,
 std::basic_ostream<CharT, Traits> &
 save_state_os(const RNGenT &rgen, const MethodT method,
               std::basic_ostream<CharT, Traits> &os) {
-  if (method == Cereal) {
-#if defined(DR_EVT_HAS_CEREAL)
-    cereal::BinaryOutputArchive oarchive(os);
+  if (method == Ser20) {
+#if defined(DR_EVT_HAS_SER20)
+    ser20::BinaryOutputArchive oarchive(os);
     oarchive(rgen); // Write the data to the archive
-#endif              // defined(DR_EVT_HAS_CEREAL)
+#endif              // defined(DR_EVT_HAS_SER20)
   } else {
     rgen.save_bits(os);
   }
@@ -47,11 +47,11 @@ template <typename RNGenT, typename CharT = char,
 std::basic_istream<CharT, Traits> &
 load_state_is(RNGenT &rgen, const MethodT method,
               std::basic_istream<CharT, Traits> &is) {
-  if (method == Cereal) {
-#if defined(DR_EVT_HAS_CEREAL)
-    cereal::BinaryInputArchive iarchive(is);
+  if (method == Ser20) {
+#if defined(DR_EVT_HAS_SER20)
+    ser20::BinaryInputArchive iarchive(is);
     iarchive(rgen); // Write the data to the archive
-#endif              // defined(DR_EVT_HAS_CEREAL)
+#endif              // defined(DR_EVT_HAS_SER20)
   } else {
     rgen.load_bits(is);
   }
@@ -102,7 +102,7 @@ bool load_from_streambuff(const MethodT method, RNGenT &rgen, char *buf,
 }
 
 /**
- * \test Test save/load the state of #dr_evt::RNGen using Cereal or Bits
+ * \test Test save/load the state of #dr_evt::RNGen using Ser20 or Bits
  * serialization method toghether with #dr_evt::streamvec or dr_evt::streambuf
  * buffering. The test is to generate some number of random numbers using one
  * RNGen object first. Then, save the staete of the object, and load it into
@@ -126,13 +126,6 @@ inline bool test_RNGen_state_io(const RNGenParamT &p, const MethodT method,
                                 const StreamBufT buftype,
                                 std::stringstream &sstr,
                                 const bool reserve_space = true) {
-#if !defined(DR_EVT_HAS_CEREAL)
-  if (method == Cereal) {
-    std::cerr << "Cereal is not enabled!" << std::endl;
-    return false;
-  }
-#endif // defined(DR_EVT_HAS_CEREAL)
-
   static_assert(std::is_same<typename RNGenT::param_type, RNGenParamT>::value,
                 "Invalid paramter type");
 
@@ -234,21 +227,23 @@ int main(int argc, char **argv)
 #endif
 
   // StreamVec
+#if defined(DR_EVT_HAS_SER20)
   SECTION("Save and load the state of RNGen based on integer type uniform "
-          "distribution using Cereal and StreamVec") {
+          "distribution using Ser20 and StreamVec") {
     std::stringstream sstr;
     ok = test_RNGen_state_io<rng_uint_t>(rng_uint_t::param_type(100, 999),
-                                         Cereal, StreamVec, sstr);
+                                         Ser20, StreamVec, sstr);
     CHECK_RESULT;
   }
 
   SECTION("Save and load the state of RNGen based on real type uniform "
-          "distribution using Cereal and StreamVec") {
+          "distribution using Ser20 and StreamVec") {
     std::stringstream sstr;
     ok = test_RNGen_state_io<rng_double_t>(rng_double_t::param_type(0.0, 1.0),
-                                           Cereal, StreamVec, sstr);
+                                           Ser20, StreamVec, sstr);
     CHECK_RESULT;
   }
+#endif // defined(DR_EVT_HAS_SER20)
   SECTION("Save and load the state of RNGen based on integer type uniform "
           "distribution using the DR_EVT native method Bits and StreamVec") {
     std::stringstream sstr;
@@ -265,20 +260,22 @@ int main(int argc, char **argv)
   }
 
   // StreamBuff
+#if defined(DR_EVT_HAS_SER20)
   SECTION("Save and load the state of RNGen based on integer type uniform "
-          "distribution using Cereal and StreamBuff") {
+          "distribution using Ser20 and StreamBuff") {
     std::stringstream sstr;
     ok = test_RNGen_state_io<rng_uint_t>(rng_uint_t::param_type(100, 999),
-                                         Cereal, StreamBuff, sstr);
+                                         Ser20, StreamBuff, sstr);
     CHECK_RESULT;
   }
   SECTION("Save and load the state of RNGen based on real type uniform "
-          "distribution using Cereal and StreamBuff") {
+          "distribution using Ser20 and StreamBuff") {
     std::stringstream sstr;
     ok = test_RNGen_state_io<rng_double_t>(rng_double_t::param_type(0.0, 1.0),
-                                           Cereal, StreamBuff, sstr);
+                                           Ser20, StreamBuff, sstr);
     CHECK_RESULT;
   }
+#endif // defined(DR_EVT_HAS_SER20)
   SECTION("Save and load the state of RNGen based on integer type uniform "
           "distribution using the DR_EVT native method Bits and StreamBuff") {
     std::stringstream sstr;
@@ -295,20 +292,22 @@ int main(int argc, char **argv)
   }
 
   // std::stringstream
+#if defined(DR_EVT_HAS_SER20)
   SECTION("Save and load the state of RNGen based on integer type uniform "
-          "distribution using Cereal and std::stringstream") {
+          "distribution using Ser20 and std::stringstream") {
     std::stringstream sstr;
     ok = test_RNGen_state_io<rng_uint_t>(rng_uint_t::param_type(100, 999),
-                                         Cereal, StringStream, sstr);
+                                         Ser20, StringStream, sstr);
     CHECK_RESULT;
   }
   SECTION("Save and load the state of RNGen based on real type uniform "
-          "distribution using Cereal and std::stringstream") {
+          "distribution using Ser20 and std::stringstream") {
     std::stringstream sstr;
     ok = test_RNGen_state_io<rng_double_t>(rng_double_t::param_type(0.0, 1.0),
-                                           Cereal, StringStream, sstr);
+                                           Ser20, StringStream, sstr);
     CHECK_RESULT;
   }
+#endif // defined(DR_EVT_HAS_SER20)
   SECTION("Save and load the state of RNGen based on integer type uniform "
           "distribution using the DR_EVT native method Bits and "
           "std::stringstream") {
@@ -327,14 +326,16 @@ int main(int argc, char **argv)
   }
 
   // StreamVec with no space reservation
+#if defined(DR_EVT_HAS_SER20)
   SECTION(
       "Save and load the state of RNGen based on integer type uniform "
-      "distribution using Cereal and StreamVec withtout space reservation") {
+      "distribution using Ser20 and StreamVec without space reservation") {
     std::stringstream sstr;
     ok = test_RNGen_state_io<rng_uint_t>(rng_uint_t::param_type(100, 999),
-                                         Cereal, StreamVec, sstr, false);
+                                         Ser20, StreamVec, sstr, false);
     CHECK_RESULT;
   }
+#endif // defined(DR_EVT_HAS_SER20)
 
   SECTION("Caller-supplied distributions use the serialized RNGen engine") {
     std::stringstream sstr;

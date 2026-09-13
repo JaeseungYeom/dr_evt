@@ -11,13 +11,13 @@
 #error "no config"
 #endif
 
-#if defined(DR_EVT_HAS_CEREAL)
+#if defined(DR_EVT_HAS_SER20)
 #include "utils/seed.hpp"
-#include "utils/state_io_cereal.hpp"
+#include "utils/state_io_ser20.hpp"
 #include <iostream>
 #include <random>
 #include <sstream>
-ENABLE_CUSTOM_CEREAL(std::minstd_rand);
+ENABLE_CUSTOM_SER20(std::minstd_rand);
 
 #if defined(DR_EVT_HAS_CATCH2)
 #include "catch2/catch.hpp"
@@ -68,7 +68,7 @@ struct MyClass {
     gen.seed(sseq);
   }
 
-  // This method lets cereal know which data members to serialize
+  // This method lets Ser20 know which data members to serialize
   template <class Archive> void serialize(Archive &archive) {
     archive(x, y, z, m, gen); // serialize things by passing them to the archive
   }
@@ -206,9 +206,9 @@ int main() {
   use_streamvec();
   use_streambuff();
 
-  is_custom_bin_cerealizable<MyClass2>();
-  is_custom_bin_cerealizable<MyClass::generator_t>();
-  is_custom_bin_cerealizable<double>();
+  is_custom_bin_ser20_serializable<MyClass2>();
+  is_custom_bin_ser20_serializable<MyClass::generator_t>();
+  is_custom_bin_ser20_serializable<double>();
   return 0;
 }
-#endif // !defined(DR_EVT_HAS_CEREAL)
+#endif // defined(DR_EVT_HAS_SER20)
