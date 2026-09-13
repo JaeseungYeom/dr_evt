@@ -62,6 +62,13 @@ EXPAND_ONLY_PREDEF     = NO
 PREDEFINED             = DR_EVT_HAS_SER20=1 \
                          "ENABLE_CUSTOM_SER20(x)="
 
+# Doxygen 1.8 represents C++20 concepts as variables in XML. Breathe then
+# passes an invalid ``template<...> concept ...`` variable declaration to the
+# Sphinx C++ domain. Keep the concept in the function signatures, but omit its
+# misclassified standalone declaration until the older Doxygen format is no
+# longer supported.
+EXCLUDE_SYMBOLS        = seed_hashable
+
 # Diagrams
 HAVE_DOT               = YES
 CLASS_DIAGRAMS         = YES
