@@ -46,14 +46,14 @@ available-memory queries, monotonic timing, and path helpers.
    Other utilities
    ---------------
 
-   .. doxygenfunction:: dr_evt::get_available_memory_bytes
+   .. doxygenfile:: system_memory.hpp
       :project: dr_evt
+      :no-link:
 
-   .. doxygenfunction:: dr_evt::get_time
+   .. doxygenfile:: timer.hpp
       :project: dr_evt
+      :no-link:
 
-   .. doxygenfunction:: dr_evt::extract_file_component
+   .. doxygenfile:: file.hpp
       :project: dr_evt
-
-   .. doxygenfunction:: dr_evt::append_to_stem
-      :project: dr_evt
+      :no-link:

@@ -6,8 +6,8 @@ output. Resource history is a separate circular buffer from the job store.
 
 .. only:: doxygen
 
-   .. doxygentypedef:: dr_evt::Trace
-      :project: dr_evt
+   ``Trace`` is the standard-policy alias
+   ``BasicTrace<Standard_Trace_Policy>``.
 
    .. doxygenclass:: dr_evt::BasicTrace
       :project: dr_evt

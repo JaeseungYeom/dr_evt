@@ -6,8 +6,8 @@ advancement, scheduling, statistics, and output generation.
 
 .. only:: doxygen
 
-   .. doxygentypedef:: dr_evt::Simulation
-      :project: dr_evt
+   ``Simulation`` is the standard-trace alias
+   ``BasicSimulation<Trace>``.
 
    .. doxygenclass:: dr_evt::BasicSimulation
       :project: dr_evt
