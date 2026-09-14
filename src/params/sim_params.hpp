@@ -120,6 +120,8 @@ public:
 
   /// Backfill behavior applied by the scheduler.
   BackfillPolicy m_backfill_policy;
+  /// Maximum feasible jobs offered to an experimental backfill selector.
+  size_t m_num_max_candidates;
   /// Job priority/order policy applied by the scheduler.
   PriorityPolicy m_priority_policy;
   /// Wait-queue implementation used by FCFS scheduling.

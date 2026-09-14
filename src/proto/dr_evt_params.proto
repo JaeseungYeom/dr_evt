@@ -94,6 +94,10 @@ message DR_EVT_Params {
         // job-store capacity. Capacity pressure and explicit/final flushes
         // remain independent triggers.
         uint64 job_flush_interval = 28; // (default: 0)
+
+        // Maximum feasible jobs passed to an experimental external backfill
+        // selector in one decision. 0 keeps Sim_Params' default (1).
+        uint64 num_max_candidates = 29;
     }
 
     message Tracing_Params {

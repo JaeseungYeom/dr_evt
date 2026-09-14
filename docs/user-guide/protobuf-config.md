@@ -16,7 +16,7 @@ Configuration field names match the long command-line names with the leading
 |---|---|
 | Input and output | `infile`, `infile_list`, `outfile`, `resource_trace` |
 | Limits | `max_jobs`, `max_time`, `total_nodes` |
-| Scheduling | `backfill_policy`, `priority_policy`, `queue_impl`, `block_size` |
+| Scheduling | `backfill_policy`, `priority_policy`, `num_max_candidates`, `queue_impl`, `block_size` |
 | Queue storage | `wait_queue_capacity`, `wait_queue_overflow` |
 | Job storage | `job_store_capacity`, `job_store_overflow`, `job_flush_interval`, `memory_pressure_fraction` |
 | Resource history | `resource_history_capacity` |

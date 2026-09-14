@@ -44,6 +44,7 @@ message ClientMessage {
         AppendJobsRequest append_jobs = 14;
         FinishSimulationRequest finish_simulation = 15;
         GetBackfillWindowRequest get_backfill_window = 16;
+        GetCurrentUtilizationRequest get_current_utilization = 17;
     }
 }
 
@@ -147,6 +148,9 @@ message GetFCFSHeadShadowTimeRequest {}
 // snapshot.  Release events are calculated with the jobs' time limits, the
 // same estimates used by the FCFS head reservation calculation.
 message GetBackfillWindowRequest {}
+// Instantaneous nodes-in-use / total-nodes ratio. This is distinct from the
+// time-averaged utilization in GetStatisticsResponse.
+message GetCurrentUtilizationRequest {}
 message GetStatisticsRequest {}
 message GetTraceSizeRequest {}
 
@@ -173,6 +177,7 @@ message ServerMessage {
         AppendJobsResponse append_jobs = 15;
         FinishSimulationResponse finish_simulation = 16;
         GetBackfillWindowResponse get_backfill_window = 17;
+        GetCurrentUtilizationResponse get_current_utilization = 18;
     }
 }
 
@@ -220,6 +225,10 @@ message GetNodesInUseResponse {
 
 message GetAvailableNodesResponse {
     uint32 available_nodes = 1;
+}
+
+message GetCurrentUtilizationResponse {
+    double utilization = 1;
 }
 
 message GetActiveJobCountResponse {

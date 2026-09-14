@@ -36,6 +36,13 @@ print(stats.jobs_running, stats.nodes_in_use)
 A complete runnable example is
 [`python/example_streaming.py`](https://github.com/LLNL/dr_evt/blob/main/python/example_streaming.py).
 
+For experimental external backfill selection, set
+`params.num_max_candidates`, then call
+`Simulation(params, job_cost_function, backfill_selector)`. The cost callback
+receives `(job_id, submit_time, runtime_estimate, nodes_requested)`. The
+selector receives a list of `(job_id, cost)` pairs and returns one offered ID
+or `None`.
+
 ## Configuration
 
 `SimParams` currently exposes these mutable attributes:
@@ -48,6 +55,7 @@ A complete runnable example is
 | `timestamp_format` | `str` |
 | `run_time_mode` | `RunTimeMode` |
 | `backfill_policy` | `BackfillPolicy` |
+| `num_max_candidates` | `int` |
 | `priority_policy` | `PriorityPolicy` |
 | `verbose` | `bool` |
 
@@ -83,6 +91,7 @@ Their scheduling semantics are documented in
 | `run_until_exclusive(target_time)` | Process events strictly before the target. |
 | `get_current_time()` | Return current simulation time. |
 | `get_nodes_in_use()` | Return allocated nodes. |
+| `get_current_utilization()` | Return instantaneous `nodes_in_use / total_nodes`. |
 | `get_available_nodes()` | Return free nodes. |
 | `get_active_job_count()` | Return waiting jobs. |
 | `get_fcfs_head_shadow_time()` | Return the FCFS-head reservation time, or `-1`. |

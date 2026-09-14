@@ -64,6 +64,12 @@ set_sim_options(const dr_evt_proto::DR_EVT_Params::Simulation_Params &cfg,
     sp.m_total_nodes = cfg.total_nodes();
   }
 
+  // Candidate limit for the callback-driven experimental scheduler.
+  // Proto3's zero value preserves Sim_Params' default of one.
+  if (cfg.num_max_candidates() > 0) {
+    sp.m_num_max_candidates = cfg.num_max_candidates();
+  }
+
   // Backfill policy (default: EASY)
   if (!cfg.backfill_policy().empty()) {
     std::string policy = cfg.backfill_policy();

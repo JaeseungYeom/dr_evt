@@ -299,6 +299,16 @@ bool test_backfill_window(const std::string &server_address,
     advance.mutable_advance_to()->set_target_time(0.0);
     client.call(advance);
 
+    ClientMessage utilization_query;
+    utilization_query.mutable_get_current_utilization();
+    const auto utilization_response = client.call(utilization_query);
+    if (std::fabs(utilization_response.get_current_utilization().utilization() -
+                  1.0) > 1e-12) {
+      std::cerr << "  FAIL: expected instantaneous utilization 1.0\n";
+      client.finish();
+      return false;
+    }
+
     ClientMessage query;
     query.mutable_get_backfill_window();
     const auto query_response = client.call(query);

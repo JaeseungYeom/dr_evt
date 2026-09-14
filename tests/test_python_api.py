@@ -156,6 +156,7 @@ def test_sim_params(result):
         params.timestamp_format = "epoch"
         params.run_time_mode = dr_evt.RunTimeMode.LIMIT
         params.backfill_policy = dr_evt.BackfillPolicy.EASY
+        params.num_max_candidates = 8
         params.priority_policy = dr_evt.PriorityPolicy.FCFS
         params.verbose = False
 
@@ -186,6 +187,7 @@ def test_streaming_api(result):
         params.timestamp_format = "epoch"
         params.run_time_mode = dr_evt.RunTimeMode.LIMIT
         params.backfill_policy = dr_evt.BackfillPolicy.EASY
+        params.num_max_candidates = 2
         params.priority_policy = dr_evt.PriorityPolicy.FCFS
 
         # Create simulation
@@ -242,6 +244,7 @@ def test_monitoring_api(result):
         sim.advance_to(0.0)
         assert sim.get_nodes_in_use() == 30
         assert sim.get_available_nodes() == 70
+        assert abs(sim.get_current_utilization() - 0.3) < 1e-12
         result.record_pass("Active state monitoring")
 
         # Queue status
@@ -295,6 +298,51 @@ def test_backfill_window_api(result):
         result.record_pass("Backfill window snapshot")
     except Exception as e:
         result.record_fail("Backfill window API", str(e))
+    finally:
+        os.unlink(trace_file.name)
+
+
+def test_experimental_backfill_api(result):
+    """Cost and selection callbacks drive the experimental EASY scheduler."""
+    print("\n5c. Experimental Backfill API")
+
+    trace_file = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+    trace_file.close()
+
+    try:
+        create_test_trace(trace_file.name, [])
+        params = dr_evt.SimParams()
+        params.infile = trace_file.name
+        params.total_nodes = 100
+        params.trace_format = "simple"
+        params.timestamp_format = "epoch"
+        params.run_time_mode = dr_evt.RunTimeMode.LIMIT
+        params.backfill_policy = dr_evt.BackfillPolicy.EASY
+        params.num_max_candidates = 2
+
+        costed_jobs = []
+        candidate_windows = []
+
+        def compute_cost(job_id, submit_time, runtime, nodes):
+            costed_jobs.append(job_id)
+            return job_id
+
+        def select_lowest_cost(candidates):
+            candidate_windows.append(candidates)
+            return min(candidates, key=lambda candidate: candidate[1])[0]
+
+        sim = dr_evt.Simulation(params, compute_cost, select_lowest_cost)
+        for nodes, runtime in [(70, 100), (50, 200), (20, 50),
+                               (10, 20), (10, 30)]:
+            sim.append_job(0.0, nodes, QUEUE_INPUT, runtime)
+        sim.advance_to(0.0)
+
+        assert costed_jobs == [0, 1, 2, 3, 4]
+        assert candidate_windows[0] == [(2, 2), (3, 3)]
+        assert select_lowest_cost([(7, 4), (8, 2), (9, 2)]) == 8
+        result.record_pass("Experimental cost and selection callbacks")
+    except Exception as e:
+        result.record_fail("Experimental backfill API", str(e))
     finally:
         os.unlink(trace_file.name)
 
@@ -497,6 +545,7 @@ def main():
     test_streaming_api(result)
     test_monitoring_api(result)
     test_backfill_window_api(result)
+    test_experimental_backfill_api(result)
     test_statistics(result)
     test_backfill_policies(result)
     test_priority_policies(result)

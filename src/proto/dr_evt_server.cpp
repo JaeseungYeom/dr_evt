@@ -344,6 +344,12 @@ public:
               sim->get_available_nodes());
           break;
         }
+        case ClientMessage::kGetCurrentUtilization: {
+          require_init(sim);
+          resp.mutable_get_current_utilization()->set_utilization(
+              sim->get_current_utilization());
+          break;
+        }
         case ClientMessage::kGetActiveJobCount: {
           require_init(sim);
           resp.mutable_get_active_job_count()->set_active_job_count(

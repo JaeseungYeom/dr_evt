@@ -36,6 +36,21 @@ BasicSimulation<TraceType>::BasicSimulation(const Sim_Params &params)
       m_rng(params.m_seed), m_queue_length_sum(0), m_queue_length_samples(0),
       m_queue_length_peak(0) {}
 
+template <typename TraceType>
+BasicSimulation<TraceType>::BasicSimulation(const Sim_Params &params,
+                                            job_cost_function_t cost_function,
+                                            backfill_selector_t selector)
+    : m_params(params), m_trace(params.m_infile, params.m_trace_format,
+                                params.m_timestamp_format, params.m_timezone),
+      m_scheduler(std::make_unique<ExperimentalFCFSScheduler>(
+          params.m_total_nodes, m_trace.data().size(), params.m_backfill_policy,
+          params.m_num_max_candidates, std::move(cost_function),
+          std::move(selector), params.m_wait_queue_capacity,
+          params.m_wait_queue_overflow)),
+      m_current_time(0.0), m_jobs_completed(0), m_jobs_submitted(0),
+      m_rng(params.m_seed), m_queue_length_sum(0), m_queue_length_samples(0),
+      m_queue_length_peak(0) {}
+
 template <typename TraceType> void BasicSimulation<TraceType>::run() {
   if (m_params.m_verbose) {
     std::cout << "Starting simulation..." << std::endl;

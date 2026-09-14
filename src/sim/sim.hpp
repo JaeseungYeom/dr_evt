@@ -27,6 +27,7 @@
 #include "common.hpp"
 #include "params/sim_params.hpp"
 #include "sim/scheduler_base.hpp"
+#include "sim/scheduler_fcfs_experimental.hpp"
 #include "trace/dr_event.hpp"
 #include "trace/trace.hpp"
 #include "utils/rngen.hpp"
@@ -89,6 +90,15 @@ public:
    * @param[in] params Immutable simulation configuration.
    */
   BasicSimulation(const Sim_Params &params);
+
+  /**
+   * @brief Construct a simulation with experimental external backfill choice.
+   * @param[in] params Immutable simulation configuration.
+   * @param[in] cost_function Callback that computes a job's cost at insertion.
+   * @param[in] selector Callback that chooses one of the reported candidates.
+   */
+  BasicSimulation(const Sim_Params &params, job_cost_function_t cost_function,
+                  backfill_selector_t selector);
 
   /**
    * @brief Run a complete batch simulation for the configured trace.
@@ -238,6 +248,17 @@ public:
    * @return Allocated-node count as num_nodes_t.
    */
   num_nodes_t get_nodes_in_use() const;
+
+  /**
+   * @brief Return instantaneous node utilization.
+   * @return nodes currently used divided by total configured nodes, in [0,1].
+   */
+  double get_current_utilization() const {
+    return m_params.m_total_nodes == 0
+               ? 0.0
+               : static_cast<double>(get_nodes_in_use()) /
+                     static_cast<double>(m_params.m_total_nodes);
+  }
 
   /**
    * @brief Get the current simulation time.

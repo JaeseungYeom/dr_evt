@@ -183,6 +183,19 @@ sim.advance_to(0.0);  // Now process START event
 
 ### Monitoring Methods
 
+For callback-driven EASY backfilling, construct the simulation with the
+experimental circular-buffer scheduler:
+
+```cpp
+BasicSimulation(const Sim_Params& params, job_cost_function_t cost_function,
+                backfill_selector_t selector);
+```
+
+Set `params.m_num_max_candidates` before construction. The cost function is
+invoked as each job enters the wait queue. The selection function receives up
+to that many feasible `(job_id, cost)` pairs and returns one of those IDs, or
+`std::nullopt` to decline a backfill.
+
 **Get current simulation time:**
 ```cpp
 sim_time_t get_current_time() const;
@@ -192,7 +205,12 @@ sim_time_t get_current_time() const;
 ```cpp
 num_nodes_t get_nodes_in_use() const;
 num_nodes_t get_available_nodes() const;
+double get_current_utilization() const;
 ```
+
+`get_current_utilization()` is the point-in-time ratio of allocated nodes to
+configured nodes. It is distinct from `Statistics::utilization`, which is
+time-averaged over the simulated makespan.
 
 **Get count of jobs waiting to be scheduled:**
 ```cpp

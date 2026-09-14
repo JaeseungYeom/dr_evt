@@ -75,6 +75,7 @@ $SIMULATOR "$TEST_TRACE" \
     --run_time_mode limit \
     --backfill_policy easy \
     --priority_policy fcfs \
+    --num_max_candidates 8 \
     --outfile "$TEST_WORK_DIR/cli_full.csv"
 
 $SIMULATOR "$TEST_TRACE" \
