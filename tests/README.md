@@ -10,7 +10,9 @@ Configure, build, and install before invoking the shell runners:
 
 ```bash
 export CMAKE_INSTALL_PREFIX="${PWD}/install"
-cmake -S . -B build -DCMAKE_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
+cmake -S . -B build \
+  -DCMAKE_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}" \
+  -DDR_EVT_WITH_UNIT_TESTING=ON
 cmake --build build -j4
 cmake --install build
 ```
@@ -26,6 +28,10 @@ all registered with CTest:
 
 ```bash
 ./tests/run_scheduler_correctness_tests.sh
+./tests/run_custom_scheduler_tests.sh
+./tests/run_fcfs_queue_implementation_tests.sh --correctness
+./tests/run_column_alias_tests.sh
+./tests/run_time_mode_tests.sh
 ./tests/run_unit_tests.sh
 ./tests/run_feature_tests.sh
 ./tests/run_scale_tests.sh
@@ -37,6 +43,11 @@ all registered with CTest:
 ./tests/run_append_job_tests.sh
 ./tests/run_progressive_load_tests.sh
 ./tests/run_configs_tests.sh
+./tests/run_python_tests.sh
+./tests/run_grpc_tests.sh
+./tests/run_backfill_window_grpc_test.sh
+python3 tests/test_grpc_single_coordinator.py \
+  "${CMAKE_INSTALL_PREFIX}/bin/dr_evt_server"
 ```
 
 Some runners require build options or external packages for Python bindings,
@@ -48,6 +59,10 @@ or are reported as skipped.
 | Category | Count | Runner or registration | Coverage |
 |---|---:|---|---|
 | Scheduler correctness | 34 | `run_scheduler_correctness_tests.sh` | C++/Python schedule and resource-trace consistency |
+| Custom FCFS | 6 | `run_custom_scheduler_tests.sh` | Four focused API checks plus two golden schedules, including 2,000 jobs |
+| Queue implementation differential | 34 × 4 | `run_fcfs_queue_implementation_tests.sh --correctness` | Equivalent schedules across deque, multimap, block, and circular queues |
+| Column aliases | 8 | `run_column_alias_tests.sh` | Accepted runtime-column aliases and missing-column rejection |
+| Run-time mode | 7 | `run_time_mode_tests.sh` | Actual, limit, distribution, capping, and planning behavior |
 | Unit | 7 | `run_unit_tests.sh` | Basic parsing, formats, and execution |
 | Feature | 6 | `run_feature_tests.sh` | Policies, modes, rejection, and output formats |
 | Scale | 7 | `run_scale_tests.sh` | Workloads from 10 to 10,000 jobs |
@@ -55,15 +70,22 @@ or are reported as skipped.
 | Replay | 5 | `run_replay_tests.sh` | Resource equivalence and reclamation safety |
 | Resource history | 5 | `run_resource_history_tests.sh` | Circular-buffer output and capacity handling |
 | Job store | 6 | `run_job_store_tests.sh` | Capacity, growth/abort, reclamation, and statistics |
-| Append-job | 18 | `run_append_job_tests.sh` | Streaming insertion and advancement |
+| Append-job | 21 | `run_append_job_tests.sh` | 18 in-process C++ checks plus 3 optional gRPC checks |
 | Progressive loading | 15 | `run_progressive_load_tests.sh` | 11 C++ checks plus 4 CLI checks for multi-file loading, bounded storage, and memory checks |
 | Protobuf configuration | 9 | `run_configs_tests.sh` | Configuration/CLI parity and documented examples |
-| Native CTest | 11, plus 1 with MPI | CTest | RNG and binary serialization, trace policies, replay reclamation, append/streaming APIs, queue implementations, and CLI dispatch |
+| Python API | 17 | `run_python_tests.sh` | Bindings, callbacks, streaming, monitoring, and policy APIs |
+| gRPC client/server | 2 | `run_grpc_tests.sh` | Single-pair and optional MPI multi-server behavior |
+| Backfill-window gRPC | 3 repeated checks | `run_backfill_window_grpc_test.sh` | Focused rerun of the gRPC streaming binary; one check targets the backfill window |
+| Single-coordinator gRPC | 1 | `test_grpc_single_coordinator.py` | Synchronized independent simulation servers |
+| Queue input schema | 1 binary | CTest or installed `test_queue_input` | Legacy queue names or numeric queue IDs |
+| Ser20-disabled serialization | 2 binaries | `t_state_rngen` and `t_state` | Native state serialization without Ser20 |
+| Native CTest | 12, plus 1 with MPI | CTest | RNG and binary serialization, trace policies, replay reclamation, custom scheduling, append/streaming APIs, queue implementations, and CLI dispatch |
 
 The gRPC portion of the append-job runner is skipped when gRPC support was not
-built. Additional gRPC, MPI, Python, queue-differential, column-alias, and
-run-time-mode runners live in this directory and are used when their features
-or focused coverage are needed.
+built. The backfill-window runner executes the same three-case gRPC test binary
+as the append-job runner, so it is a focused rerun rather than three additional
+unique checks. Counts describe the checks performed by each runner; the native
+CTest and focused-runner rows intentionally overlap.
 
 ## Fixture locations
 

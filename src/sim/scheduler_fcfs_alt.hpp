@@ -14,6 +14,9 @@
 
 namespace dr_evt {
 
+/** \addtogroup dr_evt_sim
+ *  @{ */
+
 /**
  * Alternative FCFS scheduler implementation for differential testing
  *
@@ -111,6 +114,8 @@ private:
    * FCFS head. */
   std::multimap<sim_time_t, JobEntry>::iterator find_fcfs_head();
 };
+
+/**@}*/
 
 } // namespace dr_evt
 

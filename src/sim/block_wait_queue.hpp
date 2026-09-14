@@ -20,6 +20,9 @@
 
 namespace dr_evt {
 
+/** \addtogroup dr_evt_sim
+ *  @{ */
+
 /**
  * Block-based wait queue with O(1) operations and efficient backfill search.
  *
@@ -403,6 +406,8 @@ extern template class BlockWaitQueue<32>;
 extern template class BlockWaitQueue<64>;
 extern template class BlockWaitQueue<128>;
 extern template class BlockWaitQueue<256>;
+
+/**@}*/
 
 } // namespace dr_evt
 

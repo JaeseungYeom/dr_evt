@@ -146,6 +146,10 @@ void test_append_reclaims_before_growing() {
 
   sim.advance_to(200.0);
 
+  // Resource-area accounting is independent of reclaimed job records.
+  assert(approx_equal(sim.get_resource_area(), 10.0 * 50.0 * 2.0));
+  assert(approx_equal(sim.get_statistics().resource_area, 1000.0));
+
   sim.write_simulated_trace();
   assert(sim.get_trace().completed_count() == 2);
 
@@ -715,6 +719,40 @@ void test_append_jobs_memory_pressure() {
   std::cout << "  PASSED" << std::endl;
 }
 
+// Test 18: resource area weights each allocation by the time for which it
+// remains in effect. This deliberately uses very different interval lengths;
+// averaging the 50% and 10% event snapshots equally would give the wrong
+// answer.
+void test_resource_area_and_time_accounted_utilization() {
+  std::cout << "\n=== Test 18: time-accounted resource area ===" << std::endl;
+
+  Simulation sim(make_params());
+  sim.get_trace().load_data(0);
+
+  sim.append_job(0.0, 50, kTestQueueInput, 10.0);
+  sim.advance_to(0.0);
+  assert(approx_equal(sim.get_resource_area(), 0.0));
+
+  sim.advance_to(10.0);
+  assert(approx_equal(sim.get_resource_area(), 50.0 * 10.0));
+
+  sim.append_job(10.0, 10, kTestQueueInput, 100.0);
+  sim.advance_to(10.0);
+  sim.advance_to(60.0); // Include the still-running job's partial interval.
+  assert(approx_equal(sim.get_resource_area(), 50.0 * 10.0 + 10.0 * 50.0));
+
+  auto partial = sim.get_statistics();
+  assert(approx_equal(partial.resource_area, 1000.0));
+  assert(approx_equal(partial.utilization, 1000.0 / (100.0 * 60.0)));
+
+  sim.advance_to(110.0);
+  auto complete = sim.get_statistics();
+  assert(approx_equal(complete.resource_area, 50.0 * 10.0 + 10.0 * 100.0));
+  assert(approx_equal(complete.utilization, 1500.0 / (100.0 * 110.0)));
+
+  std::cout << "  PASSED" << std::endl;
+}
+
 int main() {
   std::cout << "====================================" << std::endl;
   std::cout << "Append-Job Test Suite" << std::endl;
@@ -740,6 +778,7 @@ int main() {
     test_advance_to_idle_gap();
     test_submit_job_records_busy_nodes();
     test_append_jobs_memory_pressure();
+    test_resource_area_and_time_accounted_utilization();
 
     std::cout << "\n====================================" << std::endl;
     std::cout << "ALL APPEND_JOB TESTS PASSED" << std::endl;

@@ -42,7 +42,7 @@ BasicSimulation<TraceType>::BasicSimulation(const Sim_Params &params,
                                             backfill_selector_t selector)
     : m_params(params), m_trace(params.m_infile, params.m_trace_format,
                                 params.m_timestamp_format, params.m_timezone),
-      m_scheduler(std::make_unique<ExperimentalFCFSScheduler>(
+      m_scheduler(std::make_unique<CustomFCFSScheduler>(
           params.m_total_nodes, m_trace.data().size(), params.m_backfill_policy,
           params.m_num_max_candidates, std::move(cost_function),
           std::move(selector), params.m_wait_queue_capacity,
@@ -232,6 +232,7 @@ num_jobs_t BasicSimulation<TraceType>::initialize_trace(num_jobs_t max_jobs) {
   m_current_time = 0.0;
   m_jobs_submitted = 0;
   m_jobs_completed = 0;
+  m_trace.reset_resource_area();
 
   return static_cast<num_jobs_t>(m_trace.data().size());
 }
@@ -290,6 +291,7 @@ void BasicSimulation<TraceType>::run_progressive() {
   m_current_time = 0.0;
   m_jobs_submitted = 0;
   m_jobs_completed = 0;
+  m_trace.reset_resource_area();
 
   // Same reasoning as run()'s single-file path: open output files
   // early so reclaiming during the run (which starts happening
@@ -895,7 +897,6 @@ BasicSimulation<TraceType>::get_statistics() const {
   tdiff_t total_turnaround = 0.0;
   sim_time_t max_completion = 0.0;
   num_jobs_t completed_count = 0;
-  tdiff_t total_node_seconds = 0.0;
 
   for (const auto &job : m_trace.data()) {
     // Only count jobs that actually completed. Job_Record::is_scheduled()
@@ -912,8 +913,6 @@ BasicSimulation<TraceType>::get_statistics() const {
 
       total_wait += wait;
       total_turnaround += (wait + exec);
-      total_node_seconds += static_cast<tdiff_t>(job.get_num_nodes()) * exec;
-
       sim_time_t completion = convert_epoch<sim_time_t>(job.get_end_time());
       max_completion = std::max(max_completion, completion);
       completed_count++;
@@ -926,12 +925,20 @@ BasicSimulation<TraceType>::get_statistics() const {
       (completed_count > 0) ? total_turnaround / completed_count : 0.0;
   stats.makespan = max_completion;
 
-  // Time-averaged over [0, makespan], not an instantaneous snapshot - see
-  // the field comment in sim.hpp for why.
+  // Resource area is accumulated from the event timeline, so unequal event
+  // intervals are weighted correctly. A running job contributes through a
+  // finite streaming snapshot; after the machine becomes idle, the latest
+  // real resource event remains the horizon. This keeps a completed run's
+  // utilization independent of how far beyond its makespan it was drained.
+  stats.resource_area = get_resource_area();
+  const sim_time_t accounting_horizon =
+      std::isfinite(stats.current_time) && stats.nodes_in_use > 0
+          ? stats.current_time
+          : m_trace.get_resource_area_time();
   stats.utilization =
-      (stats.total_nodes > 0 && stats.makespan > 0)
-          ? total_node_seconds /
-                (static_cast<double>(stats.total_nodes) * stats.makespan)
+      (stats.total_nodes > 0 && accounting_horizon > 0)
+          ? stats.resource_area /
+                (static_cast<double>(stats.total_nodes) * accounting_horizon)
           : 0.0;
 
   return stats;

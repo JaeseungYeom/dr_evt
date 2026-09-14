@@ -149,7 +149,7 @@ message GetFCFSHeadShadowTimeRequest {}
 // same estimates used by the FCFS head reservation calculation.
 message GetBackfillWindowRequest {}
 // Instantaneous nodes-in-use / total-nodes ratio. This is distinct from the
-// time-averaged utilization in GetStatisticsResponse.
+// resource-area-based utilization in GetStatisticsResponse.
 message GetCurrentUtilizationRequest {}
 message GetStatisticsRequest {}
 message GetTraceSizeRequest {}
@@ -270,6 +270,9 @@ message GetStatisticsResponse {
     double avg_wait_time = 10;
     double avg_turnaround_time = 11;
     double makespan = 12;
+    // Integral of allocated nodes over elapsed simulation time, in
+    // node-seconds.
+    double resource_area = 13;
 }
 
 message GetTraceSizeResponse {

@@ -5,14 +5,14 @@
  *         SPDX-License-Identifier: MIT                                       *
  ******************************************************************************/
 
-#include "sim/scheduler_fcfs_experimental.hpp"
+#include "sim/scheduler_fcfs_custom.hpp"
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
 
 namespace dr_evt {
 
-ExperimentalFCFSScheduler::ExperimentalFCFSScheduler(
+CustomFCFSScheduler::CustomFCFSScheduler(
     num_nodes_t total_nodes, size_t initial_job_count, BackfillPolicy bf_policy,
     size_t num_max_candidates, job_cost_function_t cost_function,
     backfill_selector_t selector, size_t initial_capacity,
@@ -27,30 +27,30 @@ ExperimentalFCFSScheduler::ExperimentalFCFSScheduler(
       m_backfill_selector(std::move(selector)) {
   if (m_num_max_candidates == 0) {
     throw std::invalid_argument(
-        "ExperimentalFCFSScheduler requires num_max_candidates > 0");
+        "CustomFCFSScheduler requires num_max_candidates > 0");
   }
   if (!m_job_cost_function) {
     throw std::invalid_argument(
-        "ExperimentalFCFSScheduler requires a job cost function");
+        "CustomFCFSScheduler requires a job cost function");
   }
   if (!m_backfill_selector) {
     throw std::invalid_argument(
-        "ExperimentalFCFSScheduler requires a backfill selector");
+        "CustomFCFSScheduler requires a backfill selector");
   }
   if (m_backfill_policy == BackfillPolicy::CONSERVATIVE) {
     throw std::invalid_argument(
-        "ExperimentalFCFSScheduler supports EASY or NONE backfilling");
+        "CustomFCFSScheduler supports EASY or NONE backfilling");
   }
 }
 
-void ExperimentalFCFSScheduler::insert_job(job_no_t job_id,
+void CustomFCFSScheduler::insert_job(job_no_t job_id,
                                            sim_time_t submit_time,
                                            tdiff_t run_time_estimate,
                                            num_nodes_t nodes_requested) {
   if (m_wait_queue.full()) {
     if (m_overflow_policy == CircularOverflowPolicy::ABORT) {
       throw std::runtime_error(
-          "ExperimentalFCFSScheduler: wait queue capacity (" +
+          "CustomFCFSScheduler: wait queue capacity (" +
           std::to_string(m_wait_queue.capacity()) + ") exceeded");
     }
     m_wait_queue.set_capacity(std::max<size_t>(m_wait_queue.capacity() * 2, 1));
@@ -65,7 +65,7 @@ void ExperimentalFCFSScheduler::insert_job(job_no_t job_id,
   }
 }
 
-void ExperimentalFCFSScheduler::sync_to(sim_time_t current_time) {
+void CustomFCFSScheduler::sync_to(sim_time_t current_time) {
   if (current_time <= m_current_tracked_time) {
     return;
   }
@@ -76,7 +76,7 @@ void ExperimentalFCFSScheduler::sync_to(sim_time_t current_time) {
   m_current_tracked_time = current_time;
 }
 
-sim_time_t ExperimentalFCFSScheduler::get_next_arrival_time() {
+sim_time_t CustomFCFSScheduler::get_next_arrival_time() {
   for (size_t i = m_eligible_end_idx; i < m_wait_queue.size(); ++i) {
     if (!m_wait_queue[i].removed) {
       return m_wait_queue[i].submit_time;
@@ -85,7 +85,7 @@ sim_time_t ExperimentalFCFSScheduler::get_next_arrival_time() {
   return std::numeric_limits<sim_time_t>::max();
 }
 
-void ExperimentalFCFSScheduler::compact_if_needed() {
+void CustomFCFSScheduler::compact_if_needed() {
   if (m_removed_count == 0 || m_removed_count * 2 <= m_wait_queue.size()) {
     return;
   }
@@ -102,7 +102,7 @@ void ExperimentalFCFSScheduler::compact_if_needed() {
   m_removed_count = 0;
 }
 
-backfill_candidates_t ExperimentalFCFSScheduler::find_backfill_candidates(
+backfill_candidates_t CustomFCFSScheduler::find_backfill_candidates(
     num_nodes_t available_nodes, sim_time_t current_time,
     sim_time_t reservation_time) const {
   backfill_candidates_t candidates;
@@ -131,7 +131,7 @@ backfill_candidates_t ExperimentalFCFSScheduler::find_backfill_candidates(
 }
 
 std::vector<job_no_t>
-ExperimentalFCFSScheduler::schedule(num_nodes_t free_nodes,
+CustomFCFSScheduler::schedule(num_nodes_t free_nodes,
                                     const running_jobs_t &running_jobs,
                                     sim_time_t current_time) {
   sync_to(current_time);

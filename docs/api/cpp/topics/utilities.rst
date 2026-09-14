@@ -25,6 +25,7 @@ available-memory queries, monotonic timing, and path helpers.
       :project: dr_evt
       :members:
       :protected-members:
+      :private-members:
 
    Binary state serialization
    --------------------------

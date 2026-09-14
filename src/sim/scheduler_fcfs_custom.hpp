@@ -5,8 +5,8 @@
  *         SPDX-License-Identifier: MIT                                       *
  ******************************************************************************/
 
-#ifndef DR_EVT_SIM_SCHEDULER_FCFS_EXPERIMENTAL_HPP
-#define DR_EVT_SIM_SCHEDULER_FCFS_EXPERIMENTAL_HPP
+#ifndef DR_EVT_SIM_SCHEDULER_FCFS_CUSTOM_HPP
+#define DR_EVT_SIM_SCHEDULER_FCFS_CUSTOM_HPP
 
 #include "sim/scheduler_base.hpp"
 #include <boost/circular_buffer.hpp>
@@ -16,6 +16,9 @@
 
 namespace dr_evt {
 
+/** \addtogroup dr_evt_sim
+ *  @{ */
+
 using backfill_candidate_t = std::pair<job_no_t, job_cost_t>;
 using backfill_candidates_t = std::vector<backfill_candidate_t>;
 using job_cost_function_t =
@@ -24,7 +27,7 @@ using backfill_selector_t =
     std::function<std::optional<job_no_t>(const backfill_candidates_t &)>;
 
 /**
- * @brief Experimental FCFS scheduler with externally selected backfilling.
+ * @brief Customizable FCFS scheduler with externally selected backfilling.
  *
  * FCFS-head handling, circular-buffer growth, and EASY feasibility checks
  * match CircularBufferFCFSScheduler. When a job is inserted, a caller-provided
@@ -33,7 +36,7 @@ using backfill_selector_t =
  * reported to a caller-provided selector. Only the candidate returned by that
  * selector is backfilled during the call.
  */
-class ExperimentalFCFSScheduler : public SchedulerBase {
+class CustomFCFSScheduler : public SchedulerBase {
 private:
   struct JobEntry {
     job_no_t job_id;
@@ -73,7 +76,7 @@ public:
    * one from initial_job_count.
    * @param[in] overflow_policy Action when the circular buffer is full.
    */
-  ExperimentalFCFSScheduler(
+  CustomFCFSScheduler(
       num_nodes_t total_nodes, size_t initial_job_count,
       BackfillPolicy bf_policy, size_t num_max_candidates,
       job_cost_function_t cost_function, backfill_selector_t selector,
@@ -114,6 +117,8 @@ private:
   void compact_if_needed();
 };
 
+/**@}*/
+
 } // namespace dr_evt
 
-#endif // DR_EVT_SIM_SCHEDULER_FCFS_EXPERIMENTAL_HPP
+#endif // DR_EVT_SIM_SCHEDULER_FCFS_CUSTOM_HPP

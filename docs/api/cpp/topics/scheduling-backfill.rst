@@ -10,6 +10,9 @@ windows implement priority ordering and EASY or conservative backfilling.
       :project: dr_evt
       :content-only:
       :inner:
+      :members:
+      :protected-members:
+      :private-members:
 
 See `Wait Queues <../../../dev/WAIT_QUEUES.html>`_ and
 `Backfilling Algorithms <../../../BACKFILLING_ALGORITHMS.html>`_ for the

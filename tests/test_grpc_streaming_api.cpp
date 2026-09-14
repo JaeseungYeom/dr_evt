@@ -150,8 +150,11 @@ bool test_single_append(const std::string &server_address,
               << " makespan=" << stats.makespan() << "\n";
 
     if (stats.jobs_submitted() != 2 || stats.jobs_completed() != 2 ||
-        stats.makespan() != 205.0) {
-      std::cerr << "  FAIL: expected submitted=2 completed=2 makespan=205\n";
+        stats.makespan() != 205.0 ||
+        std::fabs(stats.resource_area() - 5000.0) > 1e-12 ||
+        std::fabs(stats.utilization() - 5000.0 / (100.0 * 205.0)) > 1e-12) {
+      std::cerr << "  FAIL: expected submitted=2 completed=2 makespan=205 "
+                   "resource_area=5000\n";
       client.finish();
       return false;
     }
@@ -245,8 +248,11 @@ bool test_batch_append(const std::string &server_address,
               << " makespan=" << stats.makespan() << "\n";
 
     if (stats.jobs_submitted() != 3 || stats.jobs_completed() != 3 ||
-        stats.makespan() != 205.0) {
-      std::cerr << "  FAIL: expected submitted=3 completed=3 makespan=205\n";
+        stats.makespan() != 205.0 ||
+        std::fabs(stats.resource_area() - 7250.0) > 1e-12 ||
+        std::fabs(stats.utilization() - 7250.0 / (100.0 * 205.0)) > 1e-12) {
+      std::cerr << "  FAIL: expected submitted=3 completed=3 makespan=205 "
+                   "resource_area=7250\n";
       client.finish();
       return false;
     }

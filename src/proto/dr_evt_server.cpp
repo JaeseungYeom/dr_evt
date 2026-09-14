@@ -88,6 +88,7 @@ void copy_statistics(const dr_evt::Simulation::Statistics &statistics,
   response->set_avg_wait_time(statistics.avg_wait_time);
   response->set_avg_turnaround_time(statistics.avg_turnaround_time);
   response->set_makespan(statistics.makespan);
+  response->set_resource_area(statistics.resource_area);
 }
 
 /** @brief Write one statistics snapshot as JSON.
@@ -109,6 +110,7 @@ void write_statistics_file(const std::string &filename,
          << "  \"total_nodes\": " << statistics.total_nodes << ",\n"
          << "  \"nodes_in_use\": " << statistics.nodes_in_use << ",\n"
          << "  \"nodes_available\": " << statistics.nodes_available << ",\n"
+         << "  \"resource_area\": " << statistics.resource_area << ",\n"
          << "  \"utilization\": " << statistics.utilization << ",\n"
          << "  \"avg_wait_time\": " << statistics.avg_wait_time << ",\n"
          << "  \"avg_turnaround_time\": " << statistics.avg_turnaround_time

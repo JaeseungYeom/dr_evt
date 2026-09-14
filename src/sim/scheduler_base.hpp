@@ -19,9 +19,11 @@
 
 namespace dr_evt {
 
+/** \addtogroup dr_evt_sim
+ *  @{ */
+
 /**
- * Abstract base class for job schedulers.
- * Different implementations for FCFS vs priority-based scheduling.
+ * @brief Describes a currently running job for reservation calculations.
  */
 struct Running_Job {
   sim_time_t start_time;
@@ -31,6 +33,14 @@ struct Running_Job {
 
 using running_jobs_t = std::map<job_no_t, Running_Job>;
 
+/**
+ * @brief Abstract interface shared by all job schedulers.
+ * @details
+ * Implementations provide FCFS or priority-based queue ordering and optional
+ * backfilling. The simulation submits validated job metadata, synchronizes
+ * arrival eligibility, and repeatedly asks the scheduler which jobs can start
+ * with the currently available nodes.
+ */
 class SchedulerBase {
 protected:
   /// Total nodes available to jobs selected by this scheduler.
@@ -212,6 +222,8 @@ std::unique_ptr<SchedulerBase> create_scheduler(
     QueueImplementation queue_impl = QueueImplementation::CIRCULAR,
     size_t block_size = 128, size_t wait_queue_capacity = 0,
     CircularOverflowPolicy wait_queue_overflow = CircularOverflowPolicy::GROW);
+
+/**@}*/
 
 } // namespace dr_evt
 

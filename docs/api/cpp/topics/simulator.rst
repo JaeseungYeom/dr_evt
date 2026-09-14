@@ -13,5 +13,6 @@ advancement, scheduling, statistics, and output generation.
       :project: dr_evt
       :members:
       :protected-members:
+      :private-members:
 
 For incremental use, see the `Streaming API <../../STREAMING_API.html>`_.

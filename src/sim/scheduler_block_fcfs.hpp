@@ -14,6 +14,9 @@
 
 namespace dr_evt {
 
+/** \addtogroup dr_evt_sim
+ *  @{ */
+
 /**
  * FCFS (First-Come-First-Served) scheduler using BlockWaitQueue.
  *
@@ -128,6 +131,8 @@ extern template class BlockQueueFCFSScheduler<32>;
 extern template class BlockQueueFCFSScheduler<64>;
 extern template class BlockQueueFCFSScheduler<128>;
 extern template class BlockQueueFCFSScheduler<256>;
+
+/**@}*/
 
 } // namespace dr_evt
 

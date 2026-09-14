@@ -27,7 +27,7 @@
 #include "common.hpp"
 #include "params/sim_params.hpp"
 #include "sim/scheduler_base.hpp"
-#include "sim/scheduler_fcfs_experimental.hpp"
+#include "sim/scheduler_fcfs_custom.hpp"
 #include "trace/dr_event.hpp"
 #include "trace/trace.hpp"
 #include "utils/rngen.hpp"
@@ -261,6 +261,17 @@ public:
   }
 
   /**
+   * @brief Return time-accounted resource usage in node-seconds.
+   * @details Accumulates `nodes_in_use * interval` between resource events
+   * and includes the elapsed portion of the current interval for finite
+   * streaming snapshots.
+   * @return Resource area in node-seconds.
+   */
+  tdiff_t get_resource_area() const {
+    return m_trace.get_resource_area(m_current_time);
+  }
+
+  /**
    * @brief Get the current simulation time.
    * @return Current simulation time as sim_time_t.
    */
@@ -374,16 +385,11 @@ public:
     num_nodes_t total_nodes;     ///< Configured cluster capacity.
     num_nodes_t nodes_in_use;    ///< Nodes allocated at current_time.
     num_nodes_t nodes_available; ///< Nodes free at current_time.
-    /** @brief Time-averaged utilization over the simulated makespan. */
-    double utilization;          // time-averaged over [0, makespan]: total
-                                 // node-seconds consumed by completed jobs,
-                                 // divided by (total_nodes * makespan) - NOT
-                                 // an instantaneous snapshot, since callers
-                                 // computing "overall" utilization after a
-                                 // run typically do so once the cluster has
-                                 // gone idle again, where an instantaneous
-                                 // reading would always show 0
-    tdiff_t avg_wait_time;       ///< Mean completed-job wait duration.
+    /** @brief Integrated allocated-node time in node-seconds. */
+    tdiff_t resource_area;
+    /** @brief Resource-area utilization over the accounting horizon. */
+    double utilization;    ///< resource_area / (total_nodes * elapsed_time)
+    tdiff_t avg_wait_time; ///< Mean completed-job wait duration.
     tdiff_t avg_turnaround_time; ///< Mean completed-job submit-to-end duration.
     sim_time_t makespan;         ///< Latest completion time in the trace.
   };

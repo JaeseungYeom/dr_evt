@@ -14,6 +14,9 @@
 
 namespace dr_evt {
 
+/** \addtogroup dr_evt_sim
+ *  @{ */
+
 /**
  * FCFS scheduler with Conservative backfilling support.
  *
@@ -134,6 +137,8 @@ private:
                                            const running_jobs_t &running_jobs,
                                            sim_time_t current_time);
 };
+
+/**@}*/
 
 } // namespace dr_evt
 

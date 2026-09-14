@@ -7,7 +7,7 @@ set_full_path(THIS_DIR_HEADERS
     schedule_windows.hpp
     scheduler_base.hpp
     scheduler_fcfs.hpp
-    scheduler_fcfs_experimental.hpp
+    scheduler_fcfs_custom.hpp
     scheduler_fcfs_alt.hpp
     scheduler_fcfs_conservative.hpp
     scheduler_block_fcfs.hpp
@@ -22,7 +22,7 @@ set_full_path(THIS_DIR_SOURCES
     schedule_windows.cpp
     scheduler_base.cpp
     scheduler_fcfs.cpp
-    scheduler_fcfs_experimental.cpp
+    scheduler_fcfs_custom.cpp
     scheduler_fcfs_alt.cpp
     scheduler_fcfs_conservative.cpp
     scheduler_block_fcfs.cpp

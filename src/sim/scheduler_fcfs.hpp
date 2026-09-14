@@ -13,6 +13,9 @@
 
 namespace dr_evt {
 
+/** \addtogroup dr_evt_sim
+ *  @{ */
+
 /**
  * FCFS (First-Come-First-Served) scheduler with iterator tracking.
  *
@@ -143,6 +146,8 @@ private:
    * @param[in] job_id Trace job identifier to mark. */
   void mark_removed(job_no_t job_id);
 };
+
+/**@}*/
 
 } // namespace dr_evt
 

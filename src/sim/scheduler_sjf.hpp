@@ -14,6 +14,9 @@
 
 namespace dr_evt {
 
+/** \addtogroup dr_evt_sim
+ *  @{ */
+
 /**
  * Shortest Job First (SJF) scheduler with iterator tracking
  *
@@ -111,6 +114,8 @@ private:
    * FCFS head. */
   std::multimap<tdiff_t, JobEntry>::iterator find_fcfs_head();
 };
+
+/**@}*/
 
 } // namespace dr_evt
 

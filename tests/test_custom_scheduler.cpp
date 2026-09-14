@@ -6,7 +6,7 @@
  ******************************************************************************/
 
 #define DR_EVT_HAS_CONFIG 1
-#include "sim/scheduler_fcfs_experimental.hpp"
+#include "sim/scheduler_fcfs_custom.hpp"
 #include "sim/sim.hpp"
 #include <algorithm>
 #include <cassert>
@@ -48,9 +48,9 @@ void test_external_backfill_selection() {
     return select_lowest_cost(candidates);
   };
 
-  ExperimentalFCFSScheduler scheduler(100, 0, BackfillPolicy::EASY, 2,
-                                      cost_from_job_order,
-                                      observe_and_select_lowest);
+  CustomFCFSScheduler scheduler(100, 0, BackfillPolicy::EASY, 2,
+                                cost_from_job_order,
+                                observe_and_select_lowest);
   scheduler.insert_job(0, 0.0, 100.0, 70);
   scheduler.insert_job(1, 0.0, 200.0, 50);
   scheduler.insert_job(2, 0.0, 50.0, 20);
@@ -67,7 +67,7 @@ void test_external_backfill_selection() {
 }
 
 void test_selector_must_return_a_candidate() {
-  ExperimentalFCFSScheduler scheduler(
+  CustomFCFSScheduler scheduler(
       100, 0, BackfillPolicy::EASY, 1,
       [](job_no_t, sim_time_t, tdiff_t, num_nodes_t) { return 0; },
       [](const backfill_candidates_t &) {
@@ -88,7 +88,7 @@ void test_selector_must_return_a_candidate() {
 
 void test_current_utilization_api() {
   constexpr const char *trace_path =
-      "/tmp/dr_evt_experimental_scheduler_empty.csv";
+      "/tmp/dr_evt_custom_scheduler_empty.csv";
   {
     std::ofstream trace(trace_path);
     trace << "job_submit_time,num_nodes,time_limit\n";
@@ -113,7 +113,7 @@ void test_current_utilization_api() {
 
 void test_matches_default_circular_easy() {
   constexpr const char *trace_path =
-      "/tmp/dr_evt_experimental_scheduler_equivalence.csv";
+      "/tmp/dr_evt_custom_scheduler_equivalence.csv";
   {
     std::ofstream trace(trace_path);
     trace << "job_submit_time,num_nodes,time_limit\n";
@@ -130,9 +130,9 @@ void test_matches_default_circular_easy() {
   params.m_num_max_candidates = 3;
 
   Simulation standard(params);
-  Simulation experimental(params, cost_from_job_order, select_lowest_cost);
+  Simulation custom(params, cost_from_job_order, select_lowest_cost);
   standard.get_trace().load_data(0);
-  experimental.get_trace().load_data(0);
+  custom.get_trace().load_data(0);
 
   struct InputJob {
     sim_time_t submit_time;
@@ -146,29 +146,28 @@ void test_matches_default_circular_easy() {
 
   for (const auto &job : jobs) {
     standard.append_job(job.submit_time, job.nodes, kTestQueue, job.run_time);
-    experimental.append_job(job.submit_time, job.nodes, kTestQueue,
-                            job.run_time);
+    custom.append_job(job.submit_time, job.nodes, kTestQueue, job.run_time);
   }
   standard.advance_to(300.0);
-  experimental.advance_to(300.0);
+  custom.advance_to(300.0);
 
   for (job_no_t id = 0; id < jobs.size(); ++id) {
     const auto &expected = standard.get_trace().job_at(id);
-    const auto &actual = experimental.get_trace().job_at(id);
+    const auto &actual = custom.get_trace().job_at(id);
     assert(expected.is_scheduled() == actual.is_scheduled());
     assert(expected.get_begin_time() == actual.get_begin_time());
     assert(expected.get_end_time() == actual.get_end_time());
   }
   assert(standard.get_statistics().jobs_completed ==
-         experimental.get_statistics().jobs_completed);
+         custom.get_statistics().jobs_completed);
 }
 
-int write_experimental_schedule(const char *input_path,
-                                const char *output_path) {
+int write_custom_schedule(const char *input_path, const char *output_path,
+                          num_nodes_t total_nodes) {
   Sim_Params params;
   params.m_infile = input_path;
   params.set_outfile(output_path);
-  params.m_total_nodes = 100;
+  params.m_total_nodes = total_nodes;
   params.m_trace_format = "simple";
   params.m_timestamp_format = "epoch";
   params.m_run_time_mode = RunTimeMode::LIMIT;
@@ -182,12 +181,16 @@ int write_experimental_schedule(const char *input_path,
 }
 
 int main(int argc, char **argv) {
-  if (argc == 4 && std::string(argv[1]) == "--write-schedule") {
-    return write_experimental_schedule(argv[2], argv[3]);
+  if ((argc == 4 || argc == 5) &&
+      std::string(argv[1]) == "--write-schedule") {
+    const auto total_nodes = argc == 5
+                                 ? static_cast<num_nodes_t>(std::stoul(argv[4]))
+                                 : num_nodes_t{100};
+    return write_custom_schedule(argv[2], argv[3], total_nodes);
   }
   if (argc != 1) {
     std::cerr << "Usage: " << argv[0]
-              << " [--write-schedule INPUT_CSV OUTPUT_CSV]\n";
+              << " [--write-schedule INPUT_CSV OUTPUT_CSV [TOTAL_NODES]]\n";
     return 2;
   }
 
@@ -195,6 +198,6 @@ int main(int argc, char **argv) {
   test_selector_must_return_a_candidate();
   test_current_utilization_api();
   test_matches_default_circular_easy();
-  std::cout << "Experimental scheduler tests passed\n";
+  std::cout << "Custom scheduler tests passed\n";
   return 0;
 }

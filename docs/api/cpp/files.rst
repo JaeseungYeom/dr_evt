@@ -37,6 +37,7 @@ Top-level ``src``
 - `scheduler_fcfs.cpp <https://github.com/LLNL/dr_evt/blob/main/src/sim/scheduler_fcfs.cpp>`_, `scheduler_fcfs.hpp <https://github.com/LLNL/dr_evt/blob/main/src/sim/scheduler_fcfs.hpp>`_
 - `scheduler_fcfs_alt.cpp <https://github.com/LLNL/dr_evt/blob/main/src/sim/scheduler_fcfs_alt.cpp>`_, `scheduler_fcfs_alt.hpp <https://github.com/LLNL/dr_evt/blob/main/src/sim/scheduler_fcfs_alt.hpp>`_
 - `scheduler_fcfs_conservative.cpp <https://github.com/LLNL/dr_evt/blob/main/src/sim/scheduler_fcfs_conservative.cpp>`_, `scheduler_fcfs_conservative.hpp <https://github.com/LLNL/dr_evt/blob/main/src/sim/scheduler_fcfs_conservative.hpp>`_
+- `scheduler_fcfs_custom.cpp <https://github.com/LLNL/dr_evt/blob/main/src/sim/scheduler_fcfs_custom.cpp>`_, `scheduler_fcfs_custom.hpp <https://github.com/LLNL/dr_evt/blob/main/src/sim/scheduler_fcfs_custom.hpp>`_
 - `scheduler_ljf.cpp <https://github.com/LLNL/dr_evt/blob/main/src/sim/scheduler_ljf.cpp>`_, `scheduler_ljf.hpp <https://github.com/LLNL/dr_evt/blob/main/src/sim/scheduler_ljf.hpp>`_
 - `scheduler_policies.hpp <https://github.com/LLNL/dr_evt/blob/main/src/sim/scheduler_policies.hpp>`_
 - `scheduler_sjf.cpp <https://github.com/LLNL/dr_evt/blob/main/src/sim/scheduler_sjf.cpp>`_, `scheduler_sjf.hpp <https://github.com/LLNL/dr_evt/blob/main/src/sim/scheduler_sjf.hpp>`_

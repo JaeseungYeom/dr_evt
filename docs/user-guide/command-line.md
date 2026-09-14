@@ -142,14 +142,14 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator traces/jobs.csv --backfill_policy conserva
 
 ### `--num_max_candidates COUNT`
 
-Maximum number of feasible jobs offered to the callback-driven experimental
+Maximum number of feasible jobs offered to the callback-driven custom
 EASY scheduler in one selection decision. `COUNT` must be greater than zero.
 
 **Default:** `1`
 
 The command-line and prototext parsers store this value in `Sim_Params`. The
 cost and selection callbacks themselves are installed when constructing the
-experimental scheduler through the C++ or Python API; they cannot be encoded
+custom scheduler through the C++ or Python API; they cannot be encoded
 in a command-line argument or prototext file.
 
 ### `-p, --priority_policy POLICY`

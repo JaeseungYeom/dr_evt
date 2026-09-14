@@ -27,6 +27,7 @@ with sampling.
    :project: dr_evt
    :members:
    :protected-members:
+   :private-members:
 
 Binary state serialization
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

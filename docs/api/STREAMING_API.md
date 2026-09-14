@@ -184,7 +184,7 @@ sim.advance_to(0.0);  // Now process START event
 ### Monitoring Methods
 
 For callback-driven EASY backfilling, construct the simulation with the
-experimental circular-buffer scheduler:
+custom circular-buffer scheduler:
 
 ```cpp
 BasicSimulation(const Sim_Params& params, job_cost_function_t cost_function,
@@ -206,11 +206,17 @@ sim_time_t get_current_time() const;
 num_nodes_t get_nodes_in_use() const;
 num_nodes_t get_available_nodes() const;
 double get_current_utilization() const;
+tdiff_t get_resource_area() const;
 ```
 
 `get_current_utilization()` is the point-in-time ratio of allocated nodes to
-configured nodes. It is distinct from `Statistics::utilization`, which is
-time-averaged over the simulated makespan.
+configured nodes. `get_resource_area()` is the area under the allocated-node
+curve: the time integral of allocated
+nodes, accumulated as `nodes_in_use * interval` between resource events and
+reported in node-seconds. `Statistics::utilization` divides this volume by
+configured nodes and the elapsed accounting horizon (the snapshot time while
+work is running, or the last resource event after it becomes idle), so event
+samples are not weighted equally when their intervals differ.
 
 **Get count of jobs waiting to be scheduled:**
 ```cpp

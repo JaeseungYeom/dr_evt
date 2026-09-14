@@ -124,8 +124,10 @@ PYBIND11_MODULE(dr_evt, m) {
                     "int: Nodes allocated to running jobs.")
       .def_readonly("nodes_available", &Simulation::Statistics::nodes_available,
                     "int: Currently unallocated nodes.")
+      .def_readonly("resource_area", &Simulation::Statistics::resource_area,
+                    "float: Time-integrated allocation in node-seconds.")
       .def_readonly("utilization", &Simulation::Statistics::utilization,
-                    "float: Node utilization in the range [0, 1].")
+                    "float: Time-accounted node utilization in [0, 1].")
       .def_readonly("avg_wait_time", &Simulation::Statistics::avg_wait_time,
                     "float: Mean completed-job wait time.")
       .def_readonly("avg_turnaround_time",
@@ -229,6 +231,9 @@ PYBIND11_MODULE(dr_evt, m) {
 
       .def("get_current_utilization", &Simulation::get_current_utilization,
            "Return current nodes-in-use divided by total nodes as float.")
+
+      .def("get_resource_area", &Simulation::get_resource_area,
+           "Return time-integrated allocation in node-seconds as float.")
 
       .def("get_available_nodes", &Simulation::get_available_nodes,
            "Return the number of unallocated nodes as int.")

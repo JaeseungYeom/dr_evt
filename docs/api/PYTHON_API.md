@@ -92,6 +92,7 @@ Their scheduling semantics are documented in
 | `get_current_time()` | Return current simulation time. |
 | `get_nodes_in_use()` | Return allocated nodes. |
 | `get_current_utilization()` | Return instantaneous `nodes_in_use / total_nodes`. |
+| `get_resource_area()` | Return the area under the allocated-node curve, in node-seconds. |
 | `get_available_nodes()` | Return free nodes. |
 | `get_active_job_count()` | Return waiting jobs. |
 | `get_fcfs_head_shadow_time()` | Return the FCFS-head reservation time, or `-1`. |
@@ -119,8 +120,15 @@ contains `time` and `nodes_released`.
   `jobs_waiting`;
 - `current_time`, `total_nodes`, `nodes_in_use`, and
   `nodes_available`; and
-- `utilization`, `avg_wait_time`, `avg_turnaround_time`, and
+- `resource_area`, `utilization`, `avg_wait_time`, `avg_turnaround_time`, and
   `makespan`.
+
+`resource_area` is accumulated as `nodes_in_use * interval` between
+resource events. `utilization` divides that volume by `total_nodes` and the
+elapsed accounting horizon (the snapshot time while work is running, or the
+last resource event after it becomes idle). Unlike
+`get_current_utilization()`, events that are far apart therefore carry
+proportionally more weight.
 
 Metric definitions are in
 [Output Trace Files](../user-guide/output-traces.md#cli-summary).

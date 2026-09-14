@@ -227,6 +227,8 @@ int main(int argc, char **argv) {
               << "Jobs submitted:  " << stats.jobs_submitted() << "\n"
               << "Jobs completed:  " << stats.jobs_completed() << "\n"
               << "Current time:    " << stats.current_time() << "\n"
+              << "Resource area:   " << stats.resource_area()
+              << " node-seconds\n"
               << "Utilization:     " << (stats.utilization() * 100.0) << "%\n"
               << "Avg wait time:   " << stats.avg_wait_time() << "\n"
               << "Makespan:        " << stats.makespan() << "\n"

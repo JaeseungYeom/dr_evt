@@ -302,9 +302,9 @@ def test_backfill_window_api(result):
         os.unlink(trace_file.name)
 
 
-def test_experimental_backfill_api(result):
-    """Cost and selection callbacks drive the experimental EASY scheduler."""
-    print("\n5c. Experimental Backfill API")
+def test_custom_backfill_api(result):
+    """Cost and selection callbacks drive the custom EASY scheduler."""
+    print("\n5c. Custom Backfill API")
 
     trace_file = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
     trace_file.close()
@@ -340,9 +340,9 @@ def test_experimental_backfill_api(result):
         assert costed_jobs == [0, 1, 2, 3, 4]
         assert candidate_windows[0] == [(2, 2), (3, 3)]
         assert select_lowest_cost([(7, 4), (8, 2), (9, 2)]) == 8
-        result.record_pass("Experimental cost and selection callbacks")
+        result.record_pass("Custom cost and selection callbacks")
     except Exception as e:
-        result.record_fail("Experimental backfill API", str(e))
+        result.record_fail("Custom backfill API", str(e))
     finally:
         os.unlink(trace_file.name)
 
@@ -394,6 +394,7 @@ def test_statistics(result):
         assert hasattr(stats, 'total_nodes')
         assert hasattr(stats, 'nodes_in_use')
         assert hasattr(stats, 'nodes_available')
+        assert hasattr(stats, 'resource_area')
         assert hasattr(stats, 'utilization')
         assert hasattr(stats, 'avg_wait_time')
         assert hasattr(stats, 'avg_turnaround_time')
@@ -402,7 +403,10 @@ def test_statistics(result):
         # Check values make sense
         assert stats.jobs_completed == 3
         assert stats.total_nodes == 100
-        assert 0.0 <= stats.utilization <= 1.0
+        # 10 nodes for 50 s, 20 nodes for 50 s, and 30 nodes for 50 s.
+        assert abs(sim.get_resource_area() - 3000.0) < 1e-12
+        assert abs(stats.resource_area - 3000.0) < 1e-12
+        assert abs(stats.utilization - (3000.0 / (100.0 * 70.0))) < 1e-12
 
         result.record_pass("Statistics fields and values")
 
@@ -545,7 +549,7 @@ def main():
     test_streaming_api(result)
     test_monitoring_api(result)
     test_backfill_window_api(result)
-    test_experimental_backfill_api(result)
+    test_custom_backfill_api(result)
     test_statistics(result)
     test_backfill_policies(result)
     test_priority_policies(result)

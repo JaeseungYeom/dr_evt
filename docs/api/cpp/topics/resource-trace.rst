@@ -12,9 +12,13 @@ output. Resource history is a separate circular buffer from the job store.
    .. doxygenclass:: dr_evt::BasicTrace
       :project: dr_evt
       :members:
+      :protected-members:
+      :private-members:
 
    .. doxygenclass:: dr_evt::DR_Event
       :project: dr_evt
       :members:
+      :protected-members:
+      :private-members:
 
 See `Output Trace Files <../../../user-guide/output-traces.html>`_.

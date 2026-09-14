@@ -15,6 +15,9 @@
 
 namespace dr_evt {
 
+/** \addtogroup dr_evt_sim
+ *  @{ */
+
 /**
  * FCFS scheduler using boost::circular_buffer instead of std::deque.
  *
@@ -161,6 +164,8 @@ private:
    * @param[in] job_id Trace job identifier to mark. */
   void mark_removed(job_no_t job_id);
 };
+
+/**@}*/
 
 } // namespace dr_evt
 

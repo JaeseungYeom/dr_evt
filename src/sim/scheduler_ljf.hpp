@@ -14,6 +14,9 @@
 
 namespace dr_evt {
 
+/** \addtogroup dr_evt_sim
+ *  @{ */
+
 /**
  * Longest Job First (LJF) scheduler with iterator tracking
  *
@@ -116,6 +119,8 @@ private:
   std::multimap<tdiff_t, JobEntry, DescendingRunTime>::iterator
   find_fcfs_head();
 };
+
+/**@}*/
 
 } // namespace dr_evt
 
