@@ -14,6 +14,9 @@
 
 namespace dr_evt {
 
+/** \addtogroup dr_evt_sim
+ *  @{ */
+
 /**
  * Alternative FCFS scheduler implementation for differential testing
  *
@@ -55,7 +58,7 @@ public:
   }
 
   /** @copydoc SchedulerBase::active_job_count */
-  size_t active_job_count() override { return m_eligible_jobs.size(); }
+  size_t active_job_count() const override { return m_eligible_jobs.size(); }
 
   /** @copydoc SchedulerBase::get_next_arrival_time */
   sim_time_t get_next_arrival_time() override {
@@ -111,6 +114,8 @@ private:
    * FCFS head. */
   std::multimap<sim_time_t, JobEntry>::iterator find_fcfs_head();
 };
+
+/**@}*/
 
 } // namespace dr_evt
 

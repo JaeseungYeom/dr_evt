@@ -8,18 +8,10 @@
 # sitting in a preloaded m_data. See
 # docs/dev/OUTPUT_TRACE_BUFFERS.md for the design.
 #
-# This verifies:
-# 1. (C++ API) A trace with zero preloaded jobs, then jobs appended one
-#    at a time and run to completion correctly.
-# 2. (C++ API) append_job() reclaims a completed job's slot before
-#    growing, at the actual point of need (not load_data(), which never
-#    needs this - see the design doc's "Reclaim at the point of need"
-#    section for why).
-# 3. (C++ API) append_job() enforces the same submit_time >=
-#    current_time precondition submit_job() already does.
-# 4. (gRPC, if built) The same append scenario as (1), but over
-#    the actual network wire via AppendJobRequest, against a real
-#    running dr_evt_server.
+# The in-process binary contains 19 focused append, batch, capacity,
+# advancement, accounting, and memory-pressure checks. When gRPC is built,
+# the runner also executes three wire-level checks covering AppendJobRequest,
+# AppendJobsRequest, and GetBackfillWindowRequest against a real server.
 
 set -e
 
@@ -54,7 +46,7 @@ echo ""
 PASS=0
 FAIL=0
 
-# --- Test: C++ API (test_append_job_api.cpp's own 3 sub-tests) ---
+# --- Test: C++ API (test_append_job_api.cpp's 19 focused checks) ---
 echo "Testing: append_job_api (C++ level)"
 
 # Test binaries are installed under bin/tests/ (see CMakeLists.txt's

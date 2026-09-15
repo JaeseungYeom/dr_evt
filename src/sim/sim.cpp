@@ -32,6 +32,22 @@ BasicSimulation<TraceType>::BasicSimulation(const Sim_Params &params)
           params.m_total_nodes, m_trace.data().size(), params.m_backfill_policy,
           params.m_priority_policy, params.m_queue_impl, params.m_block_size,
           params.m_wait_queue_capacity, params.m_wait_queue_overflow)),
+      m_custom_scheduler(nullptr), m_current_time(0.0), m_jobs_completed(0),
+      m_jobs_submitted(0), m_rng(params.m_seed), m_queue_length_sum(0),
+      m_queue_length_samples(0), m_queue_length_peak(0) {}
+
+template <typename TraceType>
+BasicSimulation<TraceType>::BasicSimulation(const Sim_Params &params,
+                                            job_cost_function_t cost_function,
+                                            backfill_selector_t selector)
+    : m_params(params), m_trace(params.m_infile, params.m_trace_format,
+                                params.m_timestamp_format, params.m_timezone),
+      m_scheduler(std::make_unique<CustomFCFSScheduler>(
+          params.m_total_nodes, m_trace.data().size(), params.m_backfill_policy,
+          params.m_num_max_candidates, std::move(cost_function),
+          std::move(selector), params.m_wait_queue_capacity,
+          params.m_wait_queue_overflow)),
+      m_custom_scheduler(static_cast<CustomFCFSScheduler *>(m_scheduler.get())),
       m_current_time(0.0), m_jobs_completed(0), m_jobs_submitted(0),
       m_rng(params.m_seed), m_queue_length_sum(0), m_queue_length_samples(0),
       m_queue_length_peak(0) {}
@@ -217,6 +233,9 @@ num_jobs_t BasicSimulation<TraceType>::initialize_trace(num_jobs_t max_jobs) {
   m_current_time = 0.0;
   m_jobs_submitted = 0;
   m_jobs_completed = 0;
+  if (m_custom_scheduler != nullptr) {
+    m_custom_scheduler->reset_resource_accounting();
+  }
 
   return static_cast<num_jobs_t>(m_trace.data().size());
 }
@@ -275,6 +294,9 @@ void BasicSimulation<TraceType>::run_progressive() {
   m_current_time = 0.0;
   m_jobs_submitted = 0;
   m_jobs_completed = 0;
+  if (m_custom_scheduler != nullptr) {
+    m_custom_scheduler->reset_resource_accounting();
+  }
 
   // Same reasoning as run()'s single-file path: open output files
   // early so reclaiming during the run (which starts happening
@@ -598,6 +620,21 @@ void BasicSimulation<TraceType>::record_queue_arrivals(
 
 template <typename TraceType>
 void BasicSimulation<TraceType>::advance_to(sim_time_t target_time) {
+  if (m_custom_scheduler != nullptr) {
+    advance_to_impl<true>(target_time, m_custom_scheduler);
+  } else {
+    advance_to_impl<false>(target_time, nullptr);
+  }
+}
+
+template <typename TraceType>
+template <bool AccountResources>
+void BasicSimulation<TraceType>::advance_to_impl(
+    sim_time_t target_time, CustomFCFSScheduler *custom_scheduler) {
+  if constexpr (!AccountResources) {
+    (void)custom_scheduler;
+  }
+
   // Validate precondition
   if (target_time < m_current_time) {
     throw std::runtime_error(
@@ -605,6 +642,10 @@ void BasicSimulation<TraceType>::advance_to(sim_time_t target_time) {
         "target_time=" +
         std::to_string(target_time) +
         " but current_time=" + std::to_string(m_current_time));
+  }
+
+  if constexpr (AccountResources) {
+    custom_scheduler->advance_resource_accounting_to(m_current_time);
   }
 
   // Before entering the main loop, account for jobs submitted at the current
@@ -639,6 +680,10 @@ void BasicSimulation<TraceType>::advance_to(sim_time_t target_time) {
         m_trace.run_until_inclusive(m_current_time);
       }
     }
+  }
+  if constexpr (AccountResources) {
+    custom_scheduler->commit_available_nodes(m_params.m_total_nodes -
+                                             m_trace.get_nodes_in_use());
   }
 
   // Main event loop - process events and make scheduling decisions until
@@ -678,6 +723,9 @@ void BasicSimulation<TraceType>::advance_to(sim_time_t target_time) {
       // Process replay events at this time
       // Advance time FIRST
       m_current_time = next_replay_time;
+      if constexpr (AccountResources) {
+        custom_scheduler->advance_resource_accounting_to(m_current_time);
+      }
       // Explicit sync: schedule() below only runs if an END event
       // freed resources (should_schedule = processed_end_event).
       // Without this call, a replay step that only processes START
@@ -724,6 +772,9 @@ void BasicSimulation<TraceType>::advance_to(sim_time_t target_time) {
       // Note: Check next_arrival < infinity to avoid infinite loop
       // If no jobs arriving, scheduler should pick from waiting queue instead
       m_current_time = next_arrival;
+      if constexpr (AccountResources) {
+        custom_scheduler->advance_resource_accounting_to(m_current_time);
+      }
       // Explicit sync, matching the replay-event branch above for
       // symmetry - should_schedule is always true in this branch
       // (set unconditionally below), so schedule()'s own internal
@@ -790,6 +841,10 @@ void BasicSimulation<TraceType>::advance_to(sim_time_t target_time) {
         }
       }
     }
+    if constexpr (AccountResources) {
+      custom_scheduler->commit_available_nodes(m_params.m_total_nodes -
+                                               m_trace.get_nodes_in_use());
+    }
 
     // Update loop state variables at end of iteration
     active_count = m_scheduler->active_job_count();
@@ -820,12 +875,26 @@ void BasicSimulation<TraceType>::advance_to(sim_time_t target_time) {
   // is pure bookkeeping - every scheduling decision above was already
   // made using real event times, never target_time, so this can't
   // change any of them.
+  if constexpr (AccountResources) {
+    if (m_trace.get_nodes_in_use() > 0) {
+      custom_scheduler->advance_resource_accounting_to(target_time);
+    }
+  }
   m_current_time = target_time;
 }
 
 template <typename TraceType>
 num_nodes_t BasicSimulation<TraceType>::get_nodes_in_use() const {
   return m_trace.get_nodes_in_use();
+}
+
+template <typename TraceType>
+tdiff_t BasicSimulation<TraceType>::get_resource_area() const {
+  if (m_custom_scheduler == nullptr) {
+    throw std::logic_error(
+        "resource-area accounting is available only with Custom FCFS");
+  }
+  return m_custom_scheduler->resource_area_through(m_current_time);
 }
 
 template <typename TraceType>
@@ -856,6 +925,17 @@ BasicSimulation<TraceType>::get_backfill_window() const {
     window.releases.push_back({time, nodes});
   }
   return window;
+}
+
+template <typename TraceType>
+tdiff_t
+BasicSimulation<TraceType>::get_prediction_horizon(double utilization) const {
+  if (m_custom_scheduler == nullptr) {
+    throw std::logic_error(
+        "prediction horizon is available only with Custom FCFS");
+  }
+  return m_custom_scheduler->prediction_horizon(m_running_jobs, m_current_time,
+                                                utilization);
 }
 
 template <typename TraceType>
@@ -898,7 +978,6 @@ BasicSimulation<TraceType>::get_statistics() const {
       total_wait += wait;
       total_turnaround += (wait + exec);
       total_node_seconds += static_cast<tdiff_t>(job.get_num_nodes()) * exec;
-
       sim_time_t completion = convert_epoch<sim_time_t>(job.get_end_time());
       max_completion = std::max(max_completion, completion);
       completed_count++;
@@ -911,13 +990,27 @@ BasicSimulation<TraceType>::get_statistics() const {
       (completed_count > 0) ? total_turnaround / completed_count : 0.0;
   stats.makespan = max_completion;
 
-  // Time-averaged over [0, makespan], not an instantaneous snapshot - see
-  // the field comment in sim.hpp for why.
-  stats.utilization =
-      (stats.total_nodes > 0 && stats.makespan > 0)
-          ? total_node_seconds /
-                (static_cast<double>(stats.total_nodes) * stats.makespan)
-          : 0.0;
+  if (m_custom_scheduler != nullptr) {
+    // Custom FCFS maintains live resource-area accounting at settled
+    // scheduling boundaries. It remains accurate for partial streaming
+    // snapshots and does not add bookkeeping to any other scheduler.
+    stats.resource_area =
+        m_custom_scheduler->resource_area_through(stats.current_time);
+    const sim_time_t accounting_horizon =
+        std::isfinite(stats.current_time) && stats.nodes_in_use > 0
+            ? stats.current_time
+            : m_custom_scheduler->m_resource_area_time;
+    stats.utilization =
+        m_custom_scheduler->utilization_through(accounting_horizon);
+  } else {
+    // Preserve the original post-hoc statistic for standard schedulers.
+    stats.resource_area = total_node_seconds;
+    stats.utilization =
+        (stats.total_nodes > 0 && stats.makespan > 0)
+            ? total_node_seconds /
+                  (static_cast<double>(stats.total_nodes) * stats.makespan)
+            : 0.0;
+  }
 
   return stats;
 }

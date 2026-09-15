@@ -1,6 +1,6 @@
 name: Quick Test (Scheduler + Serialization + Trace Schema)
 
-# Fast CI for quick validation (runs on every commit)
+# Fast CI for quick validation (runs on non-main branch pushes and manually)
 # Runs scheduler correctness, Ser20 memory serialization, and the lightweight
 # C++ trace-schema API suite.
 # Full test suite runs on pull requests and pushes to main or develop.
@@ -49,6 +49,7 @@ jobs:
           make install
 
       - name: Run Scheduler Correctness Tests Only
+        id: scheduler-correctness
         run: |
           echo "Running scheduler-correctness tests with installed binary..."
           ./tests/run_scheduler_correctness_tests.sh
@@ -71,8 +72,7 @@ jobs:
         run: |
           echo "========================================"
           echo "Quick Test Complete"
-          echo "Scheduler correctness: 34/34 fixtures (verified in a manual session pass;"
-          echo "this echo does not itself re-check the actual result above)"
+          echo "Scheduler correctness (34 fixtures): ${{ steps.scheduler-correctness.outcome }}"
           echo "Ser20 memory serialization: ${{ steps.serialization.outcome }}"
           echo "Trace schema / progressive-loading API: ${{ steps.trace-schema.outcome }}"
           echo "========================================"

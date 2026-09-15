@@ -12,6 +12,7 @@ Complete reference for all DR_EVT command-line options for the `simulator` binar
 | Input/output | `-R, --resource_trace FILENAME` | Write resource history. |
 | System | `-n, --total_nodes COUNT` | Set simulated cluster capacity. |
 | Scheduling | `-b, --backfill_policy POLICY` | Select `easy`, `conservative`, or `none`. |
+| Scheduling | `--num_max_candidates COUNT` | Cap candidates offered to the experimental selector. |
 | Scheduling | `-p, --priority_policy POLICY` | Select the job-ordering policy. |
 | Scheduling | `-q, --queue_impl IMPLEMENTATION` | Select the FCFS wait-queue implementation. |
 | Scheduling | `-Q, --block_size SIZE` | Set the `block` queue's block size. |
@@ -138,6 +139,18 @@ Backfilling algorithm to use.
 ```bash
 ${CMAKE_INSTALL_PREFIX}/bin/simulator traces/jobs.csv --backfill_policy conservative
 ```
+
+### `--num_max_candidates COUNT`
+
+Maximum number of feasible jobs offered to the callback-driven custom
+EASY scheduler in one selection decision. `COUNT` must be greater than zero.
+
+**Default:** `1`
+
+The command-line and prototext parsers store this value in `Sim_Params`. The
+cost and selection callbacks themselves are installed when constructing the
+custom scheduler through the C++ or Python API; they cannot be encoded
+in a command-line argument or prototext file.
 
 ### `-p, --priority_policy POLICY`
 Job priority/ordering policy.

@@ -715,6 +715,189 @@ void test_append_jobs_memory_pressure() {
   std::cout << "  PASSED" << std::endl;
 }
 
+// Test 18: Custom-FCFS resource area weights each settled allocation by its
+// duration and combines multiple allocations and releases at one timestamp.
+void test_resource_area_and_time_accounted_utilization() {
+  std::cout << "\n=== Test 18: time-accounted resource area ===" << std::endl;
+
+  auto params = make_params();
+  Simulation sim(
+      params,
+      [](job_no_t job_id, sim_time_t, tdiff_t, num_nodes_t) {
+        return static_cast<job_cost_t>(job_id);
+      },
+      [](const backfill_candidates_t &candidates) -> std::optional<job_no_t> {
+        return candidates.empty()
+                   ? std::nullopt
+                   : std::optional<job_no_t>{candidates.front().first};
+      });
+  sim.get_trace().load_data(0);
+
+  sim.append_job(0.0, 20, kTestQueueInput, 10.0);
+  sim.append_job(0.0, 30, kTestQueueInput, 10.0);
+  sim.advance_to(0.0);
+  assert(approx_equal(sim.get_resource_area(), 0.0));
+
+  // At t=10 two jobs return 20+30 nodes and two jobs start using 15+26.
+  // All four events are settled before accounting stores the next interval's
+  // state, so the allocation changes from 50 to 41 without assigning any
+  // positive-duration interval to an intermediate same-time state.
+  sim.append_job(10.0, 15, kTestQueueInput, 100.0);
+  sim.append_job(10.0, 26, kTestQueueInput, 100.0);
+  sim.advance_to(10.0);
+  assert(approx_equal(sim.get_resource_area(), 50.0 * 10.0));
+
+  sim.advance_to(60.0); // Include the still-running job's partial interval.
+  assert(approx_equal(sim.get_resource_area(), 50.0 * 10.0 + 41.0 * 50.0));
+
+  auto partial = sim.get_statistics();
+  assert(approx_equal(partial.resource_area, 2550.0));
+  assert(approx_equal(partial.utilization, 2550.0 / (100.0 * 60.0)));
+
+  sim.advance_to(110.0);
+  auto complete = sim.get_statistics();
+  assert(approx_equal(complete.resource_area, 50.0 * 10.0 + 41.0 * 100.0));
+  assert(approx_equal(complete.utilization, 4600.0 / (100.0 * 110.0)));
+
+  // Standard schedulers do not pay for or expose live area accounting.
+  auto standard_params = make_params();
+  Simulation standard(standard_params);
+  standard.get_trace().load_data(0);
+  bool rejected_for_standard_scheduler = false;
+  try {
+    (void)standard.get_resource_area();
+  } catch (const std::logic_error &) {
+    rejected_for_standard_scheduler = true;
+  }
+  assert(rejected_for_standard_scheduler);
+
+  std::cout << "  PASSED" << std::endl;
+}
+
+// Test 19: prediction horizon integrates utilization-adjusted available
+// capacity from the FCFS shadow time and excludes not-yet-arrived jobs.
+void test_prediction_horizon() {
+  std::cout << "\n=== Test 19: prediction horizon ===" << std::endl;
+
+  auto params = make_params();
+  Simulation sim(
+      params,
+      [](job_no_t job_id, sim_time_t, tdiff_t, num_nodes_t) {
+        return static_cast<job_cost_t>(job_id);
+      },
+      [](const backfill_candidates_t &candidates) -> std::optional<job_no_t> {
+        return candidates.empty()
+                   ? std::nullopt
+                   : std::optional<job_no_t>{candidates.front().first};
+      });
+  sim.get_trace().load_data(0);
+
+  // Four jobs enter the running set and occupy 95 of the 100 nodes. Their
+  // predicted completion times are 40, 60, 80, and 100 seconds.
+  for (const auto &[nodes, runtime] :
+       std::vector<std::pair<num_nodes_t, tdiff_t>>{
+           {50, 40.0}, {20, 60.0}, {15, 80.0}, {10, 100.0}}) {
+    sim.append_job(0.0, nodes, kTestQueueInput, runtime);
+    sim.advance_to(0.0);
+  }
+
+  // Four more jobs remain waiting because none fits in the five free nodes.
+  // Their total resource-time demand is
+  // A_Q = 50*8 + 20*15 + 15*10 + 10*15 = 1000 node-seconds.
+  for (const auto &[nodes, runtime] :
+       std::vector<std::pair<num_nodes_t, tdiff_t>>{
+           {50, 8.0}, {20, 15.0}, {15, 10.0}, {10, 15.0}}) {
+    sim.append_job(0.0, nodes, kTestQueueInput, runtime);
+    sim.advance_to(0.0);
+  }
+
+  // This demand arrives in the future and must not be included in A_Q(0).
+  sim.append_job(10.0, 100, kTestQueueInput, 100.0);
+
+  assert(sim.get_active_job_count() == 4);
+  assert(approx_equal(sim.get_fcfs_head_shadow_time(), 40.0));
+
+  // At the shadow time, 50 nodes have just been released, so 55 nodes are
+  // available. The remaining completion events produce these nominal areas:
+  //   [40, 60]: 55*20 = 1100
+  //   [60, 80]: 75*20 = 1500
+  //   [80,100]: 90*20 = 1800
+  // Varying U therefore places the horizon at each successive event or after
+  // the replay, covering every result path in the estimator.
+  assert(approx_equal(sim.get_prediction_horizon(1.0), 20.0));
+  assert(approx_equal(sim.get_prediction_horizon(0.5), 40.0));
+  assert(approx_equal(sim.get_prediction_horizon(0.25), 60.0));
+
+  // U=0 is the documented sentinel for the U=1 fallback.
+  assert(approx_equal(sim.get_prediction_horizon(0.0), 20.0));
+
+  // At U=0.1, the replay supplies 110+150+180=440 node-seconds. The remaining
+  // 560 node-seconds use all 100 nodes at effective rate 0.1, adding 56
+  // seconds after t=100: H=(100-40)+56=116 seconds.
+  assert(approx_equal(sim.get_prediction_horizon(0.1), 116.0));
+
+  for (double invalid_utilization :
+       {-0.01, 1.01, std::numeric_limits<double>::infinity(),
+        -std::numeric_limits<double>::infinity(),
+        std::numeric_limits<double>::quiet_NaN()}) {
+    bool threw = false;
+    try {
+      (void)sim.get_prediction_horizon(invalid_utilization);
+    } catch (const std::invalid_argument &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+
+  auto empty_params = make_params();
+  Simulation empty(
+      empty_params,
+      [](job_no_t job_id, sim_time_t, tdiff_t, num_nodes_t) {
+        return static_cast<job_cost_t>(job_id);
+      },
+      [](const backfill_candidates_t &candidates) -> std::optional<job_no_t> {
+        return candidates.empty()
+                   ? std::nullopt
+                   : std::optional<job_no_t>{candidates.front().first};
+      });
+  empty.get_trace().load_data(0);
+  assert(approx_equal(empty.get_prediction_horizon(0.5), 0.0));
+
+  auto standard_params = make_params();
+  Simulation standard(standard_params);
+  standard.get_trace().load_data(0);
+  bool rejected_for_standard_scheduler = false;
+  try {
+    (void)standard.get_prediction_horizon(0.5);
+  } catch (const std::logic_error &) {
+    rejected_for_standard_scheduler = true;
+  }
+  assert(rejected_for_standard_scheduler);
+
+  auto no_backfill_params = make_params();
+  no_backfill_params.m_backfill_policy = BackfillPolicy::NONE;
+  Simulation no_backfill(
+      no_backfill_params,
+      [](job_no_t job_id, sim_time_t, tdiff_t, num_nodes_t) {
+        return static_cast<job_cost_t>(job_id);
+      },
+      [](const backfill_candidates_t &candidates) -> std::optional<job_no_t> {
+        return candidates.empty()
+                   ? std::nullopt
+                   : std::optional<job_no_t>{candidates.front().first};
+      });
+  no_backfill.get_trace().load_data(0);
+  bool rejected_without_easy = false;
+  try {
+    (void)no_backfill.get_prediction_horizon(0.5);
+  } catch (const std::logic_error &) {
+    rejected_without_easy = true;
+  }
+  assert(rejected_without_easy);
+
+  std::cout << "  PASSED" << std::endl;
+}
+
 int main() {
   std::cout << "====================================" << std::endl;
   std::cout << "Append-Job Test Suite" << std::endl;
@@ -740,6 +923,8 @@ int main() {
     test_advance_to_idle_gap();
     test_submit_job_records_busy_nodes();
     test_append_jobs_memory_pressure();
+    test_resource_area_and_time_accounted_utilization();
+    test_prediction_horizon();
 
     std::cout << "\n====================================" << std::endl;
     std::cout << "ALL APPEND_JOB TESTS PASSED" << std::endl;

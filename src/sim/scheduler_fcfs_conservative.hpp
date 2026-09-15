@@ -14,6 +14,9 @@
 
 namespace dr_evt {
 
+/** \addtogroup dr_evt_sim
+ *  @{ */
+
 /**
  * FCFS scheduler with Conservative backfilling support.
  *
@@ -95,7 +98,7 @@ public:
   void sync_to(sim_time_t current_time) override;
 
   /** @copydoc SchedulerBase::active_job_count */
-  size_t active_job_count() override {
+  size_t active_job_count() const override {
     return m_eligible_end_idx - m_removed_count;
   }
 
@@ -134,6 +137,8 @@ private:
                                            const running_jobs_t &running_jobs,
                                            sim_time_t current_time);
 };
+
+/**@}*/
 
 } // namespace dr_evt
 

@@ -18,6 +18,7 @@
 #include "dr_evt_config.hpp"
 #include "params/sim_params.hpp"
 #include "sim/sim.hpp"
+#include <pybind11/functional.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
@@ -74,6 +75,9 @@ PYBIND11_MODULE(dr_evt, m) {
       .def_readwrite(
           "backfill_policy", &Sim_Params::m_backfill_policy,
           "BackfillPolicy: Backfilling policy used by the scheduler.")
+      .def_readwrite("num_max_candidates", &Sim_Params::m_num_max_candidates,
+                     "int: Maximum feasible jobs offered to the experimental "
+                     "backfill selector.")
       .def_readwrite("priority_policy", &Sim_Params::m_priority_policy,
                      "PriorityPolicy: Waiting-job ordering policy.")
       .def_readwrite("verbose", &Sim_Params::m_verbose,
@@ -120,8 +124,12 @@ PYBIND11_MODULE(dr_evt, m) {
                     "int: Nodes allocated to running jobs.")
       .def_readonly("nodes_available", &Simulation::Statistics::nodes_available,
                     "int: Currently unallocated nodes.")
+      .def_readonly("resource_area", &Simulation::Statistics::resource_area,
+                    "float: Live time-integrated allocation for Custom FCFS; "
+                    "scheduled-job area for standard schedulers.")
       .def_readonly("utilization", &Simulation::Statistics::utilization,
-                    "float: Node utilization in the range [0, 1].")
+                    "float: Live time-accounted utilization for Custom FCFS; "
+                    "post-hoc schedule utilization otherwise.")
       .def_readonly("avg_wait_time", &Simulation::Statistics::avg_wait_time,
                     "float: Mean completed-job wait time.")
       .def_readonly("avg_turnaround_time",
@@ -164,6 +172,13 @@ PYBIND11_MODULE(dr_evt, m) {
   py::class_<Simulation>(m, "Simulation")
       .def(py::init<const Sim_Params &>(), py::arg("params"),
            "Create a simulation from SimParams. The configuration is copied.")
+      .def(py::init<const Sim_Params &, job_cost_function_t,
+                    backfill_selector_t>(),
+           py::arg("params"), py::arg("job_cost_function"),
+           py::arg("backfill_selector"),
+           "Create an experimental circular-buffer simulation. One callback "
+           "computes each job's cost at insertion; the other selects one "
+           "feasible (job_id, cost) backfill candidate.")
 
       // Batch mode
       .def("run", &Simulation::run,
@@ -216,6 +231,13 @@ PYBIND11_MODULE(dr_evt, m) {
       .def("get_nodes_in_use", &Simulation::get_nodes_in_use,
            "Return the number of allocated nodes as int.")
 
+      .def("get_current_utilization", &Simulation::get_current_utilization,
+           "Return current nodes-in-use divided by total nodes as float.")
+
+      .def("get_resource_area", &Simulation::get_resource_area,
+           "Return Custom-FCFS time-integrated allocation in node-seconds. "
+           "Raises RuntimeError for other scheduler implementations.")
+
       .def("get_available_nodes", &Simulation::get_available_nodes,
            "Return the number of unallocated nodes as int.")
 
@@ -230,6 +252,12 @@ PYBIND11_MODULE(dr_evt, m) {
       .def("get_backfill_window", &Simulation::get_backfill_window,
            "Return a BackfillWindow snapshot for evaluating a backfill "
            "candidate.")
+
+      .def("get_prediction_horizon", &Simulation::get_prediction_horizon,
+           py::arg("utilization"),
+           "Estimate the Custom-FCFS waiting-queue drain time from the FCFS "
+           "shadow time. Requires EASY backfilling; future arrivals are "
+           "excluded.")
 
       // Monitoring - Comprehensive statistics
       .def("get_statistics", &Simulation::get_statistics,

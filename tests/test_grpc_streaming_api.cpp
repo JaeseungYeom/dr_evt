@@ -150,8 +150,11 @@ bool test_single_append(const std::string &server_address,
               << " makespan=" << stats.makespan() << "\n";
 
     if (stats.jobs_submitted() != 2 || stats.jobs_completed() != 2 ||
-        stats.makespan() != 205.0) {
-      std::cerr << "  FAIL: expected submitted=2 completed=2 makespan=205\n";
+        stats.makespan() != 205.0 ||
+        std::fabs(stats.resource_area() - 5000.0) > 1e-12 ||
+        std::fabs(stats.utilization() - 5000.0 / (100.0 * 205.0)) > 1e-12) {
+      std::cerr << "  FAIL: expected submitted=2 completed=2 makespan=205 "
+                   "resource_area=5000\n";
       client.finish();
       return false;
     }
@@ -245,8 +248,11 @@ bool test_batch_append(const std::string &server_address,
               << " makespan=" << stats.makespan() << "\n";
 
     if (stats.jobs_submitted() != 3 || stats.jobs_completed() != 3 ||
-        stats.makespan() != 205.0) {
-      std::cerr << "  FAIL: expected submitted=3 completed=3 makespan=205\n";
+        stats.makespan() != 205.0 ||
+        std::fabs(stats.resource_area() - 7250.0) > 1e-12 ||
+        std::fabs(stats.utilization() - 7250.0 / (100.0 * 205.0)) > 1e-12) {
+      std::cerr << "  FAIL: expected submitted=3 completed=3 makespan=205 "
+                   "resource_area=7250\n";
       client.finish();
       return false;
     }
@@ -298,6 +304,16 @@ bool test_backfill_window(const std::string &server_address,
     ClientMessage advance;
     advance.mutable_advance_to()->set_target_time(0.0);
     client.call(advance);
+
+    ClientMessage utilization_query;
+    utilization_query.mutable_get_current_utilization();
+    const auto utilization_response = client.call(utilization_query);
+    if (std::fabs(utilization_response.get_current_utilization().utilization() -
+                  1.0) > 1e-12) {
+      std::cerr << "  FAIL: expected instantaneous utilization 1.0\n";
+      client.finish();
+      return false;
+    }
 
     ClientMessage query;
     query.mutable_get_backfill_window();

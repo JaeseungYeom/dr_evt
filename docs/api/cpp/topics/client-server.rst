@@ -10,9 +10,15 @@ the network; the MPI feeder supports multi-server orchestration.
       :project: dr_evt
       :content-only:
       :inner:
+      :members:
+      :protected-members:
+      :private-members:
 
    .. doxygenclass:: MpiFeederSimulation
       :project: dr_evt
+      :members:
+      :protected-members:
+      :private-members:
 
 See the `Client/Server Guide <../../../CLIENT_SERVER_GUIDE.html>`_ for
 deployment and wire-protocol usage.

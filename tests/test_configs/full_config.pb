@@ -3,4 +3,5 @@ trace_format: "simple"
 timestamp_format: "epoch"
 backfill_policy: "easy"
 priority_policy: "fcfs"
+num_max_candidates: 8
 run_time_mode: "limit"

@@ -36,6 +36,13 @@ print(stats.jobs_running, stats.nodes_in_use)
 A complete runnable example is
 [`python/example_streaming.py`](https://github.com/LLNL/dr_evt/blob/main/python/example_streaming.py).
 
+For experimental external backfill selection, set
+`params.num_max_candidates`, then call
+`Simulation(params, job_cost_function, backfill_selector)`. The cost callback
+receives `(job_id, submit_time, runtime_estimate, nodes_requested)`. The
+selector receives a list of `(job_id, cost)` pairs and returns one offered ID
+or `None`.
+
 ## Configuration
 
 `SimParams` currently exposes these mutable attributes:
@@ -48,6 +55,7 @@ A complete runnable example is
 | `timestamp_format` | `str` |
 | `run_time_mode` | `RunTimeMode` |
 | `backfill_policy` | `BackfillPolicy` |
+| `num_max_candidates` | `int` |
 | `priority_policy` | `PriorityPolicy` |
 | `verbose` | `bool` |
 
@@ -83,10 +91,13 @@ Their scheduling semantics are documented in
 | `run_until_exclusive(target_time)` | Process events strictly before the target. |
 | `get_current_time()` | Return current simulation time. |
 | `get_nodes_in_use()` | Return allocated nodes. |
+| `get_current_utilization()` | Return instantaneous `nodes_in_use / total_nodes`. |
+| `get_resource_area()` | Return Custom-FCFS allocated-node area in node-seconds; unavailable for standard schedulers. |
 | `get_available_nodes()` | Return free nodes. |
 | `get_active_job_count()` | Return waiting jobs. |
 | `get_fcfs_head_shadow_time()` | Return the FCFS-head reservation time, or `-1`. |
 | `get_backfill_window()` | Return the current FCFS/EASY reservation snapshot. |
+| `get_prediction_horizon(utilization)` | Estimate the Custom-FCFS/EASY waiting-queue drain time from the FCFS shadow time. |
 | `get_statistics()` | Return a `Statistics` snapshot. |
 | `write_simulated_trace()` | Write the configured job-schedule output. |
 | `print_stats()` | Print summary statistics. |
@@ -110,8 +121,17 @@ contains `time` and `nodes_released`.
   `jobs_waiting`;
 - `current_time`, `total_nodes`, `nodes_in_use`, and
   `nodes_available`; and
-- `utilization`, `avg_wait_time`, `avg_turnaround_time`, and
+- `resource_area`, `utilization`, `avg_wait_time`, `avg_turnaround_time`, and
   `makespan`.
+
+For simulations constructed with Custom-FCFS callbacks, `resource_area` is
+accumulated as `nodes_in_use * interval` between settled scheduling times.
+`utilization` divides that area by `total_nodes` and the elapsed accounting
+horizon (the snapshot time while work is running, or the last resource event
+after it becomes idle). Unlike `get_current_utilization()`, intervals that are
+far apart therefore carry proportionally more weight. Standard schedulers
+retain the post-hoc scheduled-workload calculation and do not perform live
+area bookkeeping.
 
 Metric definitions are in
 [Output Trace Files](../user-guide/output-traces.md#cli-summary).

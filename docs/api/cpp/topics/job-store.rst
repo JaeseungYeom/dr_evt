@@ -13,10 +13,14 @@ writes simulated-job output.
    .. doxygenclass:: dr_evt::BasicTrace
       :project: dr_evt
       :members:
+      :protected-members:
+      :private-members:
 
    .. doxygenclass:: dr_evt::Job_Record
       :project: dr_evt
       :members:
+      :protected-members:
+      :private-members:
 
 See `Output-Trace Buffers and Streaming Trace State <../../../dev/OUTPUT_TRACE_BUFFERS.html>`_
 for the storage and reclamation model.

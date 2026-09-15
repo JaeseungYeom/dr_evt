@@ -15,6 +15,9 @@
 
 namespace dr_evt {
 
+/** \addtogroup dr_evt_sim
+ *  @{ */
+
 /**
  * FCFS scheduler using boost::circular_buffer instead of std::deque.
  *
@@ -135,7 +138,7 @@ public:
   void sync_to(sim_time_t current_time) override;
 
   /** @copydoc SchedulerBase::active_job_count */
-  size_t active_job_count() override {
+  size_t active_job_count() const override {
     return m_eligible_end_idx - m_removed_count;
   }
 
@@ -161,6 +164,8 @@ private:
    * @param[in] job_id Trace job identifier to mark. */
   void mark_removed(job_no_t job_id);
 };
+
+/**@}*/
 
 } // namespace dr_evt
 

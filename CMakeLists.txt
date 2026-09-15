@@ -561,6 +561,20 @@ set_target_properties(test_append_job_api-bin PROPERTIES CMAKE_INSTALL_RPATH
 
 list(APPEND DR_EVT_UNIT_TEST_TARGETS test_append_job_api-bin)
 
+# Custom callback-driven EASY backfill scheduler, resource accounting, and
+# prediction-horizon APIs.
+add_executable(test_custom_scheduler-bin
+  tests/test_custom_scheduler.cpp)
+target_include_directories(test_custom_scheduler-bin PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
+  $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}>)
+target_link_libraries(test_custom_scheduler-bin PRIVATE dr_evt)
+set_target_properties(test_custom_scheduler-bin PROPERTIES
+  OUTPUT_NAME test_custom_scheduler
+  CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
+list(APPEND DR_EVT_UNIT_TEST_TARGETS test_custom_scheduler-bin)
+
 # Compile-time policy test: verifies inline Pcon job fields and the expanded
 # resource-history output without changing the standard record layouts.
 add_executable(test_pcon_trace-bin tests/test_pcon_trace.cpp)
@@ -704,6 +718,11 @@ if(DR_EVT_WITH_UNIT_TESTING)
     NAME test_append_job_api
     COMMAND $<TARGET_FILE:test_append_job_api-bin>)
   add_test(
+    NAME test_custom_scheduler
+    COMMAND ${CMAKE_COMMAND} -E env
+      CUSTOM_SCHEDULER_TEST=$<TARGET_FILE:test_custom_scheduler-bin>
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_custom_scheduler_tests.sh)
+  add_test(
     NAME test_progressive_load
     COMMAND $<TARGET_FILE:test_progressive_load-bin>)
   add_test(
@@ -718,7 +737,8 @@ if(DR_EVT_WITH_UNIT_TESTING)
     COMMAND $<TARGET_FILE:test_block_queue-bin>)
 
   set_tests_properties(
-    test_append_job_api test_progressive_load test_queue_input
+    test_append_job_api test_custom_scheduler test_progressive_load
+    test_queue_input
     test_batch_vs_streaming test_block_queue
     PROPERTIES
       LABELS "unit;native"

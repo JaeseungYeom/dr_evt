@@ -23,13 +23,14 @@ This directory contains GitHub Actions workflows for automated testing.
 - Resource-history tests (5)
 - Job-store tests (6)
 - Config tests, including power-usage `trace_type` coverage
-- Native CTest suite (11 tests, plus MPI streaming when MPI is available)
+- Native CTest suite (12 tests, plus MPI streaming when MPI is available),
+  including the custom FCFS scheduler's focused and 2,000-job comparisons
 - Ser20-disabled native serialization build and tests
 - Sphinx and Doxygen documentation build with warnings treated as errors
-- Python API tests (16)
+- Python API tests (17)
 - gRPC client/server tests (2)
-- Append-job tests (C++ + gRPC)
-- FCFS/EASY backfill-window gRPC wire test
+- Append-job tests (19 C++ + 3 gRPC)
+- FCFS/EASY backfill-window focused rerun of the three-case gRPC binary
 - Synchronized single-coordinator gRPC test
 - Progressive-loading tests (C++ + CLI)
 - Queue-input schema test
@@ -68,6 +69,7 @@ Total tests referenced by the full suite:
 | Category | Count | Verified in this doc pass? |
 |----------|-------|------------------------------|
 | Scheduler correctness | 34 | CI runner |
+| Custom FCFS | 7 | CTest; five focused checks and two golden schedules, including 2,000 jobs |
 | Queue implementation differential | 34 fixtures × 4 implementations | CI runner |
 | Column aliases | 8 | CI runner |
 | Run-time mode | 7 | CI runner |
@@ -78,11 +80,11 @@ Total tests referenced by the full suite:
 | Resource history | 5 | CI runner |
 | Job store | 6 | CI runner |
 | Config | 9 | CI runner; includes power-usage `trace_type` coverage |
-| Native CTest | 11, plus 1 with MPI | CI runner; RNG and binary serialization, trace policies, replay reclamation, append/streaming APIs, queues, and CLI dispatch |
-| Python API | 16 | CI runner |
+| Native CTest | 12, plus 1 with MPI | CI runner; RNG and binary serialization, trace policies, replay reclamation, custom scheduling, append/streaming APIs, queues, and CLI dispatch |
+| Python API | 17 | CI runner |
 | gRPC client/server | 2 | CI runner |
-| Append-job | 18 C++ + gRPC | CI runner |
-| FCFS/EASY backfill-window gRPC | 1 | CI runner |
+| Append-job | 22: 19 C++ + 3 gRPC | CI runner |
+| FCFS/EASY backfill-window gRPC | 3 repeated checks; 1 targeted | CI runner |
 | Single-coordinator gRPC | 1 | CI runner; synchronized independent systems |
 | Progressive loading | 11 C++ + 4 CLI | CI runner |
 | Queue input schema | 1 binary | CI runner |
@@ -91,6 +93,7 @@ Total tests referenced by the full suite:
 The workflow summary in `tests.yml` is the authoritative CI-oriented list.
 See `docs/TESTING_GUIDE.md` for the fuller test catalog and the distinction
 between individual assertions, fixtures, binaries, and runner-level counts.
+The native CTest row overlaps with individually listed tests that CTest invokes.
 
 ## Status Badges
 
@@ -119,6 +122,7 @@ cmake --install build
 python3 -m pip install grpcio grpcio-tools protobuf
 
 ./tests/run_scheduler_correctness_tests.sh
+./tests/run_custom_scheduler_tests.sh
 ./tests/run_fcfs_queue_implementation_tests.sh --correctness
 ./tests/run_column_alias_tests.sh
 ./tests/run_time_mode_tests.sh
@@ -224,8 +228,9 @@ don't assume it's the same already-fixed issue without checking.
 
 ### Tests timeout
 
-- Default timeout: 30 minutes per job
-- Increase with `timeout-minutes: 60` if needed
+- No explicit timeout is currently configured, so GitHub Actions applies its
+  six-hour default to each job.
+- Add a job-level `timeout-minutes` value if a tighter limit is needed.
 - Consider splitting into more jobs
 
 ## Future Enhancements

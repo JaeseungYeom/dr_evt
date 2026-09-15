@@ -17,6 +17,9 @@ function, enum, or file name.
    :project: dr_evt
    :content-only:
    :inner:
+   :members:
+   :protected-members:
+   :private-members:
 
 .. raw:: html
 

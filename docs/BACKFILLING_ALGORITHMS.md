@@ -39,6 +39,41 @@ EASY protects the blocked head's reservation:
 Only the queue head receives a reservation, so jobs deeper in the queue can be
 delayed by backfilling.
 
+### Experimental external selection
+
+The C++ and Python APIs can opt into a circular-buffer EASY scheduler that
+separates feasibility from selection. Construct `Simulation` with a candidate
+limit, a job-cost function, and a selection function:
+
+```cpp
+params.m_num_max_candidates = 16;
+auto cost_from_job_order =
+    [](job_no_t job_id, sim_time_t, tdiff_t, num_nodes_t) {
+      return static_cast<job_cost_t>(job_id);
+    };
+auto select_lowest_cost =
+    [](const backfill_candidates_t& candidates) -> std::optional<job_no_t> {
+      if (candidates.empty()) {
+        return std::nullopt;
+      }
+      return std::min_element(
+          candidates.begin(), candidates.end(),
+          [](const auto& lhs, const auto& rhs) {
+            return lhs.second < rhs.second;
+          })->first;
+    };
+
+Simulation sim(params, cost_from_job_order, select_lowest_cost);
+```
+
+The cost function runs when each job enters the wait queue and its result is
+stored as `JobEntry::m_cost`. When the FCFS head is blocked, the scheduler
+collects up to the configured number of feasible candidates in FCFS order and
+passes their `(job_id, cost)` pairs to the selector. Returning an ID not in the
+offered vector is an error. Returning `std::nullopt` skips backfilling for that
+scheduling decision. The example's cost-only `std::min_element` comparison
+selects the first candidate in vector order when multiple costs are equal.
+
 ### Conservative
 
 Conservative backfilling protects every earlier waiting job. For each

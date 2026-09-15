@@ -13,6 +13,9 @@
 
 namespace dr_evt {
 
+/** \addtogroup dr_evt_sim
+ *  @{ */
+
 /**
  * FCFS (First-Come-First-Served) scheduler with iterator tracking.
  *
@@ -111,7 +114,7 @@ public:
    *   schedule() at call sites where the index is already known (to
    *   avoid mark_removed()'s O(n) linear re-scan by job id)
    */
-  size_t active_job_count() override {
+  size_t active_job_count() const override {
     return m_eligible_end_idx - m_removed_count;
   }
 
@@ -143,6 +146,8 @@ private:
    * @param[in] job_id Trace job identifier to mark. */
   void mark_removed(job_no_t job_id);
 };
+
+/**@}*/
 
 } // namespace dr_evt
 

@@ -156,6 +156,7 @@ def test_sim_params(result):
         params.timestamp_format = "epoch"
         params.run_time_mode = dr_evt.RunTimeMode.LIMIT
         params.backfill_policy = dr_evt.BackfillPolicy.EASY
+        params.num_max_candidates = 8
         params.priority_policy = dr_evt.PriorityPolicy.FCFS
         params.verbose = False
 
@@ -186,6 +187,7 @@ def test_streaming_api(result):
         params.timestamp_format = "epoch"
         params.run_time_mode = dr_evt.RunTimeMode.LIMIT
         params.backfill_policy = dr_evt.BackfillPolicy.EASY
+        params.num_max_candidates = 2
         params.priority_policy = dr_evt.PriorityPolicy.FCFS
 
         # Create simulation
@@ -235,6 +237,11 @@ def test_monitoring_api(result):
         assert sim.get_current_time() == 0.0
         assert sim.get_nodes_in_use() == 0
         assert sim.get_available_nodes() == 100
+        try:
+            sim.get_resource_area()
+            raise AssertionError("standard scheduler exposed live resource area")
+        except RuntimeError:
+            pass
         result.record_pass("Initial state monitoring")
 
         # After job starts
@@ -242,6 +249,7 @@ def test_monitoring_api(result):
         sim.advance_to(0.0)
         assert sim.get_nodes_in_use() == 30
         assert sim.get_available_nodes() == 70
+        assert abs(sim.get_current_utilization() - 0.3) < 1e-12
         result.record_pass("Active state monitoring")
 
         # Queue status
@@ -280,7 +288,11 @@ def test_backfill_window_api(result):
         params.backfill_policy = dr_evt.BackfillPolicy.EASY
         params.priority_policy = dr_evt.PriorityPolicy.FCFS
 
-        sim = dr_evt.Simulation(params)
+        sim = dr_evt.Simulation(
+            params,
+            lambda job_id, _submit, _runtime, _nodes: job_id,
+            lambda candidates: candidates[0][0] if candidates else None,
+        )
         for num_nodes, limit_time in [(40, 50), (60, 100), (100, 10)]:
             sim.append_job(0.0, num_nodes, QUEUE_INPUT, limit_time)
             sim.advance_to(0.0)
@@ -292,9 +304,57 @@ def test_backfill_window_api(result):
         assert [(release.time, release.nodes_released) for release in window.releases] == [
             (50.0, 40), (100.0, 60)
         ]
+        # No running-job completion remains after the shadow event, so the
+        # 1000 node-seconds are drained at U * total_nodes = 50 nodes.
+        assert abs(sim.get_prediction_horizon(0.5) - 20.0) < 1e-12
         result.record_pass("Backfill window snapshot")
     except Exception as e:
         result.record_fail("Backfill window API", str(e))
+    finally:
+        os.unlink(trace_file.name)
+
+
+def test_custom_backfill_api(result):
+    """Cost and selection callbacks drive the custom EASY scheduler."""
+    print("\n5c. Custom Backfill API")
+
+    trace_file = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+    trace_file.close()
+
+    try:
+        create_test_trace(trace_file.name, [])
+        params = dr_evt.SimParams()
+        params.infile = trace_file.name
+        params.total_nodes = 100
+        params.trace_format = "simple"
+        params.timestamp_format = "epoch"
+        params.run_time_mode = dr_evt.RunTimeMode.LIMIT
+        params.backfill_policy = dr_evt.BackfillPolicy.EASY
+        params.num_max_candidates = 2
+
+        costed_jobs = []
+        candidate_windows = []
+
+        def compute_cost(job_id, submit_time, runtime, nodes):
+            costed_jobs.append(job_id)
+            return job_id
+
+        def select_lowest_cost(candidates):
+            candidate_windows.append(candidates)
+            return min(candidates, key=lambda candidate: candidate[1])[0]
+
+        sim = dr_evt.Simulation(params, compute_cost, select_lowest_cost)
+        for nodes, runtime in [(70, 100), (50, 200), (20, 50),
+                               (10, 20), (10, 30)]:
+            sim.append_job(0.0, nodes, QUEUE_INPUT, runtime)
+        sim.advance_to(0.0)
+
+        assert costed_jobs == [0, 1, 2, 3, 4]
+        assert candidate_windows[0] == [(2, 2), (3, 3)]
+        assert select_lowest_cost([(7, 4), (8, 2), (9, 2)]) == 8
+        result.record_pass("Custom cost and selection callbacks")
+    except Exception as e:
+        result.record_fail("Custom backfill API", str(e))
     finally:
         os.unlink(trace_file.name)
 
@@ -320,7 +380,11 @@ def test_statistics(result):
         params.timestamp_format = "epoch"
         params.run_time_mode = dr_evt.RunTimeMode.LIMIT
 
-        sim = dr_evt.Simulation(params)
+        sim = dr_evt.Simulation(
+            params,
+            lambda job_id, _submit, _runtime, _nodes: job_id,
+            lambda candidates: candidates[0][0] if candidates else None,
+        )
         # Run complete simulation
         sim.advance_to(0.0)
         sim.append_job(0.0, 10, QUEUE_INPUT, 50)
@@ -346,6 +410,7 @@ def test_statistics(result):
         assert hasattr(stats, 'total_nodes')
         assert hasattr(stats, 'nodes_in_use')
         assert hasattr(stats, 'nodes_available')
+        assert hasattr(stats, 'resource_area')
         assert hasattr(stats, 'utilization')
         assert hasattr(stats, 'avg_wait_time')
         assert hasattr(stats, 'avg_turnaround_time')
@@ -354,7 +419,10 @@ def test_statistics(result):
         # Check values make sense
         assert stats.jobs_completed == 3
         assert stats.total_nodes == 100
-        assert 0.0 <= stats.utilization <= 1.0
+        # 10 nodes for 50 s, 20 nodes for 50 s, and 30 nodes for 50 s.
+        assert abs(sim.get_resource_area() - 3000.0) < 1e-12
+        assert abs(stats.resource_area - 3000.0) < 1e-12
+        assert abs(stats.utilization - (3000.0 / (100.0 * 70.0))) < 1e-12
 
         result.record_pass("Statistics fields and values")
 
@@ -497,6 +565,7 @@ def main():
     test_streaming_api(result)
     test_monitoring_api(result)
     test_backfill_window_api(result)
+    test_custom_backfill_api(result)
     test_statistics(result)
     test_backfill_policies(result)
     test_priority_policies(result)
