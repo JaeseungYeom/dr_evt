@@ -270,7 +270,7 @@ message GetStatisticsResponse {
     double avg_wait_time = 10;
     double avg_turnaround_time = 11;
     double makespan = 12;
-    // Integral of allocated nodes over elapsed simulation time, in
+    // Scheduled-job resource area for the server's standard scheduler, in
     // node-seconds.
     double resource_area = 13;
 }

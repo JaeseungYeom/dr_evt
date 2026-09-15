@@ -206,17 +206,20 @@ sim_time_t get_current_time() const;
 num_nodes_t get_nodes_in_use() const;
 num_nodes_t get_available_nodes() const;
 double get_current_utilization() const;
-tdiff_t get_resource_area() const;
+tdiff_t get_resource_area() const; // Custom-FCFS simulations only
 ```
 
 `get_current_utilization()` is the point-in-time ratio of allocated nodes to
-configured nodes. `get_resource_area()` is the area under the allocated-node
-curve: the time integral of allocated
-nodes, accumulated as `nodes_in_use * interval` between resource events and
-reported in node-seconds. `Statistics::utilization` divides this volume by
-configured nodes and the elapsed accounting horizon (the snapshot time while
-work is running, or the last resource event after it becomes idle), so event
-samples are not weighted equally when their intervals differ.
+configured nodes. For a simulation created with the Custom-FCFS callback
+constructor, `get_resource_area()` is the area under the allocated-node curve:
+the time integral of allocated nodes, accumulated once per settled scheduling
+timestamp and reported in node-seconds. Standard schedulers do not perform
+this live bookkeeping, and calling `get_resource_area()` for one throws
+`std::logic_error`.
+
+For Custom FCFS, `Statistics::utilization` divides this area by configured
+nodes and the elapsed accounting horizon. Standard schedulers retain their
+post-hoc completed-schedule utilization calculation.
 
 **Get count of jobs waiting to be scheduled:**
 ```cpp
@@ -265,6 +268,33 @@ for (const auto& change : window.releases) {
     std::cout << change.time << ": +" << change.nodes_released << " nodes\n";
 }
 ```
+
+**Estimate the Custom-FCFS waiting-queue prediction horizon:**
+
+```cpp
+tdiff_t horizon = sim.get_prediction_horizon(utilization);
+```
+
+This method is available only for a simulation created with the Custom-FCFS
+callback constructor and configured for EASY backfilling. Call it after the
+current backfilling cycle completes. At that point, the waiting queue contains
+only jobs that could not start, and the running set includes jobs dispatched by
+the cycle. The method holds those sets fixed: future arrivals are excluded and
+no additional waiting jobs are admitted during its forward replay.
+
+Queued demand is `A_Q = sum(requested_nodes * estimated_runtime)`. Starting at
+the FCFS head's shadow time, the method integrates available nodes over each
+complete interval between predicted running-job completions and scales that
+service area by `utilization`. This factor models capacity loss from
+fragmentation and scheduling constraints and is not the instantaneous
+utilization at the current scheduling time. Values in `(0, 1]` are used
+directly; zero selects the fallback factor `U = 1`.
+
+The method returns the first completion-event offset at which accumulated
+usable area covers `A_Q`; it does not interpolate within an intermediate
+interval. If the final currently running job completes before the threshold
+is reached, the remaining area is converted to time using
+`utilization * total_nodes`. An empty queue returns zero.
 
 **Get scheduling statistics** (wait times, turnaround, utilization):
 ```cpp

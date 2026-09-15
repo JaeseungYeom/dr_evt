@@ -56,6 +56,9 @@ protected:
   /// Job scheduler (polymorphic - FCFS/SJF/LJF)
   std::unique_ptr<SchedulerBase> m_scheduler;
 
+  /// Non-owning pointer set only by the Custom-FCFS constructor.
+  CustomFCFSScheduler *m_custom_scheduler;
+
   /// Event queue (submit, start, end events)
   event_q_t m_event_queue;
 
@@ -261,15 +264,15 @@ public:
   }
 
   /**
-   * @brief Return time-accounted resource usage in node-seconds.
-   * @details Accumulates `nodes_in_use * interval` between resource events
-   * and includes the elapsed portion of the current interval for finite
-   * streaming snapshots.
+   * @brief Return Custom-FCFS time-accounted resource usage in node-seconds.
+   * @details Available only when this simulation was constructed with the
+   * CustomFCFSScheduler callback constructor. Accounting occurs once per
+   * settled scheduling timestamp and includes the elapsed portion of the
+   * current interval for finite snapshots.
    * @return Resource area in node-seconds.
+   * @throws std::logic_error if this simulation does not use Custom FCFS.
    */
-  tdiff_t get_resource_area() const {
-    return m_trace.get_resource_area(m_current_time);
-  }
+  tdiff_t get_resource_area() const;
 
   /**
    * @brief Get the current simulation time.
@@ -373,6 +376,47 @@ public:
   Backfill_Window get_backfill_window() const;
 
   /**
+   * @brief Estimate the Custom-FCFS waiting-queue drain time.
+   * @details Computes the resource-area prediction horizon beginning at the
+   * FCFS head's shadow time. Current waiting demand A_Q is the sum of each
+   * waiting job's requested nodes times estimated runtime. Service capacity
+   * is projected from current running-job releases and scaled by utilization.
+   * Future arrivals are not included.
+   *
+   * The horizon is estimated only after the current FCFS-EASY backfilling
+   * cycle has completed. Consequently, all jobs that can be immediately
+   * dispatched have already entered the running set, and the waiting queue
+   * contains only jobs that remain waiting. The running set includes jobs
+   * newly dispatched during the cycle. The estimator then forward-replays
+   * predicted completions of that fixed running-job set without admitting
+   * additional jobs from the waiting queue.
+   *
+   * Between completion events, available resources are constant. If the
+   * accumulated usable area reaches queued demand within one such interval,
+   * that interval's ending completion event defines the horizon. If the last
+   * currently running job completes first, the remaining demand is estimated
+   * continuously using utilization times total system capacity. Utilization
+   * is an expected capacity factor for fragmentation and scheduling losses;
+   * it is not instantaneous utilization at the current scheduling time. An
+   * input value of zero selects the fallback factor U = 1.
+   *
+   * @pre The caller has completed scheduling at the current time, normally by
+   * calling advance_to(get_current_time()) after adding jobs at that time.
+   * @pre This simulation was constructed with the CustomFCFSScheduler callback
+   * constructor and uses EASY backfilling.
+   * @param[in] utilization Expected system-utilization factor in (0, 1], or
+   * zero to use the fallback factor 1.
+   * @return Horizon duration from the shadow time. Returns zero for an empty
+   * queue and infinity only if positive demand exists with zero total system
+   * resources.
+   * @throws std::invalid_argument if utilization is non-finite, negative, or
+   * greater than 1.
+   * @throws std::logic_error if this simulation does not use Custom FCFS with
+   * EASY backfilling.
+   */
+  tdiff_t get_prediction_horizon(double utilization) const;
+
+  /**
    * Get detailed scheduling statistics
    * @return Structure with wait times, turnaround, utilization
    */
@@ -385,11 +429,19 @@ public:
     num_nodes_t total_nodes;     ///< Configured cluster capacity.
     num_nodes_t nodes_in_use;    ///< Nodes allocated at current_time.
     num_nodes_t nodes_available; ///< Nodes free at current_time.
-    /** @brief Integrated allocated-node time in node-seconds. */
+    /**
+     * @brief Allocated-node area in node-seconds.
+     * @details Live time-accounted area for Custom FCFS; scheduled-job area
+     * for standard schedulers.
+     */
     tdiff_t resource_area;
-    /** @brief Resource-area utilization over the accounting horizon. */
-    double utilization;    ///< resource_area / (total_nodes * elapsed_time)
-    tdiff_t avg_wait_time; ///< Mean completed-job wait duration.
+    /**
+     * @brief Resource-area utilization.
+     * @details Uses the live accounting horizon for Custom FCFS and makespan
+     * for standard schedulers.
+     */
+    double utilization;
+    tdiff_t avg_wait_time;       ///< Mean completed-job wait duration.
     tdiff_t avg_turnaround_time; ///< Mean completed-job submit-to-end duration.
     sim_time_t makespan;         ///< Latest completion time in the trace.
   };
@@ -452,6 +504,11 @@ public:
   num_jobs_t initialize_trace(num_jobs_t max_jobs = 0);
 
 protected:
+  /** Advance using a compile-time-selected Custom-FCFS accounting path. */
+  template <bool AccountResources>
+  void advance_to_impl(sim_time_t target_time,
+                       CustomFCFSScheduler *custom_scheduler);
+
   /**
    * @brief Process an arrival event for an existing trace job.
    * @param[in] job_idx Identifier of the arriving job.

@@ -278,7 +278,7 @@ jobs:
         id: append-job
         run: |
           echo "========================================"
-          echo "Running Append-Job Tests (18 C++ + 3 gRPC)"
+          echo "Running Append-Job Tests (19 C++ + 3 gRPC)"
           echo "========================================"
           ./tests/run_append_job_tests.sh
 
@@ -342,7 +342,7 @@ jobs:
           echo "  Config (9 tests): ${{ steps.config.outcome }}"
           echo "  Native CTest (12 + MPI when available): ${{ steps.core-ctest.outcome }}"
           echo "  Python API (17 tests): ${{ steps.python-api.outcome }}"
-          echo "  Append-Job (18 C++ + 3 gRPC): ${{ steps.append-job.outcome }}"
+          echo "  Append-Job (19 C++ + 3 gRPC): ${{ steps.append-job.outcome }}"
           echo "  Backfill-window focused rerun (3 checks already counted): ${{ steps.backfill-window.outcome }}"
           echo "  Single-Coordinator gRPC: ${{ steps.grpc-single-coordinator.outcome }}"
           echo "  Progressive Loading (11 C++ + 4 CLI): ${{ steps.progressive-load.outcome }}"

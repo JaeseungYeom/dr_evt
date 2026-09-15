@@ -49,8 +49,7 @@ void test_external_backfill_selection() {
   };
 
   CustomFCFSScheduler scheduler(100, 0, BackfillPolicy::EASY, 2,
-                                cost_from_job_order,
-                                observe_and_select_lowest);
+                                cost_from_job_order, observe_and_select_lowest);
   scheduler.insert_job(0, 0.0, 100.0, 70);
   scheduler.insert_job(1, 0.0, 200.0, 50);
   scheduler.insert_job(2, 0.0, 50.0, 20);
@@ -87,8 +86,7 @@ void test_selector_must_return_a_candidate() {
 }
 
 void test_current_utilization_api() {
-  constexpr const char *trace_path =
-      "/tmp/dr_evt_custom_scheduler_empty.csv";
+  constexpr const char *trace_path = "/tmp/dr_evt_custom_scheduler_empty.csv";
   {
     std::ofstream trace(trace_path);
     trace << "job_submit_time,num_nodes,time_limit\n";
@@ -109,6 +107,38 @@ void test_current_utilization_api() {
   assert(std::abs(simulation.get_current_utilization() - 0.25) < 1e-12);
   simulation.advance_to(100.0);
   assert(simulation.get_current_utilization() == 0.0);
+}
+
+void test_batch_resource_area_accounting() {
+  constexpr const char *trace_path =
+      "/tmp/dr_evt_custom_scheduler_resource_area.csv";
+  {
+    std::ofstream trace(trace_path);
+    trace << "job_submit_time,num_nodes,time_limit\n"
+          << "0,20,10\n"
+          << "0,30,10\n"
+          << "10,15,100\n"
+          << "10,26,100\n";
+  }
+
+  Sim_Params params;
+  params.m_infile = trace_path;
+  params.m_total_nodes = 100;
+  params.m_trace_format = "simple";
+  params.m_timestamp_format = "epoch";
+  params.m_run_time_mode = RunTimeMode::LIMIT;
+  params.m_backfill_policy = BackfillPolicy::EASY;
+  params.m_num_max_candidates = 4;
+
+  Simulation simulation(params, cost_from_job_order, select_lowest_cost);
+  simulation.run();
+
+  // At t=10 two jobs release 20+30 nodes while two jobs start using 15+26.
+  // The settled allocation after all four same-time events is 41 nodes.
+  const auto stats = simulation.get_statistics();
+  assert(std::abs(stats.resource_area - 4600.0) < 1e-12);
+  assert(std::abs(stats.utilization - 4600.0 / (100.0 * 110.0)) < 1e-12);
+  assert(std::abs(simulation.get_resource_area() - 4600.0) < 1e-12);
 }
 
 void test_matches_default_circular_easy() {
@@ -181,8 +211,7 @@ int write_custom_schedule(const char *input_path, const char *output_path,
 }
 
 int main(int argc, char **argv) {
-  if ((argc == 4 || argc == 5) &&
-      std::string(argv[1]) == "--write-schedule") {
+  if ((argc == 4 || argc == 5) && std::string(argv[1]) == "--write-schedule") {
     const auto total_nodes = argc == 5
                                  ? static_cast<num_nodes_t>(std::stoul(argv[4]))
                                  : num_nodes_t{100};
@@ -197,6 +226,7 @@ int main(int argc, char **argv) {
   test_external_backfill_selection();
   test_selector_must_return_a_candidate();
   test_current_utilization_api();
+  test_batch_resource_area_accounting();
   test_matches_default_circular_easy();
   std::cout << "Custom scheduler tests passed\n";
   return 0;

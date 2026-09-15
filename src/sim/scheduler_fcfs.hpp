@@ -114,7 +114,7 @@ public:
    *   schedule() at call sites where the index is already known (to
    *   avoid mark_removed()'s O(n) linear re-scan by job id)
    */
-  size_t active_job_count() override {
+  size_t active_job_count() const override {
     return m_eligible_end_idx - m_removed_count;
   }
 

@@ -7,7 +7,9 @@
 
 #include "sim/scheduler_fcfs_custom.hpp"
 #include <algorithm>
+#include <cmath>
 #include <limits>
+#include <map>
 #include <stdexcept>
 
 namespace dr_evt {
@@ -24,7 +26,8 @@ CustomFCFSScheduler::CustomFCFSScheduler(
       m_current_tracked_time(0.0), m_removed_count(0),
       m_num_max_candidates(num_max_candidates),
       m_job_cost_function(std::move(cost_function)),
-      m_backfill_selector(std::move(selector)) {
+      m_backfill_selector(std::move(selector)), m_resource_area(0.0),
+      m_resource_area_time(0.0), m_accounted_available_nodes(total_nodes) {
   if (m_num_max_candidates == 0) {
     throw std::invalid_argument(
         "CustomFCFSScheduler requires num_max_candidates > 0");
@@ -43,15 +46,120 @@ CustomFCFSScheduler::CustomFCFSScheduler(
   }
 }
 
-void CustomFCFSScheduler::insert_job(job_no_t job_id,
-                                           sim_time_t submit_time,
-                                           tdiff_t run_time_estimate,
-                                           num_nodes_t nodes_requested) {
+void CustomFCFSScheduler::advance_resource_accounting_to(
+    sim_time_t current_time) {
+  if (current_time < m_resource_area_time) {
+    throw std::logic_error("resource accounting cannot move backward in time");
+  }
+  if (!std::isfinite(current_time)) {
+    return;
+  }
+  const num_nodes_t allocated_nodes =
+      m_total_nodes - m_accounted_available_nodes;
+  m_resource_area += static_cast<tdiff_t>(allocated_nodes) *
+                     (current_time - m_resource_area_time);
+  m_resource_area_time = current_time;
+}
+
+void CustomFCFSScheduler::commit_available_nodes(num_nodes_t available_nodes) {
+  if (available_nodes > m_total_nodes) {
+    throw std::logic_error("available nodes exceed total system capacity");
+  }
+  m_accounted_available_nodes = available_nodes;
+}
+
+void CustomFCFSScheduler::reset_resource_accounting() {
+  m_resource_area = 0.0;
+  m_resource_area_time = 0.0;
+  m_accounted_available_nodes = m_total_nodes;
+}
+
+tdiff_t
+CustomFCFSScheduler::resource_area_through(sim_time_t through_time) const {
+  tdiff_t area = m_resource_area;
+  if (std::isfinite(through_time) && through_time > m_resource_area_time) {
+    const num_nodes_t allocated_nodes =
+        m_total_nodes - m_accounted_available_nodes;
+    area += static_cast<tdiff_t>(allocated_nodes) *
+            (through_time - m_resource_area_time);
+  }
+  return area;
+}
+
+double CustomFCFSScheduler::utilization_through(sim_time_t through_time) const {
+  if (m_total_nodes == 0 || through_time <= 0.0) {
+    return 0.0;
+  }
+  return resource_area_through(through_time) /
+         (static_cast<double>(m_total_nodes) * through_time);
+}
+
+tdiff_t
+CustomFCFSScheduler::prediction_horizon(const running_jobs_t &running_jobs,
+                                        sim_time_t current_time,
+                                        double utilization) const {
+  if (m_backfill_policy != BackfillPolicy::EASY) {
+    throw std::logic_error(
+        "prediction horizon requires Custom FCFS with EASY backfilling");
+  }
+  if (!std::isfinite(utilization) || utilization < 0.0 || utilization > 1.0) {
+    throw std::invalid_argument("utilization must be finite and in [0, 1]");
+  }
+  const double effective_utilization = utilization == 0.0 ? 1.0 : utilization;
+
+  tdiff_t queued_area = 0.0;
+  for (size_t i = 0; i < m_eligible_end_idx; ++i) {
+    const auto &job = m_wait_queue[i];
+    if (!job.removed) {
+      queued_area +=
+          static_cast<tdiff_t>(job.nodes_requested) * job.run_time_estimate;
+    }
+  }
+  if (queued_area <= 0.0) {
+    return 0.0;
+  }
+  if (m_total_nodes == 0) {
+    return std::numeric_limits<tdiff_t>::infinity();
+  }
+
+  const sim_time_t shadow_time =
+      std::max(current_time, m_fcfs_reservation_time);
+  double available_nodes = static_cast<double>(m_total_nodes);
+  std::map<sim_time_t, num_nodes_t> releases_by_time;
+  for (const auto &[job_id, job] : running_jobs) {
+    (void)job_id;
+    const sim_time_t end_time = job.start_time + job.run_time;
+    if (end_time > shadow_time) {
+      available_nodes -= static_cast<double>(job.nodes);
+      releases_by_time[end_time] += job.nodes;
+    }
+  }
+
+  tdiff_t usable_area = 0.0;
+  sim_time_t previous_time = shadow_time;
+  for (const auto &[release_time, nodes_released] : releases_by_time) {
+    usable_area += effective_utilization * available_nodes *
+                   (release_time - previous_time);
+    if (usable_area >= queued_area) {
+      return release_time - shadow_time;
+    }
+    available_nodes += static_cast<double>(nodes_released);
+    previous_time = release_time;
+  }
+
+  return previous_time - shadow_time +
+         (queued_area - usable_area) /
+             (effective_utilization * static_cast<double>(m_total_nodes));
+}
+
+void CustomFCFSScheduler::insert_job(job_no_t job_id, sim_time_t submit_time,
+                                     tdiff_t run_time_estimate,
+                                     num_nodes_t nodes_requested) {
   if (m_wait_queue.full()) {
     if (m_overflow_policy == CircularOverflowPolicy::ABORT) {
-      throw std::runtime_error(
-          "CustomFCFSScheduler: wait queue capacity (" +
-          std::to_string(m_wait_queue.capacity()) + ") exceeded");
+      throw std::runtime_error("CustomFCFSScheduler: wait queue capacity (" +
+                               std::to_string(m_wait_queue.capacity()) +
+                               ") exceeded");
     }
     m_wait_queue.set_capacity(std::max<size_t>(m_wait_queue.capacity() * 2, 1));
   }
@@ -132,8 +240,8 @@ backfill_candidates_t CustomFCFSScheduler::find_backfill_candidates(
 
 std::vector<job_no_t>
 CustomFCFSScheduler::schedule(num_nodes_t free_nodes,
-                                    const running_jobs_t &running_jobs,
-                                    sim_time_t current_time) {
+                              const running_jobs_t &running_jobs,
+                              sim_time_t current_time) {
   sync_to(current_time);
   compact_if_needed();
 

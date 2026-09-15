@@ -59,7 +59,7 @@ or are reported as skipped.
 | Category | Count | Runner or registration | Coverage |
 |---|---:|---|---|
 | Scheduler correctness | 34 | `run_scheduler_correctness_tests.sh` | C++/Python schedule and resource-trace consistency |
-| Custom FCFS | 6 | `run_custom_scheduler_tests.sh` | Four focused API checks plus two golden schedules, including 2,000 jobs |
+| Custom FCFS | 7 | `run_custom_scheduler_tests.sh` | Five focused API checks plus two golden schedules, including 2,000 jobs |
 | Queue implementation differential | 34 × 4 | `run_fcfs_queue_implementation_tests.sh --correctness` | Equivalent schedules across deque, multimap, block, and circular queues |
 | Column aliases | 8 | `run_column_alias_tests.sh` | Accepted runtime-column aliases and missing-column rejection |
 | Run-time mode | 7 | `run_time_mode_tests.sh` | Actual, limit, distribution, capping, and planning behavior |
@@ -70,7 +70,7 @@ or are reported as skipped.
 | Replay | 5 | `run_replay_tests.sh` | Resource equivalence and reclamation safety |
 | Resource history | 5 | `run_resource_history_tests.sh` | Circular-buffer output and capacity handling |
 | Job store | 6 | `run_job_store_tests.sh` | Capacity, growth/abort, reclamation, and statistics |
-| Append-job | 21 | `run_append_job_tests.sh` | 18 in-process C++ checks plus 3 optional gRPC checks |
+| Append-job | 22 | `run_append_job_tests.sh` | 19 in-process C++ checks plus 3 optional gRPC checks |
 | Progressive loading | 15 | `run_progressive_load_tests.sh` | 11 C++ checks plus 4 CLI checks for multi-file loading, bounded storage, and memory checks |
 | Protobuf configuration | 9 | `run_configs_tests.sh` | Configuration/CLI parity and documented examples |
 | Python API | 17 | `run_python_tests.sh` | Bindings, callbacks, streaming, monitoring, and policy APIs |
@@ -160,7 +160,11 @@ ${CMAKE_INSTALL_PREFIX}/bin/tests/test_batch_vs_streaming
 ```
 
 The [append-job runner](run_append_job_tests.sh) provides direct C++ and gRPC
-`append_job()` coverage.
+`append_job()` coverage. Its C++ checks also validate Custom-FCFS
+time-accounted resource area and prediction-horizon estimation, including
+multiple same-time allocations and releases, successive completion-event
+boundaries, the post-replay full-capacity tail, the `U=0` fallback, future-job
+exclusion, and invalid inputs.
 [`test_batch_vs_streaming.cpp`](test_batch_vs_streaming.cpp) compares batch and
 incremental execution, while
 [`run_progressive_load_tests.sh`](run_progressive_load_tests.sh) covers the

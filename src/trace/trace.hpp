@@ -159,13 +159,6 @@ public:
     num_nodes_t m_n_nodes_in_use; ///< Nodes allocated by processed events.
     event_q_t m_evtq;             ///< Pending resource start and end events.
 
-    /// Integral of allocated nodes over simulation time (node-seconds).
-    tdiff_t m_resource_area;
-    /// Timestamp of the latest resource-allocation sample.
-    sim_time_t m_resource_area_time;
-    /// Allocation in effect after the latest resource-allocation sample.
-    num_nodes_t m_resource_area_nodes;
-
     /// (time, allocated_nodes) sampled every time an event changes
     /// occupancy. free_nodes isn't stored here since total_nodes isn't
     /// known to Context - it's derived by write_resource_trace() below.
@@ -525,26 +518,6 @@ public:
    * @return Number of nodes currently allocated
    */
   num_nodes_t get_nodes_in_use() const { return m_ctx.m_n_nodes_in_use; }
-
-  /**
-   * @brief Return allocated-node time through the requested time.
-   * @details Resource area is the integral of allocated nodes over time,
-   * accumulated as `nodes_in_use * interval` between resource events.  A
-   * finite through_time also includes the interval since the latest event,
-   * which makes snapshots during a running job accurate.
-   * @param[in] through_time Snapshot time. Non-finite values stop at the
-   * latest resource event.
-   * @return Resource area in node-seconds.
-   */
-  tdiff_t get_resource_area(sim_time_t through_time) const;
-
-  /** @brief Return the latest time included by an actual resource event. */
-  sim_time_t get_resource_area_time() const {
-    return m_ctx.m_resource_area_time;
-  }
-
-  /** @brief Reset resource-area accounting for a fresh simulation run. */
-  void reset_resource_area();
 
   /// True if a pAll (exclusive-access) job is currently running -
   /// same condition load_data()'s own submission loop uses to decide

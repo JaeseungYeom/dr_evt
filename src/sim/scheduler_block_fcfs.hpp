@@ -111,7 +111,7 @@ public:
   }
 
   /** @copydoc SchedulerBase::active_job_count */
-  size_t active_job_count() override {
+  size_t active_job_count() const override {
     return m_eligible_end_idx - m_removed_count;
   }
 

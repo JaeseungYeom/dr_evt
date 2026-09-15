@@ -17,7 +17,6 @@
 #include "trace/parse_utils.hpp"
 #include "utils/system_memory.hpp" // get_available_memory_bytes() - check_memory_pressure()
 #include <algorithm>
-#include <cmath>
 #include <fstream>
 
 namespace dr_evt {
@@ -153,9 +152,7 @@ BasicTrace<Policy>::Context::Context()
       m_dat_start(epoch_t{}), m_dat_end(epoch_t{}), m_dat_span(0.0),
       m_prev_job_q(QueueUnknown),
 #endif
-      m_n_nodes_in_use(static_cast<num_nodes_t>(0u)), m_resource_area(0.0),
-      m_resource_area_time(0.0),
-      m_resource_area_nodes(static_cast<num_nodes_t>(0u)) {
+      m_n_nodes_in_use(static_cast<num_nodes_t>(0u)) {
 }
 
 template <typename Policy>
@@ -752,16 +749,6 @@ template <typename Policy> void BasicTrace<Policy>::flush_resource_history() {
 template <typename Policy>
 void BasicTrace<Policy>::record_resource_sample(const epoch_t &time,
                                                 num_nodes_t allocated) {
-  const sim_time_t sample_time = convert_epoch<sim_time_t>(time);
-  if (sample_time < m_ctx.m_resource_area_time) {
-    throw std::logic_error("resource samples must be time ordered");
-  }
-  m_ctx.m_resource_area +=
-      static_cast<tdiff_t>(m_ctx.m_resource_area_nodes) *
-      (sample_time - m_ctx.m_resource_area_time);
-  m_ctx.m_resource_area_time = sample_time;
-  m_ctx.m_resource_area_nodes = allocated;
-
   resolve_resource_history_capacity();
   if (m_ctx.m_resource_history.full()) {
     // Every entry here is always safe to reclaim (see m_resource_history's
@@ -770,23 +757,6 @@ void BasicTrace<Policy>::record_resource_sample(const epoch_t &time,
     flush_resource_history();
   }
   m_ctx.m_resource_history.push_back(this->sample(time, allocated));
-}
-
-template <typename Policy>
-tdiff_t BasicTrace<Policy>::get_resource_area(sim_time_t through_time) const {
-  tdiff_t area = m_ctx.m_resource_area;
-  if (std::isfinite(through_time) &&
-      through_time > m_ctx.m_resource_area_time) {
-    area += static_cast<tdiff_t>(m_ctx.m_resource_area_nodes) *
-            (through_time - m_ctx.m_resource_area_time);
-  }
-  return area;
-}
-
-template <typename Policy> void BasicTrace<Policy>::reset_resource_area() {
-  m_ctx.m_resource_area = 0.0;
-  m_ctx.m_resource_area_time = 0.0;
-  m_ctx.m_resource_area_nodes = m_ctx.m_n_nodes_in_use;
 }
 
 template <typename Policy>

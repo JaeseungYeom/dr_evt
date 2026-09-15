@@ -22,6 +22,13 @@ plus golden-output comparisons for a targeted simultaneous-backfill case and a
 times match the default circular-buffer FCFS scheduler when the callback
 selects candidates in FCFS order.
 
+The append-job API test also covers Custom-FCFS time-accounted resource area
+and prediction-horizon estimation. Its accounting case combines two
+allocations and two releases at one timestamp. Its horizon scenario uses four
+running and four waiting jobs to exercise successive running-job completion
+boundaries, the post-replay full-capacity tail, the ``U=0`` fallback, future-
+arrival exclusion, and invalid utilization values.
+
 ## Test inventory and commands
 
 The Test Suite README is the source of truth for the maintained

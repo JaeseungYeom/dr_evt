@@ -132,7 +132,7 @@ public:
    *
    * @return Number of waiting jobs (arrived but not yet scheduled).
    */
-  virtual size_t active_job_count() = 0;
+  virtual size_t active_job_count() const = 0;
 
   /**
    * @brief Return the earliest future arrival known to this scheduler.

@@ -237,6 +237,11 @@ def test_monitoring_api(result):
         assert sim.get_current_time() == 0.0
         assert sim.get_nodes_in_use() == 0
         assert sim.get_available_nodes() == 100
+        try:
+            sim.get_resource_area()
+            raise AssertionError("standard scheduler exposed live resource area")
+        except RuntimeError:
+            pass
         result.record_pass("Initial state monitoring")
 
         # After job starts
@@ -283,7 +288,11 @@ def test_backfill_window_api(result):
         params.backfill_policy = dr_evt.BackfillPolicy.EASY
         params.priority_policy = dr_evt.PriorityPolicy.FCFS
 
-        sim = dr_evt.Simulation(params)
+        sim = dr_evt.Simulation(
+            params,
+            lambda job_id, _submit, _runtime, _nodes: job_id,
+            lambda candidates: candidates[0][0] if candidates else None,
+        )
         for num_nodes, limit_time in [(40, 50), (60, 100), (100, 10)]:
             sim.append_job(0.0, num_nodes, QUEUE_INPUT, limit_time)
             sim.advance_to(0.0)
@@ -295,6 +304,9 @@ def test_backfill_window_api(result):
         assert [(release.time, release.nodes_released) for release in window.releases] == [
             (50.0, 40), (100.0, 60)
         ]
+        # No running-job completion remains after the shadow event, so the
+        # 1000 node-seconds are drained at U * total_nodes = 50 nodes.
+        assert abs(sim.get_prediction_horizon(0.5) - 20.0) < 1e-12
         result.record_pass("Backfill window snapshot")
     except Exception as e:
         result.record_fail("Backfill window API", str(e))
@@ -368,7 +380,11 @@ def test_statistics(result):
         params.timestamp_format = "epoch"
         params.run_time_mode = dr_evt.RunTimeMode.LIMIT
 
-        sim = dr_evt.Simulation(params)
+        sim = dr_evt.Simulation(
+            params,
+            lambda job_id, _submit, _runtime, _nodes: job_id,
+            lambda candidates: candidates[0][0] if candidates else None,
+        )
         # Run complete simulation
         sim.advance_to(0.0)
         sim.append_job(0.0, 10, QUEUE_INPUT, 50)

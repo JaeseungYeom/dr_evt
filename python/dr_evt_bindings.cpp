@@ -125,9 +125,11 @@ PYBIND11_MODULE(dr_evt, m) {
       .def_readonly("nodes_available", &Simulation::Statistics::nodes_available,
                     "int: Currently unallocated nodes.")
       .def_readonly("resource_area", &Simulation::Statistics::resource_area,
-                    "float: Time-integrated allocation in node-seconds.")
+                    "float: Live time-integrated allocation for Custom FCFS; "
+                    "scheduled-job area for standard schedulers.")
       .def_readonly("utilization", &Simulation::Statistics::utilization,
-                    "float: Time-accounted node utilization in [0, 1].")
+                    "float: Live time-accounted utilization for Custom FCFS; "
+                    "post-hoc schedule utilization otherwise.")
       .def_readonly("avg_wait_time", &Simulation::Statistics::avg_wait_time,
                     "float: Mean completed-job wait time.")
       .def_readonly("avg_turnaround_time",
@@ -233,7 +235,8 @@ PYBIND11_MODULE(dr_evt, m) {
            "Return current nodes-in-use divided by total nodes as float.")
 
       .def("get_resource_area", &Simulation::get_resource_area,
-           "Return time-integrated allocation in node-seconds as float.")
+           "Return Custom-FCFS time-integrated allocation in node-seconds. "
+           "Raises RuntimeError for other scheduler implementations.")
 
       .def("get_available_nodes", &Simulation::get_available_nodes,
            "Return the number of unallocated nodes as int.")
@@ -249,6 +252,12 @@ PYBIND11_MODULE(dr_evt, m) {
       .def("get_backfill_window", &Simulation::get_backfill_window,
            "Return a BackfillWindow snapshot for evaluating a backfill "
            "candidate.")
+
+      .def("get_prediction_horizon", &Simulation::get_prediction_horizon,
+           py::arg("utilization"),
+           "Estimate the Custom-FCFS waiting-queue drain time from the FCFS "
+           "shadow time. Requires EASY backfilling; future arrivals are "
+           "excluded.")
 
       // Monitoring - Comprehensive statistics
       .def("get_statistics", &Simulation::get_statistics,

@@ -16,6 +16,8 @@
 
 namespace dr_evt {
 
+template <typename TraceType> class BasicSimulation;
+
 /** \addtogroup dr_evt_sim
  *  @{ */
 
@@ -38,6 +40,8 @@ using backfill_selector_t =
  */
 class CustomFCFSScheduler : public SchedulerBase {
 private:
+  template <typename TraceType> friend class BasicSimulation;
+
   struct JobEntry {
     job_no_t job_id;
     sim_time_t submit_time;
@@ -60,6 +64,36 @@ private:
   size_t m_num_max_candidates;
   job_cost_function_t m_job_cost_function;
   backfill_selector_t m_backfill_selector;
+
+protected:
+  /// Allocated-node time accumulated through m_resource_area_time.
+  tdiff_t m_resource_area;
+  /// Last simulation-time boundary incorporated into m_resource_area.
+  sim_time_t m_resource_area_time;
+  /// Free nodes after the most recently settled scheduling cycle.
+  num_nodes_t m_accounted_available_nodes;
+
+  /** Close the resource-accounting interval ending at current_time. */
+  void advance_resource_accounting_to(sim_time_t current_time);
+
+  /** Store free capacity after all scheduling at the current time settles. */
+  void commit_available_nodes(num_nodes_t available_nodes);
+
+  /** Reset resource accounting before a new simulation run. */
+  void reset_resource_accounting();
+
+  /** Return allocated-node area through a finite snapshot time. */
+  tdiff_t resource_area_through(sim_time_t through_time) const;
+
+  /**
+   * Return time-accounted utilization through a finite snapshot time.
+   * This protected accessor is available to experimental subclasses.
+   */
+  double utilization_through(sim_time_t through_time) const;
+
+  /** Estimate the waiting-queue horizon for the settled Custom-FCFS state. */
+  tdiff_t prediction_horizon(const running_jobs_t &running_jobs,
+                             sim_time_t current_time, double utilization) const;
 
 public:
   /**
@@ -94,7 +128,7 @@ public:
                                  const running_jobs_t &running_jobs,
                                  sim_time_t current_time) override;
   void sync_to(sim_time_t current_time) override;
-  size_t active_job_count() override {
+  size_t active_job_count() const override {
     return m_eligible_end_idx - m_removed_count;
   }
   sim_time_t get_next_arrival_time() override;

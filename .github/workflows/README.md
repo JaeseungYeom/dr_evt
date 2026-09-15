@@ -29,7 +29,7 @@ This directory contains GitHub Actions workflows for automated testing.
 - Sphinx and Doxygen documentation build with warnings treated as errors
 - Python API tests (17)
 - gRPC client/server tests (2)
-- Append-job tests (18 C++ + 3 gRPC)
+- Append-job tests (19 C++ + 3 gRPC)
 - FCFS/EASY backfill-window focused rerun of the three-case gRPC binary
 - Synchronized single-coordinator gRPC test
 - Progressive-loading tests (C++ + CLI)
@@ -69,7 +69,7 @@ Total tests referenced by the full suite:
 | Category | Count | Verified in this doc pass? |
 |----------|-------|------------------------------|
 | Scheduler correctness | 34 | CI runner |
-| Custom FCFS | 6 | CTest; four focused checks and two golden schedules, including 2,000 jobs |
+| Custom FCFS | 7 | CTest; five focused checks and two golden schedules, including 2,000 jobs |
 | Queue implementation differential | 34 fixtures × 4 implementations | CI runner |
 | Column aliases | 8 | CI runner |
 | Run-time mode | 7 | CI runner |
@@ -83,7 +83,7 @@ Total tests referenced by the full suite:
 | Native CTest | 12, plus 1 with MPI | CI runner; RNG and binary serialization, trace policies, replay reclamation, custom scheduling, append/streaming APIs, queues, and CLI dispatch |
 | Python API | 17 | CI runner |
 | gRPC client/server | 2 | CI runner |
-| Append-job | 21: 18 C++ + 3 gRPC | CI runner |
+| Append-job | 22: 19 C++ + 3 gRPC | CI runner |
 | FCFS/EASY backfill-window gRPC | 3 repeated checks; 1 targeted | CI runner |
 | Single-coordinator gRPC | 1 | CI runner; synchronized independent systems |
 | Progressive loading | 11 C++ + 4 CLI | CI runner |
