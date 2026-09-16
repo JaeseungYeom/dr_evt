@@ -11,8 +11,15 @@ The `standard` data model contains scheduling and resource fields. The `pcon`
 model adds per-job `avgpcon`, `minpcon`, and `maxpcon` values and corresponding
 resource-trace columns.
 
-Timestamps may be Unix epoch seconds or ISO 8601 strings. ISO input and output
-use the timezone selected by `--timezone`.
+The first data row of each input file is used to detect Unix epoch seconds or
+calendar timestamps, and that encoding is then used for every timestamp in
+the file. Mixed encodings in one file are rejected. `--timestamp_format` does
+not enforce an encoding. Calendar input without an embedded UTC offset uses
+the timezone selected by `--timezone`.
+Simulator output is numeric regardless of `--timestamp_format`; use
+`--msec_output` to retain milliseconds. Embedded numeric offsets have a known
+conversion limitation described in
+[Timezone Support](../dev/design-decisions/TIMEZONE_SUPPORT.md).
 
 ## Simple Format CSV Structure
 
@@ -22,6 +29,25 @@ job_submit_time,num_nodes,time_limit
 0,10,100
 50,10,50
 120,10,80
+```
+
+To replay observed execution lengths while still letting the scheduler compute
+new start and end times, include `actual_run_time`:
+
+```text
+job_submit_time,num_nodes,time_limit,actual_run_time
+0,10,100,75
+50,10,50,30
+120,10,80,60
+```
+
+Run this simulation-format trace with `--run_time_mode actual`. The scheduler
+uses `time_limit` for reservation planning, while each job releases its nodes
+after `actual_run_time` seconds:
+
+```bash
+simulator jobs.csv --trace_format simple --timestamp_format epoch \
+  --run_time_mode actual --total_nodes 100
 ```
 
 ### Replay Mode, With Epoch Timestamps
@@ -67,18 +93,24 @@ determines simulation vs replay mode (see below).
 | `num_nodes` | Number of nodes requested | Both modes |
 | `q_id` | Optional one-based queue ID. If absent, the job uses `1` (`Queue1`). | Both modes |
 | `time_limit` | User-provided time limit (seconds). Accepted column-name aliases: `time_limit`, `timelimit`, `walltime` | Both modes |
-| `begin_time` | Historical start time from trace | Replay mode only; must appear together with `end_time` |
+| `begin_time` | Historical start time of this individual job; distinct from the global `--sim_start_time` boundary | Replay mode only; must appear together with `end_time` |
 | `end_time` | Historical end time from trace | Replay mode only; must appear together with `begin_time` |
-| `duration` | Accepted alias for `actual_run_time` | Simulation mode, only with `--run_time_mode actual` |
+| `duration` | Accepted alias for `actual_run_time`; in replay mode it is only checked against `end_time - begin_time` and does not control execution | Required for simulation `--run_time_mode actual` unless another runtime alias is present; optional in replay mode |
 | `avgpcon` | Average power usage associated with the job | Required only with `--trace_type pcon`; ignored in standard mode |
 | `minpcon` | Minimum power usage associated with the job | Required only with `--trace_type pcon`; ignored in standard mode |
 | `maxpcon` | Maximum power usage associated with the job | Required only with `--trace_type pcon`; ignored in standard mode |
 | `exit_status` | Output-only compatibility field. The simulator currently writes `0`. | Generated output only |
-| `actual_run_time` | The job's real, historical run time (seconds); used by `--run_time_mode actual`. Accepted column-name aliases: `actual_run_time`, `duration`, `actual_duration`, `run_time` | Simulation mode, only with `--run_time_mode actual` |
+| `actual_run_time` | The job's real, historical run time in seconds. It determines execution only for simulation `--run_time_mode actual`; in replay mode, `begin_time` and `end_time` determine execution and this field is only checked for consistency. Accepted aliases: `actual_runtime`, `duration`, `actual_duration`, `run_time` | Required for simulation `--run_time_mode actual`; optional in replay mode |
 
 `time_limit` and `actual_run_time` accept the aliases listed above. If multiple
 aliases for one field are present, the first listed match is used. Lassen
 input uses fixed column positions instead of header names.
+
+A supplied `actual_run_time` must be finite. In simulation input it must not
+exceed `time_limit`. In replay input it must equal `end_time - begin_time`
+within `1e-6` seconds; if omitted, that timestamp difference supplies the
+runtime. Invalid rows are diagnosed and skipped while the rest of the trace is
+loaded.
 
 **Ignored input columns**: input fields not used by the selected trace format
 are ignored. In particular, `exit_status` is accepted only so a generated

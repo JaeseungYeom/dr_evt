@@ -17,6 +17,9 @@ DR_EVT accepts:
   [command-line options](command-line.md), a
   [Protobuf text configuration](protobuf-config.md), or both.
 
+Historical maintenance and mid-trace experiments can use
+[time-varying capacity and trace-consistent warm starts](maintenance-and-warm-start.md).
+
 It produces:
 
 - a scheduled-job trace and a resource-usage trace, documented in
@@ -56,5 +59,6 @@ For deployment patterns, see
 
 - [Backfilling Algorithms](../BACKFILLING_ALGORITHMS.md)
 - [Fugaku Power-Usage Experiment](fugaku-power-experiment.md)
+- [Maintenance, Capacity Changes, and Warm Starts](maintenance-and-warm-start.md)
 - [Testing Guide](../TESTING_GUIDE.md)
 - [Developer Notes](../dev/README.md)

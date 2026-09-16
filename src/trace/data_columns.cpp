@@ -34,7 +34,7 @@ Data_Columns::Data_Columns()
       m_has_q_id_column(false),
 #endif
       m_col_to_avoid_idx(std::numeric_limits<col_no_t>::max()),
-      m_trace_format("simple"), m_timestamp_format("iso"),
+      m_trace_format("simple"), m_timestamp_format("epoch"),
       m_timezone_str("America/Los_Angeles"),
       m_trace_mode(TraceMode::REPLAY) // Default to replay
 {
@@ -58,7 +58,7 @@ Data_Columns::Data_Columns(const std::string &format)
       m_has_q_id_column(false),
 #endif
       m_col_to_avoid_idx(std::numeric_limits<col_no_t>::max()),
-      m_trace_format(format), m_timestamp_format("iso"),
+      m_trace_format(format), m_timestamp_format("epoch"),
       m_timezone_str("America/Los_Angeles"),
       m_trace_mode(TraceMode::REPLAY) // Will be detected in check_header
 {
@@ -131,7 +131,7 @@ Data_Columns::~Data_Columns() {
   }
   tzset();
   if (m_cur_tz != nullptr) {
-    delete m_cur_tz;
+    std::free(m_cur_tz);
     m_cur_tz = nullptr;
   }
 }
@@ -169,7 +169,7 @@ void Data_Columns::init() {
   // the daylight saving condition.
 
   if (m_cur_tz != nullptr) {
-    delete m_cur_tz;
+    std::free(m_cur_tz);
     m_cur_tz = nullptr;
   }
 
@@ -180,7 +180,7 @@ void Data_Columns::init() {
     memcpy((void *)m_cur_tz, (void *)tz, tz_str_len * sizeof(char));
   }
 
-  setenv("TZ", DATA_TIMEZONE, 1);
+  setenv("TZ", m_timezone_str.c_str(), 1);
   tzset();
 }
 
@@ -307,6 +307,15 @@ bool Data_Columns::check_header(const std::string &fname) {
                             {find_column({"q_id"}), "q_id"});
     }
 #endif
+
+    // A replay trace does not require actual_run_time because it can be
+    // derived from begin_time/end_time. When supplied, retain it so the row
+    // loader can verify that all three observed execution fields agree.
+    auto [found, actual_run_time_idx] =
+        find_column_optional(actual_run_time_aliases);
+    if (found) {
+      m_cols_to_read.push_back({actual_run_time_idx, "actual_run_time"});
+    }
   } else {
     // Simulation mode: no begin_time or end_time
     col_no_t num_nodes_idx = find_column({"num_nodes"});

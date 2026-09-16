@@ -21,9 +21,21 @@ namespace dr_evt {
 /** \addtogroup dr_evt_trace
  *  @{ */
 
+/** Timestamp encoding selected once for an input trace or schedule. */
+enum class TimestampEncoding { EPOCH, CALENDAR };
+
+/** @brief Detect whether one representative value is numeric epoch time or a
+ * calendar timestamp. */
+TimestampEncoding detect_timestamp_encoding(const std::string &str);
+
 /** @brief Parse an epoch timestamp. @param[out] t Parsed timestamp. @param[in]
  * str Input text. */
 void set_by(epoch_t &t, const std::string &str);
+/** @brief Parse a timestamp using an encoding already selected for its input.
+ * @param[out] t Parsed timestamp.
+ * @param[in] str Input text.
+ * @param[in] encoding Encoding detected once for the containing input. */
+void set_by(epoch_t &t, const std::string &str, TimestampEncoding encoding);
 /** @brief Parse an unsigned integer. @param[out] v Parsed value. @param[in] str
  * Input text. */
 void set_by(unsigned &v, const std::string &str);

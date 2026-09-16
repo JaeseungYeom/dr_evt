@@ -22,6 +22,10 @@ constexpr const char *simulation_input_path =
     "/tmp/dr_evt_pcon_simulation_input.csv";
 constexpr const char *simulation_output_path =
     "/tmp/dr_evt_pcon_simulation_output.csv";
+constexpr const char *warm_input_path = "/tmp/dr_evt_pcon_warm_input.csv";
+constexpr const char *warm_resource_path =
+    "/tmp/dr_evt_pcon_warm_resources.csv";
+constexpr const char *warm_job_path = "/tmp/dr_evt_pcon_warm_jobs.csv";
 
 bool expect_line(std::istream &input, const std::string &expected) {
   std::string actual;
@@ -70,6 +74,61 @@ int main() {
   }
 
   {
+    std::ofstream input(warm_input_path);
+    input << "job_submit_time,begin_time,end_time,num_nodes,exit_status,q_id,"
+             "time_limit,avgpcon,minpcon,maxpcon\n"
+          << "0,1,5,2,0,1,4,1.5,2,3\n"
+          << "3,3,4,2,0,1,1,0.5,1,1.5\n";
+  }
+
+  try {
+    dr_evt::Sim_Params params;
+    params.m_infile = warm_input_path;
+    params.m_trace_type = dr_evt::TraceType::PCON;
+    params.m_total_nodes = 4;
+    params.m_sim_start_time = 3;
+    params.m_trace_format = "simple";
+    params.m_timestamp_format = "epoch";
+    params.m_run_time_mode = dr_evt::RunTimeMode::ACTUAL;
+    params.set_outfile(warm_job_path);
+
+    dr_evt::PconSimulation simulation(params);
+    simulation.run();
+    const auto stats = simulation.get_statistics();
+    if (stats.jobs_completed != 1 || stats.resource_area != 6.0 ||
+        stats.utilization != 0.75) {
+      std::cerr << "warm-start accounting mismatch: completed="
+                << stats.jobs_completed << " area=" << stats.resource_area
+                << " utilization=" << stats.utilization << '\n';
+      passed = false;
+    }
+    simulation.write_simulated_trace();
+    simulation.write_resource_trace(warm_resource_path);
+
+    std::ifstream resources(warm_resource_path);
+    passed &= expect_line(
+        resources, "time,free_nodes,allocated_nodes,avgpcon,minpcon,maxpcon");
+    passed &= expect_line(resources, "3,2,2,1.500000,2.000000,3.000000");
+    passed &= expect_line(resources, "3,0,4,2.000000,3.000000,4.500000");
+    passed &= expect_line(resources, "4,2,2,1.500000,2.000000,3.000000");
+    passed &= expect_line(resources, "5,4,0,0.000000,0.000000,0.000000");
+
+    std::ifstream jobs(warm_job_path);
+    passed &= expect_line(
+        jobs, "job_submit_time,begin_time,end_time,num_nodes,exit_status,q_id,"
+              "time_limit");
+    passed &= expect_line(jobs, "3,3,4,2,0,1,1");
+    std::string unexpected;
+    if (std::getline(jobs, unexpected)) {
+      std::cerr << "unexpected warm-start job line: " << unexpected << '\n';
+      passed = false;
+    }
+  } catch (const std::exception &error) {
+    std::cerr << error.what() << '\n';
+    passed = false;
+  }
+
+  {
     std::ofstream input(simulation_input_path);
     input << "job_submit_time,num_nodes,q_id,time_limit,avgpcon,minpcon,"
              "maxpcon\n"
@@ -108,5 +167,8 @@ int main() {
   std::remove(output_path);
   std::remove(simulation_input_path);
   std::remove(simulation_output_path);
+  std::remove(warm_input_path);
+  std::remove(warm_resource_path);
+  std::remove(warm_job_path);
   return passed ? EXIT_SUCCESS : EXIT_FAILURE;
 }

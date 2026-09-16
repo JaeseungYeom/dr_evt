@@ -61,7 +61,11 @@ std::ostream &operator<<(std::ostream &os, const epoch_t &t) {
  *  Check if the give string is timestamp
  */
 bool is_timestamp(const std::string &time_str) {
-  std::istringstream iss{time_str};
+  std::string normalized = time_str;
+  if (normalized.size() > 10 && normalized[10] == 'T') {
+    normalized[10] = ' ';
+  }
+  std::istringstream iss{normalized};
   std::tm t{};
   t.tm_isdst = -1;
 
@@ -74,7 +78,14 @@ bool is_timestamp(const std::string &time_str) {
  *  fractional second.
  */
 epoch_t convert_time(const std::string &time_str) {
-  std::istringstream iss{time_str};
+  // Accept both the historical "YYYY-MM-DD HH:MM:SS" spelling and the ISO
+  // 8601 date/time separator. Offset-bearing values are handled separately
+  // by parse_time_with_timezone().
+  std::string normalized = time_str;
+  if (normalized.size() > 10 && normalized[10] == 'T') {
+    normalized[10] = ' ';
+  }
+  std::istringstream iss{normalized};
   std::tm t{};
   t.tm_isdst = -1;
 

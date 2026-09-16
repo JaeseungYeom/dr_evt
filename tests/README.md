@@ -44,6 +44,9 @@ all registered with CTest:
 ./tests/run_progressive_load_tests.sh
 ./tests/run_configs_tests.sh
 ./tests/run_python_tests.sh
+./tests/run_warm_start_validation_tests.sh \
+  "${CMAKE_INSTALL_PREFIX}/bin/simulator"
+./tests/run_max_time_tests.sh "${CMAKE_INSTALL_PREFIX}/bin/simulator"
 ./tests/run_grpc_tests.sh
 ./tests/run_backfill_window_grpc_test.sh
 python3 tests/test_grpc_single_coordinator.py \
@@ -59,31 +62,34 @@ or are reported as skipped.
 | Category | Count | Runner or registration | Coverage |
 |---|---:|---|---|
 | Scheduler correctness | 34 | `run_scheduler_correctness_tests.sh` | C++/Python schedule and resource-trace consistency |
-| Custom FCFS | 7 | `run_custom_scheduler_tests.sh` | Five focused API checks plus two golden schedules, including 2,000 jobs |
+| Custom FCFS | 8 | `run_custom_scheduler_tests.sh` | Six focused API checks plus two golden schedules, including warm-start accounting and 2,000 jobs |
 | Queue implementation differential | 34 × 4 | `run_fcfs_queue_implementation_tests.sh --correctness` | Equivalent schedules across deque, multimap, block, and circular queues |
 | Column aliases | 8 | `run_column_alias_tests.sh` | Accepted runtime-column aliases and missing-column rejection |
 | Run-time mode | 7 | `run_time_mode_tests.sh` | Actual, limit, distribution, capping, and planning behavior |
 | Unit | 7 | `run_unit_tests.sh` | Basic parsing, formats, and execution |
-| Feature | 6 | `run_feature_tests.sh` | Policies, modes, rejection, and output formats |
+| Feature | 8 | `run_feature_tests.sh` | Policies, modes, rejection, output formats, time-varying capacity, and replay-based warm start |
 | Scale | 7 | `run_scale_tests.sh` | Workloads from 10 to 10,000 jobs |
 | Conservative backfilling | 2 | two conservative runners above | Behavioral and C++/Python comparisons |
 | Replay | 5 | `run_replay_tests.sh` | Resource equivalence and reclamation safety |
 | Resource history | 5 | `run_resource_history_tests.sh` | Circular-buffer output and capacity handling |
 | Job store | 6 | `run_job_store_tests.sh` | Capacity, growth/abort, reclamation, and statistics |
-| Append-job | 22 | `run_append_job_tests.sh` | 19 in-process C++ checks plus 3 optional gRPC checks |
+| Append-job | 25 | `run_append_job_tests.sh` | 20 in-process C++ checks plus 5 optional gRPC checks, including capacity-aware instantaneous/aggregate utilization, warm start, and validation |
 | Progressive loading | 15 | `run_progressive_load_tests.sh` | 11 C++ checks plus 4 CLI checks for multi-file loading, bounded storage, and memory checks |
-| Protobuf configuration | 9 | `run_configs_tests.sh` | Configuration/CLI parity and documented examples |
-| Python API | 17 | `run_python_tests.sh` | Bindings, callbacks, streaming, monitoring, and policy APIs |
+| Protobuf configuration | 12 | `run_configs_tests.sh` | Configuration/CLI parity, capacity/simulation-start-time validation, and documented examples |
+| Python API | 18 | `run_python_tests.sh` | Bindings, callbacks, streaming, monitoring, policy APIs, and warm-start execution |
 | gRPC client/server | 2 | `run_grpc_tests.sh` | Single-pair and optional MPI multi-server behavior |
-| Backfill-window gRPC | 3 repeated checks | `run_backfill_window_grpc_test.sh` | Focused rerun of the gRPC streaming binary; one check targets the backfill window |
+| Backfill-window gRPC | 5 repeated checks | `run_backfill_window_grpc_test.sh` | Focused rerun of the gRPC streaming binary; one check targets the backfill window |
 | Single-coordinator gRPC | 1 | `test_grpc_single_coordinator.py` | Synchronized independent simulation servers |
-| Queue input schema | 1 binary | CTest or installed `test_queue_input` | Legacy queue names or numeric queue IDs |
+| Queue input schema | 1 binary | CTest or installed `test_queue_input` | Legacy queue names or numeric queue IDs, plus accepted and rejected replay/simulation runtime invariants |
 | Ser20-disabled serialization | 2 binaries | `t_state_rngen` and `t_state` | Native state serialization without Ser20 |
-| Native CTest | 12, plus 1 with MPI | CTest | RNG and binary serialization, trace policies, replay reclamation, custom scheduling, append/streaming APIs, queue implementations, and CLI dispatch |
+| Trace tools | 3 | `test_trace_tools.py` via CTest | Capacity inference, simulator-format conversion, direct schedule loading, and warm-start boundary/output behavior |
+| Maximum time | 3 CLI cases | `run_max_time_tests.sh` | Inclusive cutoff behavior in simulation, replay, and warm-start execution |
+| Warm start | 1 native binary + 9 CLI cases | CTest (`test_warm_start`, `test_warm_start_validation`) | Boundary classification, two-stage execution, runtime modes, capacity transitions, policies/queues, accounting/output, numeric/ISO simulation-start times, zero-start replay, inclusive maximum time, per-file timestamp encoding, and invalid configurations |
+| Native CTest | 16, plus 1 with MPI | CTest | RNG and binary serialization, trace policies, replay reclamation, custom scheduling, append/streaming APIs, maximum-time and warm-start coverage, capacity parsing, queue implementations, and CLI dispatch; CTest also registers the Python trace-tools test |
 
 The gRPC portion of the append-job runner is skipped when gRPC support was not
-built. The backfill-window runner executes the same three-case gRPC test binary
-as the append-job runner, so it is a focused rerun rather than three additional
+built. The backfill-window runner executes the same five-check gRPC test binary
+as the append-job runner, so it is a focused rerun rather than five additional
 unique checks. Counts describe the checks performed by each runner; the native
 CTest and focused-runner rows intentionally overlap.
 
@@ -92,6 +98,7 @@ CTest and focused-runner rows intentionally overlap.
 - `test_traces/scheduler_correctness/`: small FCFS/EASY comparison fixtures;
 - `test_traces/unit/`: parsing and basic execution fixtures;
 - `test_traces/feature/`: policy, replay, and buffer fixtures;
+- `test_traces/tools/`: capacity-analysis and warm-start fixtures;
 - `test_traces/scale/`: larger workloads; and
 - `test_configs/`: Protobuf configuration fixtures.
 
@@ -161,15 +168,42 @@ ${CMAKE_INSTALL_PREFIX}/bin/tests/test_batch_vs_streaming
 
 The [append-job runner](run_append_job_tests.sh) provides direct C++ and gRPC
 `append_job()` coverage. Its C++ checks also validate Custom-FCFS
-time-accounted resource area and prediction-horizon estimation, including
-multiple same-time allocations and releases, successive completion-event
-boundaries, the post-replay full-capacity tail, the `U=0` fallback, future-job
-exclusion, and invalid inputs.
+time-accounted resource area, capacity-aware instantaneous and aggregate
+utilization (including a non-preemptive overcommit drain), and
+prediction-horizon estimation. The cases include multiple same-time
+allocations and releases, successive completion-event boundaries, the
+post-replay full-capacity tail, the `U=0` fallback, future-job exclusion, and
+invalid inputs. The warm-start binary independently checks integrated
+effective capacity across capacity changes at and after the start boundary.
 [`test_batch_vs_streaming.cpp`](test_batch_vs_streaming.cpp) compares batch and
 incremental execution, while
 [`run_progressive_load_tests.sh`](run_progressive_load_tests.sh) covers the
 separate progressive-file input path. The runnable Python streaming example is
 [`python/example_streaming.py`](../python/example_streaming.py).
+
+### Warm-start tests
+
+```bash
+ctest --test-dir build --output-on-failure \
+  -R '^(test_warm_start|test_warm_start_validation)$'
+```
+
+[`test_warm_start.cpp`](test_warm_start.cpp) verifies the replay-based two-stage
+path: historical jobs seed occupancy without entering scheduled-job accounting,
+ordinary jobs follow the selected runtime policy, and execution switches to
+the ordinary event loop after the last warmup job completes. Its cases cover
+all supported priority/backfill/queue combinations, randomized differential
+workloads, fractional and simultaneous events, empty histories and tails,
+capacity overcommit, a capacity change at the final warmup departure, the
+zero-start full-replay path, and inclusive `max_time` cutoffs in simulation,
+replay, and warm-start modes. The `actual`, `limit`, and deterministic
+`distribution` cases confirm that runtime selection remains independent of
+warm-start classification.
+
+[`run_warm_start_validation_tests.sh`](run_warm_start_validation_tests.sh)
+checks CLI rejection of negative and non-finite start times, invalid maximum
+times, non-replay input, and progressive file lists. It requires the simulator
+path when invoked directly; CTest supplies that argument automatically.
 
 ### Python API tests
 
@@ -181,7 +215,7 @@ After building with `DR_EVT_BUILD_PYTHON=ON`, run:
 
 [`test_python_api.py`](test_python_api.py) exercises
 configuration, single and batched job append,
-time advancement, statistics, output, and error handling.
+time advancement, statistics, warm-start execution, output, and error handling.
 
 ### Distributed client/server tests
 

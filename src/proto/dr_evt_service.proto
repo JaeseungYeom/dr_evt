@@ -13,7 +13,7 @@ syntax = "proto3";
 package dr_evt_grpc;
 
 // Single bidirectional-streaming RPC exposing DR_EVT's C++ streaming API
-// (append_job, advance_to, run_until_exclusive, and the monitoring queries)
+// (batch run, append_job, advance_to, run_until_exclusive, and monitoring)
 // over the network. AppendJobRequest is the genuine streaming case: it adds
 // a previously unknown job and immediately enqueues it. A Session()
 // can host successive server-side Simulation instances: each InitRequest
@@ -45,6 +45,7 @@ message ClientMessage {
         FinishSimulationRequest finish_simulation = 15;
         GetBackfillWindowRequest get_backfill_window = 16;
         GetCurrentUtilizationRequest get_current_utilization = 17;
+        RunRequest run = 18;
     }
 }
 
@@ -54,7 +55,7 @@ message ClientMessage {
 message InitRequest {
     uint32 total_nodes = 1;
     string trace_format = 2;       // "simple" or "lassen" (default: "simple")
-    string timestamp_format = 3;   // "epoch" or "iso"
+    string timestamp_format = 3;   // retained "epoch"/"iso" compatibility value
     string timezone = 4;
     string backfill_policy = 5;    // "easy", "conservative", or "none"
     string priority_policy = 6;    // "fcfs", "fcfs_alt", "sjf", or "ljf"
@@ -85,7 +86,15 @@ message InitRequest {
     // wait_queue_capacity. Ignored unless queue_impl is "circular".
     // Empty string keeps Sim_Params' own default (grow).
     string wait_queue_overflow = 14; // "abort" or "grow"
+
+    // Global simulation start time. A positive value selects native replay
+    // warm-start execution for RunRequest; zero preserves ordinary execution.
+    double sim_start_time = 15;
 }
+
+// Runs the configured input trace to completion. Unlike AdvanceToRequest,
+// this invokes Simulation::run(), including replay and warm-start setup.
+message RunRequest {}
 
 // Declares this simulation complete. The server processes all remaining
 // submitted work, writes its reports, returns final statistics, then releases
@@ -178,6 +187,7 @@ message ServerMessage {
         FinishSimulationResponse finish_simulation = 16;
         GetBackfillWindowResponse get_backfill_window = 17;
         GetCurrentUtilizationResponse get_current_utilization = 18;
+        RunResponse run = 19;
     }
 }
 
@@ -212,6 +222,8 @@ message AppendJobsResponse {
 }
 
 message AdvanceToResponse {}
+
+message RunResponse {}
 
 message RunUntilExclusiveResponse {}
 

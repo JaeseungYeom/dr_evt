@@ -31,6 +31,7 @@ in-process via the streaming API:
 | Request | Corresponds to |
 |---|---|
 | `InitRequest` | Constructing a `Simulation` from a `Sim_Params`-equivalent config |
+| `RunRequest` | Calls `Simulation::run()`; initialized input and `sim_start_time` select simulation, full replay, or replay-based warm start, and configured `max_time` supplies an inclusive stopping boundary |
 | `InitializeTraceRequest` | `Simulation::initialize_trace()` |
 | `AppendJobRequest` | `Simulation::append_job()` - a genuinely new job the server has never seen before |
 | `AppendJobsRequest` | `Simulation::append_jobs()` - the batch counterpart, several new jobs in one call |
@@ -39,6 +40,14 @@ in-process via the streaming API:
 | `GetFCFSHeadShadowTimeRequest` | FCFS-head shadow time only: the earliest reserved start time, or `-1` with no waiting head |
 | `GetBackfillWindowRequest` | One FCFS/EASY reservation snapshot: current capacity, shadow time, and projected releases |
 | `GetStatisticsRequest`, `GetCurrentTimeRequest`, etc. | The monitoring/statistics methods |
+
+For a replay-based warm start, set `InitRequest.sim_start_time` to a positive
+global simulation boundary, provide a replay-format `infile`, and send
+`RunRequest`.
+This field is distinct from each job's historical `begin_time`. The server then
+applies the same two-stage warm-start classification as the CLI and Python
+batch API. A zero simulation start time preserves ordinary batch behavior;
+negative and non-finite values are rejected.
 
 Every `ClientMessage` carries a `request_id`, echoed back on the matching
 `ServerMessage`, so a client can correlate responses even if it pipelines

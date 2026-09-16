@@ -11,10 +11,38 @@
 
 #include "trace/job_record.hpp"
 #include "trace/parse_utils.hpp"
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 
 namespace dr_evt {
+
+namespace {
+
+// epoch_t stores fractional seconds as float, so a duration reconstructed
+// from two timestamps can differ slightly from the input double.
+constexpr tdiff_t runtime_timestamp_tolerance = 1.0e-6;
+
+void validate_replay_run_time(tdiff_t actual_run_time,
+                              tdiff_t recorded_run_time) {
+  if (!std::isfinite(actual_run_time) ||
+      std::fabs(actual_run_time - recorded_run_time) >
+          runtime_timestamp_tolerance) {
+    throw std::domain_error{
+        "Replay actual_run_time must equal end_time - begin_time"};
+  }
+}
+
+void validate_simulation_run_time(tdiff_t actual_run_time,
+                                  timeout_t time_limit) {
+  if (!std::isfinite(actual_run_time) ||
+      actual_run_time > static_cast<tdiff_t>(time_limit)) {
+    throw std::domain_error{
+        "Simulation actual_run_time must not exceed time_limit"};
+  }
+}
+
+} // namespace
 
 unsigned int Job_Record::num_inputs = 0u;
 
@@ -112,10 +140,12 @@ Job_Record::Job_Record(const epoch_t &submit_time, num_nodes_t num_nodes,
 }
 
 #if SHOW_ORG_NO
-Job_Record::Job_Record(job_no_t no, const std::vector<std::string> &str_vec)
+Job_Record::Job_Record(job_no_t no, const std::vector<std::string> &str_vec,
+                       TimestampEncoding timestamp_encoding)
     : m_org_no(no),
 #else
-Job_Record::Job_Record(const std::vector<std::string> &str_vec)
+Job_Record::Job_Record(const std::vector<std::string> &str_vec,
+                       TimestampEncoding timestamp_encoding)
     :
 #endif
 #if MARK_DAT_PERIOD
@@ -145,17 +175,17 @@ Job_Record::Job_Record(const std::vector<std::string> &str_vec)
 #endif
 
   // Check mode based on number of fields:
-  // Replay mode (6): num_nodes, begin_time, end_time, submit_time, queue,
-  // time_limit Simulation mode (4 or 5): num_nodes, submit_time, queue,
-  // time_limit[, actual_run_time]
-  bool is_replay_mode = (num_inputs == 6);
+  // Replay mode (6 or 7): num_nodes, begin_time, end_time, submit_time, queue,
+  // time_limit[, actual_run_time]. Simulation mode (4 or 5): num_nodes,
+  // submit_time, queue, time_limit[, actual_run_time].
+  bool is_replay_mode = (num_inputs >= 6);
   bool has_actual_run_time = (num_inputs == 5 || num_inputs == 7);
 
   if (is_replay_mode) {
     // Replay mode: has begin_time and end_time
-    set_by(m_t_begin, *it++);
-    set_by(m_t_end, *it++);
-    set_by(m_t_submit, *it++);
+    set_by(m_t_begin, *it++, timestamp_encoding);
+    set_by(m_t_end, *it++, timestamp_encoding);
+    set_by(m_t_submit, *it++, timestamp_encoding);
 
 #if EVENT_TIME_ORDER
     if ((m_t_begin > m_t_end) || (m_t_submit > m_t_begin)) {
@@ -189,8 +219,13 @@ Job_Record::Job_Record(const std::vector<std::string> &str_vec)
 #endif
     set_by(m_t_limit, *it++);
 
-    // Compute actual_run_time from recorded times
-    m_actual_run_time = static_cast<tdiff_t>(m_t_end - m_t_begin);
+    const tdiff_t recorded_run_time = static_cast<tdiff_t>(m_t_end - m_t_begin);
+    if (has_actual_run_time) {
+      set_by(m_actual_run_time, *it++);
+      validate_replay_run_time(m_actual_run_time, recorded_run_time);
+    } else {
+      m_actual_run_time = recorded_run_time;
+    }
     m_is_simulated = false;
   } else {
     // Simulation mode: no begin_time or end_time in input.
@@ -208,7 +243,7 @@ Job_Record::Job_Record(const std::vector<std::string> &str_vec)
     // scheduler," consistent with the replay-mode branch's intent.
     m_is_simulated = false;
 
-    set_by(m_t_submit, *it++);
+    set_by(m_t_submit, *it++, timestamp_encoding);
 #if DR_EVT_LEGACY_QUEUE_INPUT
     set_by(m_q, *it++);
 #else
@@ -220,6 +255,7 @@ Job_Record::Job_Record(const std::vector<std::string> &str_vec)
     // determine_job_run_time()
     if (has_actual_run_time) {
       set_by(m_actual_run_time, *it++);
+      validate_simulation_run_time(m_actual_run_time, m_t_limit);
     } else {
       m_actual_run_time = 0.0;
     }
@@ -234,7 +270,8 @@ Job_Record::Job_Record(const std::vector<std::string> &str_vec)
 }
 
 Job_Record::Job_Record(const std::vector<std::string> &fields,
-                       job_queue_t queue, bool is_replay_mode)
+                       job_queue_t queue, bool is_replay_mode,
+                       TimestampEncoding timestamp_encoding)
     : m_q(queue)
 #if MARK_DAT_PERIOD
       ,
@@ -247,9 +284,10 @@ Job_Record::Job_Record(const std::vector<std::string> &fields,
 
   const auto expected_fields = is_replay_mode ? 5u : 3u;
   if (fields.size() != expected_fields &&
-      !(!is_replay_mode && fields.size() == expected_fields + 1u)) {
+      fields.size() != expected_fields + 1u) {
     throw std::invalid_argument{"Queue-free record format does not match"};
   }
+  const bool has_actual_run_time = fields.size() == expected_fields + 1u;
 
   auto it = fields.cbegin();
   set_by(m_num_nodes, *it++);
@@ -263,9 +301,9 @@ Job_Record::Job_Record(const std::vector<std::string> &fields,
 #endif
 
   if (is_replay_mode) {
-    set_by(m_t_begin, *it++);
-    set_by(m_t_end, *it++);
-    set_by(m_t_submit, *it++);
+    set_by(m_t_begin, *it++, timestamp_encoding);
+    set_by(m_t_end, *it++, timestamp_encoding);
+    set_by(m_t_submit, *it++, timestamp_encoding);
 
 #if EVENT_TIME_ORDER
     if ((m_t_begin > m_t_end) || (m_t_submit > m_t_begin)) {
@@ -284,16 +322,23 @@ Job_Record::Job_Record(const std::vector<std::string> &fields,
 #endif
 
     set_by(m_t_limit, *it++);
-    m_actual_run_time = static_cast<tdiff_t>(m_t_end - m_t_begin);
+    const tdiff_t recorded_run_time = static_cast<tdiff_t>(m_t_end - m_t_begin);
+    if (has_actual_run_time) {
+      set_by(m_actual_run_time, *it++);
+      validate_replay_run_time(m_actual_run_time, recorded_run_time);
+    } else {
+      m_actual_run_time = recorded_run_time;
+    }
     m_is_simulated = false;
   } else {
     m_t_begin = unscheduled_sentinel();
     m_t_end = unscheduled_sentinel();
     m_is_simulated = false;
-    set_by(m_t_submit, *it++);
+    set_by(m_t_submit, *it++, timestamp_encoding);
     set_by(m_t_limit, *it++);
-    if (fields.size() == expected_fields + 1u) {
+    if (has_actual_run_time) {
       set_by(m_actual_run_time, *it++);
+      validate_simulation_run_time(m_actual_run_time, m_t_limit);
     } else {
       m_actual_run_time = 0.0;
     }

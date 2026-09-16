@@ -32,9 +32,17 @@ BasicSimulation<TraceType>::BasicSimulation(const Sim_Params &params)
           params.m_total_nodes, m_trace.data().size(), params.m_backfill_policy,
           params.m_priority_policy, params.m_queue_impl, params.m_block_size,
           params.m_wait_queue_capacity, params.m_wait_queue_overflow)),
-      m_custom_scheduler(nullptr), m_current_time(0.0), m_jobs_completed(0),
-      m_jobs_submitted(0), m_rng(params.m_seed), m_queue_length_sum(0),
-      m_queue_length_samples(0), m_queue_length_peak(0) {}
+      m_custom_scheduler(nullptr), m_current_time(0.0),
+      m_job_rejection_capacity(params.m_total_nodes),
+      m_capacity_changes(load_capacity_schedule(params.m_capacity_schedule,
+                                                params.m_total_nodes)),
+      m_next_capacity_change(0), m_current_capacity(params.m_total_nodes),
+      m_capacity_area(0.0), m_capacity_area_time(0.0), m_jobs_completed(0),
+      m_jobs_submitted(0), m_pre_start_jobs(0), m_warm_resource_area(0.0),
+      m_warm_resource_end(0.0), m_rng(params.m_seed), m_queue_length_sum(0),
+      m_queue_length_samples(0), m_queue_length_peak(0) {
+  reset_capacity_schedule();
+}
 
 template <typename TraceType>
 BasicSimulation<TraceType>::BasicSimulation(const Sim_Params &params,
@@ -48,13 +56,31 @@ BasicSimulation<TraceType>::BasicSimulation(const Sim_Params &params,
           std::move(selector), params.m_wait_queue_capacity,
           params.m_wait_queue_overflow)),
       m_custom_scheduler(static_cast<CustomFCFSScheduler *>(m_scheduler.get())),
-      m_current_time(0.0), m_jobs_completed(0), m_jobs_submitted(0),
-      m_rng(params.m_seed), m_queue_length_sum(0), m_queue_length_samples(0),
-      m_queue_length_peak(0) {}
+      m_current_time(0.0), m_job_rejection_capacity(params.m_total_nodes),
+      m_capacity_changes(load_capacity_schedule(params.m_capacity_schedule,
+                                                params.m_total_nodes)),
+      m_next_capacity_change(0), m_current_capacity(params.m_total_nodes),
+      m_capacity_area(0.0), m_capacity_area_time(0.0), m_jobs_completed(0),
+      m_jobs_submitted(0), m_pre_start_jobs(0), m_warm_resource_area(0.0),
+      m_warm_resource_end(0.0), m_rng(params.m_seed), m_queue_length_sum(0),
+      m_queue_length_samples(0), m_queue_length_peak(0) {
+  reset_capacity_schedule();
+}
 
 template <typename TraceType> void BasicSimulation<TraceType>::run() {
   if (m_params.m_verbose) {
     std::cout << "Starting simulation..." << std::endl;
+  }
+
+  if (m_params.m_is_time_set &&
+      (!std::isfinite(m_params.m_max_time) || m_params.m_max_time < 0.0)) {
+    throw std::invalid_argument(
+        "--max_time must be finite and nonnegative");
+  }
+  if (m_params.m_is_time_set &&
+      m_params.m_max_time < m_params.m_sim_start_time) {
+    throw std::invalid_argument(
+        "--max_time must be greater than or equal to --sim_start_time");
   }
 
   // Must happen before initialize_trace()/run_progressive() (either
@@ -67,6 +93,11 @@ template <typename TraceType> void BasicSimulation<TraceType>::run() {
   m_trace.set_memory_pressure_fraction(m_params.m_memory_pressure_fraction);
 
   if (!m_params.m_infile_list.empty()) {
+    if (m_params.m_sim_start_time != 0.0) {
+      throw std::runtime_error(
+          "--sim_start_time is not supported with --infile_list; warm-start "
+          "classification requires one replay trace loaded at the boundary");
+    }
     // Progressive loading: REPLAY-format input isn't supported here
     // - REPLAY bypasses the scheduler entirely (begin_time/end_time
     // already fixed in the trace), so there's no notion of "submit
@@ -100,37 +131,70 @@ template <typename TraceType> void BasicSimulation<TraceType>::run() {
                      std::to_string(m_params.m_total_nodes) + " nodes\n";
   }
 
-  // Open the resource-trace file early (if one was requested) so
-  // reclaiming from the now-bounded circular buffer can flush to it
-  // incrementally during the run, rather than only at the very end.
   m_trace.set_resource_history_capacity(m_params.m_resource_history_capacity);
-  m_trace.start_resource_trace(m_params.get_resource_trace(),
-                               m_params.m_total_nodes, m_params.m_msec_output);
 
-  // Same reasoning, for job records: m_data can now reclaim too, so the
-  // output file needs to be open before that ever happens, not only
-  // at the very end.
-  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output);
-
-  if (m_trace.dcols().get_trace_mode() == TraceMode::REPLAY) {
-    // Replay-format input (begin_time/end_time present): don't consult
-    // the scheduler at all - reuse the same bypass logic the standalone
-    // tracer binary uses, driven into Trace's own owned context so the rest
-    // of this class (write_simulated_trace(), write_resource_trace())
-    // sees the result exactly as if the scheduler had run.
-    m_trace.run_job_trace();
+  if (m_params.m_sim_start_time != 0.0) {
+    run_warm_start();
   } else {
-    // Batch mode: Submit all jobs upfront, then advance to infinity
-    // This uses the streaming API internally
-    for (num_jobs_t i = 0; i < m_trace.data().size(); ++i) {
-      const auto &job = m_trace.job_at(i);
-      sim_time_t submit_time = convert_epoch<sim_time_t>(job.get_submit_time());
-      submit_job(i, submit_time);
-    }
+    // Open outputs before processing so bounded buffers can flush
+    // incrementally. Warm-start opens them later, after discarding pre-boundary
+    // samples and installing its nonzero baseline.
+    m_trace.start_resource_trace(m_params.get_resource_trace(),
+                                 m_params.m_total_nodes,
+                                 m_params.m_msec_output);
+    m_trace.start_simulated_trace(m_params.get_outfile(),
+                                  m_params.m_msec_output);
 
-    // Batch mode: advance to infinity to process all jobs
-    // The loop will exit when both wait_queue and event_queue are empty
-    advance_to(std::numeric_limits<sim_time_t>::max());
+    if (m_trace.dcols().get_trace_mode() == TraceMode::REPLAY) {
+      // Replay-format input (begin_time/end_time present): don't consult
+      // the scheduler at all - reuse the same bypass logic the standalone
+      // tracer binary uses, driven into Trace's own owned context so the rest
+      // of this class (write_simulated_trace(), write_resource_trace())
+      // sees the result exactly as if the scheduler had run.
+      const sim_time_t run_limit =
+          m_params.m_is_time_set
+              ? m_params.m_max_time
+              : std::numeric_limits<sim_time_t>::max();
+      sim_time_t replay_end = m_current_time;
+      job_no_t replay_job_no =
+          static_cast<job_no_t>(m_trace.num_reclaimed());
+      for (const auto &job : m_trace.data()) {
+        const sim_time_t submit =
+            convert_epoch<sim_time_t>(job.get_submit_time());
+        const sim_time_t begin =
+            convert_epoch<sim_time_t>(job.get_begin_time());
+        const sim_time_t end = convert_epoch<sim_time_t>(job.get_end_time());
+        if (submit <= run_limit) {
+          replay_end = std::max(replay_end, end);
+          if (end <= run_limit) {
+            ++m_jobs_completed;
+          } else if (m_params.m_is_time_set && begin <= run_limit) {
+            m_running_jobs[replay_job_no] = {
+                begin, static_cast<tdiff_t>(end - begin), job.get_num_nodes()};
+          }
+        }
+        ++replay_job_no;
+      }
+      m_trace.run_job_trace(std::string(), m_params.m_total_nodes, run_limit);
+      m_current_time = m_params.m_is_time_set ? run_limit : replay_end;
+    } else {
+      // Batch mode: Submit all jobs upfront, then advance to infinity
+      // This uses the streaming API internally
+      for (num_jobs_t i = 0; i < m_trace.data().size(); ++i) {
+        const auto &job = m_trace.job_at(i);
+        sim_time_t submit_time =
+            convert_epoch<sim_time_t>(job.get_submit_time());
+        submit_job(i, submit_time);
+      }
+
+      // A configured maximum is an inclusive event-time boundary. Without
+      // one, use the internal drain sentinel and stop at the last real event.
+      const sim_time_t run_limit =
+          m_params.m_is_time_set
+              ? m_params.m_max_time
+              : std::numeric_limits<sim_time_t>::max();
+      advance_to(run_limit);
+    }
   }
 
   // m_jobs_completed is tracked incrementally during the run itself
@@ -149,8 +213,13 @@ template <typename TraceType> void BasicSimulation<TraceType>::run() {
 template <typename TraceType>
 void BasicSimulation<TraceType>::print_stats(std::ostream &os) const {
   os << "=== Simulation Statistics ===" << std::endl;
-  os << "Total jobs: " << (m_trace.data().size() + m_trace.num_reclaimed())
-     << std::endl;
+  os << "Total jobs: ";
+  if (m_params.m_sim_start_time != 0.0) {
+    os << m_jobs_submitted;
+  } else {
+    os << (m_trace.data().size() + m_trace.num_reclaimed());
+  }
+  os << std::endl;
   os << "Jobs submitted: " << m_jobs_submitted << std::endl;
   // m_trace.completed_count() (populated via write_job_line(), called
   // both at reclaim time and by write_simulated_trace()'s final
@@ -231,13 +300,130 @@ num_jobs_t BasicSimulation<TraceType>::initialize_trace(num_jobs_t max_jobs) {
   }
 
   m_current_time = 0.0;
+  reset_capacity_schedule();
   m_jobs_submitted = 0;
   m_jobs_completed = 0;
+  m_pre_start_jobs = 0;
+  m_warm_resource_area = 0.0;
+  m_warm_resource_end = 0.0;
   if (m_custom_scheduler != nullptr) {
     m_custom_scheduler->reset_resource_accounting();
   }
 
   return static_cast<num_jobs_t>(m_trace.data().size());
+}
+
+template <typename TraceType>
+void BasicSimulation<TraceType>::run_warm_start() {
+  const sim_time_t sim_start_time = m_params.m_sim_start_time;
+  const sim_time_t run_limit =
+      m_params.m_is_time_set
+          ? m_params.m_max_time
+          : std::numeric_limits<sim_time_t>::max();
+  if (m_trace.dcols().get_trace_mode() != TraceMode::REPLAY) {
+    throw std::runtime_error(
+        "--sim_start_time requires replay-format input with begin_time and "
+        "end_time columns so jobs already running at the boundary can be "
+        "identified");
+  }
+
+  const job_no_t first_job = static_cast<job_no_t>(m_trace.num_reclaimed());
+  const job_no_t jobs_end =
+      static_cast<job_no_t>(m_trace.num_reclaimed() + m_trace.data().size());
+  m_pre_start_jobs = 0;
+  m_warm_resource_area = 0.0;
+  m_warm_resource_end = sim_start_time;
+
+  for (job_no_t job_no = first_job; job_no < jobs_end; ++job_no) {
+    auto &job = m_trace.job_at(job_no);
+    const sim_time_t begin = convert_epoch<sim_time_t>(job.get_begin_time());
+    const sim_time_t end = convert_epoch<sim_time_t>(job.get_end_time());
+    const sim_time_t submit = convert_epoch<sim_time_t>(job.get_submit_time());
+
+    if (begin < sim_start_time) {
+      // Historical starts bypass the scheduler. Replay establishes both live
+      // allocation and policy-specific state (notably Pcon) exactly once.
+      m_trace.enqueue_replay_job(job_no);
+      ++m_pre_start_jobs;
+      if (end > sim_start_time) {
+        // Its departure is fixed historical state, so reservations should
+        // use that known end rather than a possibly stale original limit.
+        m_running_jobs[job_no] = {begin, job.get_actual_run_time(),
+                                  job.get_num_nodes()};
+        m_warm_resource_area +=
+            static_cast<tdiff_t>(job.get_num_nodes()) * (end - sim_start_time);
+        m_warm_resource_end = std::max(m_warm_resource_end, end);
+      }
+    } else if (submit >= sim_start_time) {
+      // Let the normal scheduler replace the historical begin/end times in
+      // the counterfactual run, and select this simulated job's duration by
+      // the same run-time policy used in an ordinary simulation. Warmup jobs
+      // bypass this branch and retain their recorded timing.
+      job.prepare_for_resimulation();
+      determine_one_job_run_time(job);
+    } else {
+      // This job was waiting before the boundary. Reconstructing an inherited
+      // wait queue is a separate policy decision, so it is intentionally not
+      // admitted into either the seed state or the post-boundary workload.
+      job.suppress_output();
+    }
+  }
+
+  // Replay only the history required to establish state at t. Old departures
+  // are suppressed before Trace can run any output/reclamation hook.
+  while (!m_trace.pending_events().empty()) {
+    const auto event = *m_trace.pending_events().begin();
+    const sim_time_t event_time = convert_epoch<sim_time_t>(event.get_time());
+    if (event_time > sim_start_time) {
+      break;
+    }
+    if (event.is_departure()) {
+      m_trace.job_at(event.get_job_idx()).suppress_output();
+      --m_pre_start_jobs;
+    }
+    m_trace.process_single_event();
+  }
+
+  m_current_time = sim_start_time;
+  apply_capacity_changes(sim_start_time);
+  reset_capacity_accounting(sim_start_time);
+
+  // This is the accounting/output boundary: retain occupancy and Pcon state,
+  // discard every pre-t sample, and establish a baseline at t.
+  m_trace.reset_resource_recording(sim_start_time);
+  m_trace.start_resource_trace(m_params.get_resource_trace(),
+                               m_params.m_total_nodes, m_params.m_msec_output);
+  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output);
+  if (m_custom_scheduler != nullptr) {
+    m_custom_scheduler->reset_resource_accounting(sim_start_time,
+                                                  get_available_nodes());
+  }
+
+  // No auxiliary job list is retained: prepared post-boundary records keep
+  // their real submission time, while every excluded/finished historical
+  // record carries the existing unscheduled sentinel.
+  for (job_no_t job_no = first_job; job_no < jobs_end; ++job_no) {
+    const auto submit_epoch = m_trace.job_at(job_no).get_submit_time();
+    if (submit_epoch != Job_Record::unscheduled_sentinel()) {
+      const sim_time_t submit = convert_epoch<sim_time_t>(submit_epoch);
+      if (submit >= sim_start_time) {
+        submit_job(job_no, submit);
+      }
+    }
+  }
+
+  if (m_pre_start_jobs != 0) {
+    if (m_custom_scheduler != nullptr) {
+      advance_to_impl<true, true>(run_limit, m_custom_scheduler);
+    } else {
+      advance_to_impl<false, true>(run_limit, nullptr);
+    }
+  }
+
+  // The ordinary stage has no historical-job test in its compiled loop. If
+  // the configured horizon ended during warm-up, the current time is already
+  // at run_limit and this call is an inexpensive no-op.
+  advance_to(run_limit);
 }
 
 template <typename TraceType>
@@ -292,8 +478,12 @@ void BasicSimulation<TraceType>::run_progressive() {
   // upfront; each file gets loaded as the driving loop below reaches it.
   m_trace.data().clear();
   m_current_time = 0.0;
+  reset_capacity_schedule();
   m_jobs_submitted = 0;
   m_jobs_completed = 0;
+  m_pre_start_jobs = 0;
+  m_warm_resource_area = 0.0;
+  m_warm_resource_end = 0.0;
   if (m_custom_scheduler != nullptr) {
     m_custom_scheduler->reset_resource_accounting();
   }
@@ -352,13 +542,23 @@ void BasicSimulation<TraceType>::run_progressive() {
     // last submit_time as the target instead of infinity.
     sim_time_t last_submit_time = convert_epoch<sim_time_t>(
         m_trace.job_at(job_nos.back()).get_submit_time());
-    advance_to(last_submit_time);
+    const sim_time_t run_limit =
+        m_params.m_is_time_set ? m_params.m_max_time : last_submit_time;
+    advance_to(std::min(last_submit_time, run_limit));
+    if (m_params.m_is_time_set && last_submit_time >= m_params.m_max_time) {
+      break;
+    }
   }
 
-  // Drain whatever's still running after the last file - same
-  // "advance to infinity, loop exits once wait_queue and event_queue
-  // are both empty" postcondition single-file batch mode relies on.
-  advance_to(std::numeric_limits<sim_time_t>::max());
+  // Drain whatever is still running, or stop at the configured inclusive
+  // time boundary.
+  const sim_time_t run_limit =
+      m_params.m_is_time_set
+          ? m_params.m_max_time
+          : std::numeric_limits<sim_time_t>::max();
+  if (m_current_time < run_limit) {
+    advance_to(run_limit);
+  }
 }
 
 template <typename TraceType>
@@ -412,7 +612,12 @@ tdiff_t BasicSimulation<TraceType>::sample_run_time(tdiff_t time_limit,
 
 template <typename TraceType>
 void BasicSimulation<TraceType>::write_simulated_trace() {
-  m_trace.write_simulated_trace(m_params.get_outfile(), m_params.m_msec_output);
+  const sim_time_t completed_through =
+      m_params.m_is_time_set
+          ? m_params.m_max_time
+          : std::numeric_limits<sim_time_t>::max();
+  m_trace.write_simulated_trace(m_params.get_outfile(), m_params.m_msec_output,
+                                completed_through);
   if (m_params.m_verbose && !m_params.get_outfile().empty()) {
     std::cout << "Simulated trace written to: " << m_params.get_outfile()
               << std::endl;
@@ -556,7 +761,7 @@ void BasicSimulation<TraceType>::submit_job(job_no_t job_idx,
   tdiff_t run_time_estimate = job.get_limit_time();
   num_nodes_t nodes = job.get_num_nodes();
 
-  if (nodes > m_params.m_total_nodes) {
+  if (nodes > m_job_rejection_capacity) {
     // This job can never be scheduled, regardless of how long the
     // simulation runs - total_nodes is fixed for the whole run, so
     // no future state ever frees up enough capacity. Reject it here,
@@ -572,7 +777,7 @@ void BasicSimulation<TraceType>::submit_job(job_no_t job_idx,
     // forever, since end_time never resolves for it either.
     job.set_submit_time(Job_Record::unscheduled_sentinel());
     std::cerr << "Job " << job_idx << " rejected: requests " << nodes
-              << " nodes, exceeds total_nodes (" << m_params.m_total_nodes
+              << " nodes, exceeds total_nodes (" << m_job_rejection_capacity
               << "); this job can never be scheduled." << std::endl;
     return;
   }
@@ -619,16 +824,74 @@ void BasicSimulation<TraceType>::record_queue_arrivals(
 }
 
 template <typename TraceType>
+void BasicSimulation<TraceType>::reset_capacity_schedule() {
+  m_next_capacity_change = 0;
+  m_current_capacity = m_params.m_total_nodes;
+  m_trace.reset_resource_capacity(m_params.m_total_nodes);
+  reset_capacity_accounting(m_current_time);
+}
+
+template <typename TraceType>
+void BasicSimulation<TraceType>::reset_capacity_accounting(
+    sim_time_t start_time) {
+  m_capacity_area = 0.0;
+  m_capacity_area_time = start_time;
+}
+
+template <typename TraceType>
+void BasicSimulation<TraceType>::advance_capacity_accounting_to(
+    sim_time_t current_time) {
+  if (!std::isfinite(current_time)) {
+    return;
+  }
+  if (current_time < m_capacity_area_time) {
+    throw std::logic_error("capacity accounting cannot move backward in time");
+  }
+  const num_nodes_t effective_capacity =
+      std::max(m_current_capacity, get_nodes_in_use());
+  m_capacity_area += static_cast<tdiff_t>(effective_capacity) *
+                     (current_time - m_capacity_area_time);
+  m_capacity_area_time = current_time;
+}
+
+template <typename TraceType>
+tdiff_t BasicSimulation<TraceType>::capacity_area_through(
+    sim_time_t through_time) const {
+  tdiff_t area = m_capacity_area;
+  if (std::isfinite(through_time) && through_time > m_capacity_area_time) {
+    const num_nodes_t effective_capacity =
+        std::max(m_current_capacity, get_nodes_in_use());
+    area += static_cast<tdiff_t>(effective_capacity) *
+            (through_time - m_capacity_area_time);
+  }
+  return area;
+}
+
+template <typename TraceType>
+bool BasicSimulation<TraceType>::apply_capacity_changes(
+    sim_time_t current_time) {
+  bool changed = false;
+  while (m_next_capacity_change < m_capacity_changes.size() &&
+         m_capacity_changes[m_next_capacity_change].time <= current_time) {
+    const auto &change = m_capacity_changes[m_next_capacity_change++];
+    m_current_capacity = change.total_nodes;
+    m_trace.set_resource_capacity(change.time, change.total_nodes);
+    changed = true;
+  }
+  return changed;
+}
+
+template <typename TraceType>
 void BasicSimulation<TraceType>::advance_to(sim_time_t target_time) {
   if (m_custom_scheduler != nullptr) {
-    advance_to_impl<true>(target_time, m_custom_scheduler);
+    advance_to_impl<true, false>(target_time, m_custom_scheduler);
   } else {
-    advance_to_impl<false>(target_time, nullptr);
+    advance_to_impl<false, false>(target_time, nullptr);
   }
 }
 
 template <typename TraceType>
-template <bool AccountResources>
+template <bool AccountResources, bool WarmStage>
 void BasicSimulation<TraceType>::advance_to_impl(
     sim_time_t target_time, CustomFCFSScheduler *custom_scheduler) {
   if constexpr (!AccountResources) {
@@ -653,11 +916,11 @@ void BasicSimulation<TraceType>::advance_to_impl(
   // jobs appended at the current time by a streaming caller.
   m_scheduler->sync_to(m_current_time);
   record_queue_arrivals(m_current_time);
+  apply_capacity_changes(m_current_time);
   if (m_scheduler->has_eligible_jobs()) {
     // Call scheduler to evaluate newly arriving jobs
     while (true) {
-      num_nodes_t free_nodes =
-          m_params.m_total_nodes - m_trace.get_nodes_in_use();
+      num_nodes_t free_nodes = get_available_nodes();
       auto jobs_to_run =
           m_scheduler->schedule(free_nodes, m_running_jobs, m_current_time);
 
@@ -682,21 +945,29 @@ void BasicSimulation<TraceType>::advance_to_impl(
     }
   }
   if constexpr (AccountResources) {
-    custom_scheduler->commit_available_nodes(m_params.m_total_nodes -
-                                             m_trace.get_nodes_in_use());
+    custom_scheduler->commit_available_nodes(get_available_nodes());
   }
 
   // Main event loop - process events and make scheduling decisions until
   // complete Compute loop state variables once before entering loop
   size_t active_count = m_scheduler->active_job_count();
   sim_time_t next_arrival = m_scheduler->get_next_arrival_time();
+  sim_time_t next_capacity =
+      m_next_capacity_change < m_capacity_changes.size()
+          ? m_capacity_changes[m_next_capacity_change].time
+          : std::numeric_limits<sim_time_t>::max();
 
   m_queue_length_peak = std::max(m_queue_length_peak, active_count);
 
-  // Continue while: (1) jobs waiting to be scheduled, OR (2) events pending
-  // (jobs running), OR (3) future job arrivals
+  // Continue while: (1) jobs are waiting, (2) jobs are running, or (3) jobs
+  // will arrive. A finite streaming advance also consumes capacity changes
+  // through its requested boundary even while idle. By contrast, batch mode
+  // drains to max() and must not let unused schedule entries keep a completed
+  // simulation alive or emit irrelevant resource rows.
   while (active_count > 0 || !m_trace.pending_events().empty() ||
-         next_arrival < std::numeric_limits<sim_time_t>::max()) {
+         next_arrival < std::numeric_limits<sim_time_t>::max() ||
+         (target_time < std::numeric_limits<sim_time_t>::max() &&
+          next_capacity <= target_time)) {
     if (m_params.m_verbose) {
       std::cout << "Loop iter: active=" << active_count
                 << " events=" << m_trace.pending_events().size()
@@ -719,10 +990,11 @@ void BasicSimulation<TraceType>::advance_to_impl(
     bool should_schedule = false;
 
     if (has_replay_event && next_replay_time <= next_arrival &&
-        next_replay_time <= target_time) {
+        next_replay_time <= next_capacity && next_replay_time <= target_time) {
       // Process replay events at this time
       // Advance time FIRST
       m_current_time = next_replay_time;
+      advance_capacity_accounting_to(m_current_time);
       if constexpr (AccountResources) {
         custom_scheduler->advance_resource_accounting_to(m_current_time);
       }
@@ -751,6 +1023,28 @@ void BasicSimulation<TraceType>::advance_to_impl(
         bool is_end = !event.is_arrival();
         job_no_t event_job_idx = event.get_job_idx();
 
+        if (is_end) {
+          if constexpr (WarmStage) {
+            auto &job = m_trace.job_at(event_job_idx);
+            const sim_time_t begin =
+                convert_epoch<sim_time_t>(job.get_begin_time());
+            if (begin < m_params.m_sim_start_time) {
+              // Mutate before Trace processes the departure: a periodic flush
+              // at this event can then neither write nor account the seed.
+              job.suppress_output();
+              if (m_pre_start_jobs == 0) {
+                throw std::logic_error(
+                    "warm-start historical-job count underflow");
+              }
+              --m_pre_start_jobs;
+            } else {
+              ++m_jobs_completed;
+            }
+          } else {
+            ++m_jobs_completed;
+          }
+        }
+
         // Process this event (END or START) - records a
         // resource-history sample internally (Trace's own Context).
         m_trace.process_single_event();
@@ -759,19 +1053,22 @@ void BasicSimulation<TraceType>::advance_to_impl(
         if (is_end) {
           processed_end_event = true;
           m_running_jobs.erase(event_job_idx);
-          m_jobs_completed++;
         }
       }
 
+      const bool capacity_changed = apply_capacity_changes(m_current_time);
+
       // Only call scheduler if we processed END events (resources freed)
-      should_schedule = processed_end_event;
+      should_schedule = processed_end_event || capacity_changed ||
+                        next_arrival == m_current_time;
 
     } else if (next_arrival < std::numeric_limits<sim_time_t>::max() &&
-               next_arrival <= target_time) {
+               next_arrival <= next_capacity && next_arrival <= target_time) {
       // Job arrival - advance time FIRST
       // Note: Check next_arrival < infinity to avoid infinite loop
       // If no jobs arriving, scheduler should pick from waiting queue instead
       m_current_time = next_arrival;
+      advance_capacity_accounting_to(m_current_time);
       if constexpr (AccountResources) {
         custom_scheduler->advance_resource_accounting_to(m_current_time);
       }
@@ -782,10 +1079,22 @@ void BasicSimulation<TraceType>::advance_to_impl(
       // this doesn't rely on that.
       m_scheduler->sync_to(m_current_time);
       record_queue_arrivals(m_current_time);
+      apply_capacity_changes(m_current_time);
 
       // jobs_at_next_arrival already collected during wait_queue scan
       // TODO: Pass jobs_at_next_arrival to scheduler for efficient evaluation
       // For now, just set flag to schedule
+      should_schedule = true;
+    } else if (next_capacity < std::numeric_limits<sim_time_t>::max() &&
+               next_capacity <= target_time) {
+      m_current_time = next_capacity;
+      advance_capacity_accounting_to(m_current_time);
+      if constexpr (AccountResources) {
+        custom_scheduler->advance_resource_accounting_to(m_current_time);
+      }
+      m_scheduler->sync_to(m_current_time);
+      record_queue_arrivals(m_current_time);
+      apply_capacity_changes(m_current_time);
       should_schedule = true;
     } else {
       // No arrivals and no replay events before target_time
@@ -803,8 +1112,7 @@ void BasicSimulation<TraceType>::advance_to_impl(
     if (should_schedule) {
       // Keep calling scheduler until it can't start any more jobs
       while (true) {
-        num_nodes_t free_nodes =
-            m_params.m_total_nodes - m_trace.get_nodes_in_use();
+        num_nodes_t free_nodes = get_available_nodes();
 
         auto jobs_to_run =
             m_scheduler->schedule(free_nodes, m_running_jobs, m_current_time);
@@ -842,16 +1150,26 @@ void BasicSimulation<TraceType>::advance_to_impl(
       }
     }
     if constexpr (AccountResources) {
-      custom_scheduler->commit_available_nodes(m_params.m_total_nodes -
-                                               m_trace.get_nodes_in_use());
+      custom_scheduler->commit_available_nodes(get_available_nodes());
     }
 
     // Update loop state variables at end of iteration
     active_count = m_scheduler->active_job_count();
     next_arrival = m_scheduler->get_next_arrival_time();
+    next_capacity = m_next_capacity_change < m_capacity_changes.size()
+                        ? m_capacity_changes[m_next_capacity_change].time
+                        : std::numeric_limits<sim_time_t>::max();
 
     // Peak queue length after all events and scheduling at this timestamp.
     m_queue_length_peak = std::max(m_queue_length_peak, active_count);
+
+    if constexpr (WarmStage) {
+      // Transition only after every peer event and scheduling decision at the
+      // last historical departure's timestamp has settled.
+      if (m_pre_start_jobs == 0) {
+        return;
+      }
+    }
   }
 
   // Loop exited - log final state for debugging
@@ -875,12 +1193,20 @@ void BasicSimulation<TraceType>::advance_to_impl(
   // is pure bookkeeping - every scheduling decision above was already
   // made using real event times, never target_time, so this can't
   // change any of them.
+  const bool drain_to_completion =
+      target_time == std::numeric_limits<sim_time_t>::max();
   if constexpr (AccountResources) {
-    if (m_trace.get_nodes_in_use() > 0) {
+    if (!drain_to_completion && m_trace.get_nodes_in_use() > 0) {
       custom_scheduler->advance_resource_accounting_to(target_time);
+      advance_capacity_accounting_to(target_time);
     }
   }
-  m_current_time = target_time;
+  // max() is the internal/public drain sentinel, not a meaningful simulated
+  // timestamp. After a drain, preserve the last real event time rather than
+  // exposing max() (which also overflows integer-formatted CLI output).
+  if (!drain_to_completion) {
+    m_current_time = target_time;
+  }
 }
 
 template <typename TraceType>
@@ -953,12 +1279,13 @@ BasicSimulation<TraceType>::get_statistics() const {
   // Resource utilization
   stats.total_nodes = m_params.m_total_nodes;
   stats.nodes_in_use = get_nodes_in_use();
-  stats.nodes_available = stats.total_nodes - stats.nodes_in_use;
+  stats.nodes_available = get_available_nodes();
 
   // Calculate wait times and turnaround times
   tdiff_t total_wait = 0.0;
   tdiff_t total_turnaround = 0.0;
   sim_time_t max_completion = 0.0;
+  sim_time_t max_scheduled_completion = 0.0;
   num_jobs_t completed_count = 0;
   tdiff_t total_node_seconds = 0.0;
 
@@ -971,17 +1298,25 @@ BasicSimulation<TraceType>::get_statistics() const {
     // started," silently excluding it from these averages. This
     // matches the same convention now used for m_jobs_completed
     // above (see the end-of-run() completion count).
-    if (job.is_scheduled()) {
+    if (!job.is_scheduled()) {
+      continue;
+    }
+
+    const sim_time_t completion =
+        convert_epoch<sim_time_t>(job.get_end_time());
+    max_scheduled_completion = std::max(max_scheduled_completion, completion);
+    total_node_seconds +=
+        static_cast<tdiff_t>(job.get_num_nodes()) * job.get_actual_run_time();
+    if (completion <= stats.current_time) {
       tdiff_t wait = job.get_wait_time();
       tdiff_t exec = job.get_actual_run_time();
 
       total_wait += wait;
       total_turnaround += (wait + exec);
-      total_node_seconds += static_cast<tdiff_t>(job.get_num_nodes()) * exec;
-      sim_time_t completion = convert_epoch<sim_time_t>(job.get_end_time());
       max_completion = std::max(max_completion, completion);
       completed_count++;
     }
+
   }
 
   stats.avg_wait_time =
@@ -1000,16 +1335,17 @@ BasicSimulation<TraceType>::get_statistics() const {
         std::isfinite(stats.current_time) && stats.nodes_in_use > 0
             ? stats.current_time
             : m_custom_scheduler->m_resource_area_time;
+    const tdiff_t capacity_area = capacity_area_through(accounting_horizon);
     stats.utilization =
-        m_custom_scheduler->utilization_through(accounting_horizon);
+        capacity_area > 0.0 ? stats.resource_area / capacity_area : 0.0;
   } else {
     // Preserve the original post-hoc statistic for standard schedulers.
-    stats.resource_area = total_node_seconds;
+    stats.resource_area = total_node_seconds + m_warm_resource_area;
+    const sim_time_t accounting_end =
+        std::max(max_scheduled_completion, m_warm_resource_end);
+    const tdiff_t capacity_area = capacity_area_through(accounting_end);
     stats.utilization =
-        (stats.total_nodes > 0 && stats.makespan > 0)
-            ? total_node_seconds /
-                  (static_cast<double>(stats.total_nodes) * stats.makespan)
-            : 0.0;
+        capacity_area > 0.0 ? stats.resource_area / capacity_area : 0.0;
   }
 
   return stats;

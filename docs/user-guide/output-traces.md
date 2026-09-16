@@ -1,8 +1,10 @@
 # Output Trace Files
 
 The simulator can write two CSV outputs for each run: a simulated-job schedule
-and a resource-usage trace. Both use the timestamps selected by
-`--timestamp_format`; see [Command-Line Options](command-line.md).
+and a resource-usage trace. Both currently write numeric timestamps regardless
+of `--timestamp_format`. By default they are truncated to whole seconds;
+`--msec_output` writes three decimal places. See
+[Command-Line Options](command-line.md).
 
 ## Simulated-job schedule
 
@@ -13,8 +15,10 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator input.csv --outfile results/jobs_sim.csv
 ```
 
 If `--outfile` is omitted, DR_EVT derives a filename from the input trace
-(for example, `jobs.csv` becomes `jobs_sim.csv`). The CSV contains one row for
-each scheduled job. In the default ID-input build, an input trace that
+(for example, `jobs.csv` becomes `jobs_sim.csv`). Normally, the CSV contains
+one row for each scheduled job. When `--max_time` is set, it contains only
+jobs completed at or before that inclusive boundary; jobs still running or
+waiting are omitted. In the default ID-input build, an input trace that
 explicitly provides `q_id` retains that column:
 
 ```text
@@ -48,6 +52,9 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator input.csv \
 ```
 
 The resource trace records the occupancy after each resource-state change.
+With `--max_time`, no event after the inclusive boundary is recorded; if no
+resource-state change occurs exactly at the boundary, no synthetic final row
+is added there.
 With the default `--trace_type standard`, the format is:
 
 ```text

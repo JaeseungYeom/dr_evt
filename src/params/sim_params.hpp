@@ -97,6 +97,8 @@ public:
   dr_evt::num_jobs_t m_max_jobs;
   /// Maximum simulation time horizon.
   dr_evt::sim_time_t m_max_time;
+  /// Global simulation start timestamp. Zero preserves the traditional run.
+  dr_evt::sim_time_t m_sim_start_time;
 
   /// Primary input trace filename.
   std::string m_infile;
@@ -147,11 +149,13 @@ public:
   size_t m_resource_history_capacity;
   /// Total nodes available to the simulated scheduler.
   num_nodes_t m_total_nodes;
+  /// Optional CSV of time-varying capacity change points.
+  std::string m_capacity_schedule;
   /// Job-trace data model: standard or experimental Pcon.
   TraceType m_trace_type;
   /// Input trace format name, such as "simple" or "lassen".
   std::string m_trace_format;
-  /// Input timestamp format name, such as "epoch" or "iso".
+  /// Retained epoch/iso compatibility value; file input is auto-detected.
   std::string m_timestamp_format;
   /// IANA timezone used for timestamps without an embedded offset.
   std::string m_timezone;

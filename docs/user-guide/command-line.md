@@ -11,6 +11,8 @@ Complete reference for all DR_EVT command-line options for the `simulator` binar
 | Input/output | `-o, --outfile FILENAME` | Write the simulated job schedule. |
 | Input/output | `-R, --resource_trace FILENAME` | Write resource history. |
 | System | `-n, --total_nodes COUNT` | Set simulated cluster capacity. |
+| System | `--capacity_schedule FILENAME` | Apply time-varying capacity change points. |
+| System | `--sim_start_time TIME` | Set the global simulation start time as a nonnegative epoch value or ISO timestamp; a positive value warm-starts replay input. |
 | Scheduling | `-b, --backfill_policy POLICY` | Select `easy`, `conservative`, or `none`. |
 | Scheduling | `--num_max_candidates COUNT` | Cap candidates offered to the experimental selector. |
 | Scheduling | `-p, --priority_policy POLICY` | Select the job-ordering policy. |
@@ -25,15 +27,15 @@ Complete reference for all DR_EVT command-line options for the `simulator` binar
 | Storage | `-H, --resource_history_capacity SIZE` | Set resource-history capacity. |
 | Trace | `--trace_type TYPE` | Select the standard or experimental record model. |
 | Trace | `-f, --trace_format FORMAT` | Select the input trace schema. |
-| Trace | `-T, --timestamp_format FORMAT` | Select epoch or ISO input/output timestamps. |
-| Trace | `-z, --timezone TIMEZONE` | Set the timezone for ISO output timestamps. |
+| Trace | `-T, --timestamp_format FORMAT` | Set the retained timestamp-format compatibility value; input is auto-detected and output remains numeric. |
+| Trace | `-z, --timezone TIMEZONE` | Interpret calendar timestamps that omit an explicit offset. |
 | Trace | `-M, --msec_output` | Preserve millisecond precision in output timestamps. |
 | Runtime | `-r, --run_time_mode MODE` | Select how actual execution lengths are determined. |
 | Runtime | `-D, --run_time_distribution TYPE` | Select the sampled runtime distribution. |
 | Runtime | `-S, --run_time_scale FACTOR` | Scale sampled job runtimes. |
 | Runtime | `-V, --run_time_stddev FACTOR` | Set sampled runtime variation. |
 | Limits | `-j, --max_jobs COUNT` | Limit the number of simulated jobs. |
-| Limits | `-t, --max_time TIME` | Limit simulation time. |
+| Limits | `-t, --max_time TIME` | Stop after processing events through this simulation timestamp. |
 | Other | `-s, --seed VALUE` | Set the random-number seed. |
 | Other | `-c, --config CONFIGFILE` | Load a Protobuf text configuration. |
 | Other | `-v, --verbose` | Enable verbose output. |
@@ -120,6 +122,45 @@ Total number of nodes in the simulated cluster.
 ```bash
 ${CMAKE_INSTALL_PREFIX}/bin/simulator traces/jobs.csv --total_nodes 100
 ```
+
+### `--capacity_schedule FILENAME`
+
+Apply a CSV of capacity change points during simulation. See
+[Maintenance, Capacity Changes, and Warm Starts](maintenance-and-warm-start.md)
+for the schema, semantics, detection tool, and initialization workflow.
+
+`--total_nodes` remains the physical maximum and the oversized-job rejection
+threshold. Scheduled values may range from zero through that maximum. A job
+that exceeds only the current scheduled capacity waits for a later increase;
+it is not rejected. Reductions do not preempt running jobs, and a zero value
+pauses all new starts for this workload. A schedule row at time zero replaces
+the initial available capacity immediately.
+
+### `--sim_start_time TIME`
+
+Set the global simulation start time to `TIME`. It accepts the same timestamp
+forms as trace columns: nonnegative Unix epoch seconds (including fractional
+seconds) or a calendar timestamp such as `2024-01-01T00:00:10`. Calendar
+values without an embedded UTC offset use `--timezone`. This parsing is
+independent of `--timestamp_format`, and option order does not matter.
+
+This global boundary is distinct from each replay job's historical
+`begin_time` and from job start times written to output. A positive value
+enables the recommended replay-based warm start for replay-format input: jobs
+with `begin_time < TIME` bypass the wait queue and seed live occupancy. They retain
+their historical departures, but are omitted from job output and job
+statistics. Jobs beginning at or after the boundary are rescheduled normally
+when their submission is also at or after `TIME`. Zero preserves traditional
+full replay.
+
+Only the warm stage tests for historical jobs. After its last departure, the
+simulator switches to the ordinary event loop, so the steady-state path has no
+per-job warm-start condition. Resource output begins with a baseline at
+`TIME`; earlier samples and resource-area accounting are discarded.
+
+Jobs submitted before `TIME` but not yet running are excluded because
+reconstructing an inherited wait queue requires an explicit policy. This mode
+is currently incompatible with `--infile_list`.
 
 ## Scheduling Policies
 
@@ -353,15 +394,22 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator traces/simple.csv --trace_format simple
 ```
 
 ### `-T, --timestamp_format FORMAT`
-Timestamp format used to parse input and write output.
+Retained timestamp-format compatibility setting. The current trace parser
+detects numeric epoch seconds or calendar timestamps from the first data row
+of each input file and uses that encoding for the rest of the file, regardless
+of this setting. Simulated-job and resource-trace output is
+numeric in both settings; `--msec_output` controls its precision.
 
 **Options:**
-- `epoch` - Unix epoch seconds (e.g., `1693234567.0`)
-- `iso` - ISO 8601 format (e.g., `2026-08-29T14:35:00-07:00`)
+- `epoch`
+- `iso`
 
-**Default:** `iso`
+**Default:** `epoch`
 
-See [Input Trace Files](trace-formats.md) for accepted timestamp forms.
+The option currently validates and retains one of these values for API and
+configuration compatibility; it does not enforce the input encoding or
+select the output encoding. See [Input Trace Files](trace-formats.md) for
+accepted timestamp forms.
 
 **Example:**
 ```bash
@@ -369,23 +417,31 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator traces/jobs.csv --timestamp_format epoch
 ```
 
 ### `-z, --timezone TIMEZONE`
-Timezone for ISO timestamp output.
+Timezone used to interpret calendar timestamps that do not contain an
+embedded UTC offset. It does not affect numeric input or simulator output and
+does not depend on `--timestamp_format`.
 
-**Format:** IANA timezone database name (e.g., `"America/Los_Angeles"`, `"UTC"`, `"America/New_York"`)
+**Format:** IANA or POSIX timezone value understood by the system `TZ`
+implementation (e.g., `"America/Los_Angeles"`, `"UTC"`,
+`"America/New_York"`). DR_EVT does not currently validate the name itself.
 
 **Default:** `America/Los_Angeles`
 
 **Example:**
 ```bash
 ${CMAKE_INSTALL_PREFIX}/bin/simulator traces/jobs.csv \
-    --timestamp_format iso \
     --timezone "America/New_York"
 ```
+
+Embedded numeric offsets are recognized but currently have a known conversion
+limitation when the configured timezone is not UTC. See
+[Timezone Support](../dev/design-decisions/TIMEZONE_SUPPORT.md) before using
+offset-bearing input.
 
 ### `-M, --msec_output`
 
 Write timestamps in the simulated-job and resource traces with millisecond
-precision instead of rounding them to integer seconds.
+precision instead of truncating them to integer seconds.
 
 **Default:** Disabled
 
@@ -400,7 +456,8 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator traces/jobs.csv --msec_output
 How to determine the job's actual, observed execution length in simulation mode.
 
 **Options:**
-- `actual` - Read the job's actual run time from the input trace (default)
+- `actual` - Read the job's finite actual run time from the input trace
+  (default); the value must not exceed `time_limit`
 - `distribution` - Sample from statistical distribution (realistic with variation)
 - `limit` - Jobs run exactly their time_limit (unrealistic, for debugging only)
 
@@ -470,7 +527,15 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator traces/jobs.csv --max_jobs 100
 ```
 
 ### `-t, --max_time TIME`
-Maximum simulation time (in trace time units).
+Stop a batch run at the nonnegative numeric simulation timestamp `TIME`.
+Events exactly at `TIME` are processed; events after it are not. Jobs still
+running or waiting at the boundary remain in that state. The simulated-job
+output contains only jobs completed through the boundary.
+
+`TIME` uses the same numeric time coordinate as the trace. It is an absolute
+timestamp on that coordinate, not a duration relative to `--sim_start_time`.
+When warm start is enabled, `TIME` must therefore be greater than or equal to
+`--sim_start_time`.
 
 **Default:** Unlimited (run until all jobs complete)
 
@@ -483,7 +548,7 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator traces/jobs.csv \
 ### `-s, --seed VALUE`
 Random number generator seed for reproducibility.
 
-**Default:** System clock
+**Default:** `0` (deterministic)
 
 **Example:**
 ```bash

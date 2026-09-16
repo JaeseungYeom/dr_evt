@@ -27,7 +27,8 @@ CustomFCFSScheduler::CustomFCFSScheduler(
       m_num_max_candidates(num_max_candidates),
       m_job_cost_function(std::move(cost_function)),
       m_backfill_selector(std::move(selector)), m_resource_area(0.0),
-      m_resource_area_time(0.0), m_accounted_available_nodes(total_nodes) {
+      m_resource_area_time(0.0), m_resource_area_start(0.0),
+      m_accounted_available_nodes(total_nodes) {
   if (m_num_max_candidates == 0) {
     throw std::invalid_argument(
         "CustomFCFSScheduler requires num_max_candidates > 0");
@@ -69,9 +70,23 @@ void CustomFCFSScheduler::commit_available_nodes(num_nodes_t available_nodes) {
 }
 
 void CustomFCFSScheduler::reset_resource_accounting() {
+  reset_resource_accounting(0.0, m_total_nodes);
+}
+
+void CustomFCFSScheduler::reset_resource_accounting(
+    sim_time_t start_time, num_nodes_t available_nodes) {
+  if (!std::isfinite(start_time) || start_time < 0.0) {
+    throw std::invalid_argument(
+        "resource accounting start time must be finite and nonnegative");
+  }
+  if (available_nodes > m_total_nodes) {
+    throw std::invalid_argument(
+        "resource accounting available nodes exceed total capacity");
+  }
   m_resource_area = 0.0;
-  m_resource_area_time = 0.0;
-  m_accounted_available_nodes = m_total_nodes;
+  m_resource_area_time = start_time;
+  m_resource_area_start = start_time;
+  m_accounted_available_nodes = available_nodes;
 }
 
 tdiff_t
@@ -87,11 +102,12 @@ CustomFCFSScheduler::resource_area_through(sim_time_t through_time) const {
 }
 
 double CustomFCFSScheduler::utilization_through(sim_time_t through_time) const {
-  if (m_total_nodes == 0 || through_time <= 0.0) {
+  const sim_time_t duration = through_time - m_resource_area_start;
+  if (m_total_nodes == 0 || duration <= 0.0) {
     return 0.0;
   }
   return resource_area_through(through_time) /
-         (static_cast<double>(m_total_nodes) * through_time);
+         (static_cast<double>(m_total_nodes) * duration);
 }
 
 tdiff_t

@@ -27,6 +27,18 @@ The owning fixtures and runner commands are listed in
 
 ## Trace analysis
 
+- `detect_capacity_periods.py` — find sustained low-allocation/backlog or
+  no-start/backlog periods and optionally emit a candidate capacity schedule.
+  For more comprehensive analysis, use the `detect_queue_pause/` toolkit,
+  which reconstructs binned demand and allocation, supports optional EASY-
+  backfill evidence, and reports richer operating-state evidence. Both tools
+  are heuristic; validate their candidates against scheduler and maintenance
+  records.
+- `prepare_warm_start_trace.py` — legacy workaround that materializes jobs
+  crossing `t` as ordinary simulation records with their remaining durations.
+  Prefer the replay-based `--sim_start_time` method, which preserves historical
+  departures independently of `--run_time_mode` and suppresses historical seeds
+  from output and statistics.
 - `analyze_trace_performance.py` — summary performance analysis.
 - `calculate_resource_trace.py` — derive resource occupancy from a schedule.
 - `trace/detect_abnormality.awk` — flag anomalous trace records.
@@ -36,3 +48,6 @@ The owning fixtures and runner commands are listed in
 
 The separate Fugaku experiment tools are documented in
 [`experimental/fugaku-power/scripts/README.md`](../experimental/fugaku-power/scripts/README.md).
+
+The maintenance tools and their assumptions are documented in
+[Maintenance, Capacity Changes, and Warm Starts](../docs/user-guide/maintenance-and-warm-start.md).

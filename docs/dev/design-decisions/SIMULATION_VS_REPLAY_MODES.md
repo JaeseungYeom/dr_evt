@@ -32,8 +32,10 @@ a reservation. Once a job starts, its selected duration determines the finish
 event.
 
 In replay mode, `begin_time` and `end_time` are authoritative. Their
-difference supplies the duration, and the resource-accounting path processes
-those recorded intervals directly.
+difference supplies the duration when `actual_run_time` is absent. If an
+actual runtime or one of its aliases is supplied, it must be finite and equal
+that difference within `1e-6` seconds. The resource-accounting path processes
+the recorded intervals directly.
 
 ## Record representation
 
@@ -52,9 +54,11 @@ For accepted jobs:
 - start time is not earlier than submission time; and
 - runtime is positive.
 
-Simulation additionally requires the recorded finish to equal the computed
-start plus the selected runtime. Replay preserves the supplied start and finish
-times.
+For a runtime loaded from simulation input, the value must be finite and no
+greater than `time_limit`; simulation later requires the recorded finish to
+equal the computed start plus the selected runtime. Replay preserves the
+supplied start and finish times and, when a runtime is also supplied, requires
+it to agree with their difference.
 
 ## Implementation
 

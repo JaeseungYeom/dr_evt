@@ -17,20 +17,22 @@ This directory contains GitHub Actions workflows for automated testing.
 - Column alias tests (8)
 - Run-time mode tests (7)
 - Unit tests (7)
-- Feature tests (6)
+- Feature tests (8)
 - Conservative backfilling tests (2)
 - Replay tests (5: one reclamation-boundary binary and four CLI comparisons)
 - Resource-history tests (5)
 - Job-store tests (6)
-- Config tests, including power-usage `trace_type` coverage
-- Native CTest suite (12 tests, plus MPI streaming when MPI is available),
-  including the custom FCFS scheduler's focused and 2,000-job comparisons
+- Config tests (12), including power-usage `trace_type`, capacity-schedule,
+  and warm-start coverage
+- Native CTest suite (15 native registrations plus the Python trace-tools
+  registration, and MPI streaming when MPI is available), including the
+  custom FCFS scheduler's focused and 2,000-job comparisons
 - Ser20-disabled native serialization build and tests
 - Sphinx and Doxygen documentation build with warnings treated as errors
-- Python API tests (17)
+- Python API tests (18)
 - gRPC client/server tests (2)
-- Append-job tests (19 C++ + 3 gRPC)
-- FCFS/EASY backfill-window focused rerun of the three-case gRPC binary
+- Append-job tests (20 C++ + 5 optional gRPC checks)
+- FCFS/EASY backfill-window focused rerun of the five-check gRPC binary
 - Synchronized single-coordinator gRPC test
 - Progressive-loading tests (C++ + CLI)
 - Queue-input schema test
@@ -69,25 +71,26 @@ Total tests referenced by the full suite:
 | Category | Count | Verified in this doc pass? |
 |----------|-------|------------------------------|
 | Scheduler correctness | 34 | CI runner |
-| Custom FCFS | 7 | CTest; five focused checks and two golden schedules, including 2,000 jobs |
+| Custom FCFS | 8 | CTest; six focused checks and two golden schedules, including warm-start accounting and 2,000 jobs |
 | Queue implementation differential | 34 fixtures × 4 implementations | CI runner |
 | Column aliases | 8 | CI runner |
 | Run-time mode | 7 | CI runner |
 | Unit | 7 | CI runner |
-| Feature | 6 | CI runner |
+| Feature | 8 | CI runner; includes time-varying capacity and native warm start |
 | Conservative | 2 | CI runner |
 | Replay | 5 | CI runner; reclamation safety plus resource equivalence |
 | Resource history | 5 | CI runner |
 | Job store | 6 | CI runner |
-| Config | 9 | CI runner; includes power-usage `trace_type` coverage |
-| Native CTest | 12, plus 1 with MPI | CI runner; RNG and binary serialization, trace policies, replay reclamation, custom scheduling, append/streaming APIs, queues, and CLI dispatch |
-| Python API | 17 | CI runner |
+| Config | 12 | CI runner; includes power-usage, capacity-schedule, and warm-start configuration coverage |
+| Native CTest | 15, plus 1 with MPI | CI runner; RNG and binary serialization, trace policies, replay reclamation, custom scheduling, append/streaming APIs, warm starts, capacity parsing, queues, and CLI dispatch |
+| Trace tools | 2 checks in 1 CTest registration | CI runner; capacity inference and warm-start boundary/output behavior |
+| Python API | 18 | CI runner |
 | gRPC client/server | 2 | CI runner |
-| Append-job | 22: 19 C++ + 3 gRPC | CI runner |
-| FCFS/EASY backfill-window gRPC | 3 repeated checks; 1 targeted | CI runner |
+| Append-job | 25: 20 C++ + 5 optional gRPC checks | CI runner |
+| FCFS/EASY backfill-window gRPC | 5 repeated checks; 1 targeted | CI runner |
 | Single-coordinator gRPC | 1 | CI runner; synchronized independent systems |
 | Progressive loading | 11 C++ + 4 CLI | CI runner |
-| Queue input schema | 1 binary | CI runner |
+| Queue input schema | 1 binary | CI runner; queue variants and replay/simulation runtime validation |
 | Scale | 7 | CI runner |
 
 The workflow summary in `tests.yml` is the authoritative CI-oriented list.

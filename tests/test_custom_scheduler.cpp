@@ -141,6 +141,36 @@ void test_batch_resource_area_accounting() {
   assert(std::abs(simulation.get_resource_area() - 4600.0) < 1e-12);
 }
 
+void test_warm_start_resource_area_accounting() {
+  constexpr const char *trace_path =
+      "/tmp/dr_evt_custom_scheduler_warm_area.csv";
+  {
+    std::ofstream trace(trace_path);
+    trace << "job_submit_time,begin_time,end_time,num_nodes,exit_status,"
+             "time_limit\n"
+          << "0,1,5,2,0,4\n"
+          << "3,3,4,2,0,1\n";
+  }
+
+  Sim_Params params;
+  params.m_infile = trace_path;
+  params.m_total_nodes = 4;
+  params.m_sim_start_time = 3.0;
+  params.m_trace_format = "simple";
+  params.m_timestamp_format = "epoch";
+  params.m_run_time_mode = RunTimeMode::ACTUAL;
+  params.m_num_max_candidates = 2;
+
+  Simulation simulation(params, cost_from_job_order, select_lowest_cost);
+  simulation.run();
+
+  const auto stats = simulation.get_statistics();
+  assert(stats.jobs_completed == 1);
+  assert(std::abs(stats.resource_area - 6.0) < 1e-12);
+  assert(std::abs(stats.utilization - 0.75) < 1e-12);
+  assert(std::abs(simulation.get_resource_area() - 6.0) < 1e-12);
+}
+
 void test_matches_default_circular_easy() {
   constexpr const char *trace_path =
       "/tmp/dr_evt_custom_scheduler_equivalence.csv";
@@ -227,6 +257,7 @@ int main(int argc, char **argv) {
   test_selector_must_return_a_candidate();
   test_current_utilization_api();
   test_batch_resource_area_accounting();
+  test_warm_start_resource_area_accounting();
   test_matches_default_circular_easy();
   std::cout << "Custom scheduler tests passed\n";
   return 0;
