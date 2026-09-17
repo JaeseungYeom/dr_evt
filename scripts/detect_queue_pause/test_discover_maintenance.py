@@ -74,6 +74,50 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(periods[0]["state"], "full_shutdown")
         self.assertEqual(periods[0]["duration_hours"], 8)
 
+    def test_queue_pause_uses_combined_evidence_when_backfill_is_enabled(self):
+        item = {
+            "start_epoch": 0,
+            "running_nodes": 20,
+            "pending_jobs": 20,
+            "pending_nodes": 200,
+            "jobs_started": 0,
+            "missed_nonrecurring_jobs": 3,
+            "missed_nonrecurring_families": 2,
+            "backfill_opportunity_jobs": 0,
+            "missed_backfill_jobs": 0,
+            "missed_nonrecurring_backfill_jobs": 0,
+            "missed_nonrecurring_backfill_families": 0,
+        }
+        periods = detect_periods(
+            [item], 100, 3600, 1, 10, 0.02, 0.005, 0.6, 0.1, 0,
+            TimestampFormatter("epoch", "UTC"), True, 3, 2, 0.5,
+        )
+        self.assertEqual(len(periods), 1)
+        self.assertEqual(periods[0]["state"], "queue_pause_or_maintenance")
+        self.assertEqual(periods[0]["backfill_miss_fraction"], 0.0)
+
+    def test_shutdown_uses_combined_evidence_when_backfill_is_enabled(self):
+        item = {
+            "start_epoch": 0,
+            "running_nodes": 0,
+            "pending_jobs": 20,
+            "pending_nodes": 200,
+            "jobs_started": 0,
+            "missed_nonrecurring_jobs": 3,
+            "missed_nonrecurring_families": 2,
+            "backfill_opportunity_jobs": 0,
+            "missed_backfill_jobs": 0,
+            "missed_nonrecurring_backfill_jobs": 0,
+            "missed_nonrecurring_backfill_families": 0,
+        }
+        periods = detect_periods(
+            [item], 100, 3600, 1, 10, 0.02, 0.005, 0.6, 0.1, 0,
+            TimestampFormatter("epoch", "UTC"), True, 3, 2, 0.5,
+        )
+        self.assertEqual(len(periods), 1)
+        self.assertEqual(periods[0]["state"], "full_shutdown")
+        self.assertEqual(periods[0]["backfill_miss_fraction"], 0.0)
+
     def test_idle_without_backlog_is_not_maintenance(self):
         bins = [
             {

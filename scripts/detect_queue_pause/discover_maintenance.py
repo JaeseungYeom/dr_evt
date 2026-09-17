@@ -560,10 +560,14 @@ def detect_periods(
             and float(item["jobs_started"]) <= typical_starts * pause_start_fraction
         )
         flags.append((shutdown, paused, reduced))
+        # Shutdowns and queue pauses use combined direct-start and backfill
+        # evidence, while reduced-capacity and backfill-suppression bins use
+        # the stricter backfill evidence.  Do not globally replace the
+        # state-specific gates with the backfill-only gate when an evidence
+        # file is present.
         raw.append(
-            backfill_opportunity_evidence
-            if require_backfill_evidence
-            else (shutdown or paused or reduced)
+            shutdown or paused or reduced
+            or (require_backfill_evidence and backfill_opportunity_evidence)
         )
 
     candidate = bridge_candidates(raw, bridge_bins_count)
@@ -623,12 +627,6 @@ def detect_periods(
         period_backfill_miss_fraction = (
             missed_backfills / float(eligible_backfills) if eligible_backfills else 0.0
         )
-        if (
-            require_backfill_evidence
-            and period_backfill_miss_fraction <= min_backfill_miss_fraction
-        ):
-            i = j
-            continue
         jobs_started = sum(int(item["jobs_started"]) for item in segment)
         capacity_fraction = avg_running / capacity
         if shutdown_share >= 0.6 and jobs_started == 0:
@@ -643,6 +641,16 @@ def detect_periods(
         else:
             state = "backfill_suppression"
             evidence = "multiple eligible backfill jobs were not started"
+        # The aggregate strict-majority check protects inferences based on
+        # backfill evidence.  Shutdown and queue-pause classifications instead
+        # use the combined opportunity evidence already enforced per bin.
+        if (
+            require_backfill_evidence
+            and state in ("reduced_capacity", "backfill_suppression")
+            and period_backfill_miss_fraction <= min_backfill_miss_fraction
+        ):
+            i = j
+            continue
         if require_backfill_evidence:
             evidence += "; multiple nonrecurring jobs missed reference EASY opportunities"
         observed_peak = max(
