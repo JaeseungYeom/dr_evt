@@ -12,6 +12,7 @@
 #include "proto/dr_evt_params.hpp"
 #include "proto/utils.hpp"
 #include "utils/file.hpp"
+#include <cmath>
 #include <fstream>
 #include <google/protobuf/io/zero_copy_stream_impl.h>
 #include <google/protobuf/message.h>
@@ -36,6 +37,17 @@ set_sim_options(const dr_evt_proto::DR_EVT_Params::Simulation_Params &cfg,
 
   sp.m_max_jobs = cfg.max_jobs();
   sp.m_max_time = cfg.max_time();
+  if (!std::isfinite(sp.m_max_time) || sp.m_max_time < 0.0) {
+    throw std::runtime_error(
+        "Invalid max_time in protobuf config (must be finite and "
+        "nonnegative)");
+  }
+  if (!std::isfinite(cfg.sim_start_time()) || cfg.sim_start_time() < 0.0) {
+    throw std::runtime_error(
+        "Invalid sim_start_time in protobuf config (must be finite and "
+        "nonnegative)");
+  }
+  sp.m_sim_start_time = cfg.sim_start_time();
 
   sp.m_is_jobs_set = (sp.m_max_jobs > 0u);
   sp.m_is_time_set = (sp.m_max_time > 0.0);
@@ -62,6 +74,9 @@ set_sim_options(const dr_evt_proto::DR_EVT_Params::Simulation_Params &cfg,
   // Scheduling parameters (0 means use default from Sim_Params constructor)
   if (cfg.total_nodes() > 0) {
     sp.m_total_nodes = cfg.total_nodes();
+  }
+  if (!cfg.capacity_schedule().empty()) {
+    sp.m_capacity_schedule = cfg.capacity_schedule();
   }
 
   // Candidate limit for the callback-driven custom scheduler.
@@ -133,7 +148,7 @@ set_sim_options(const dr_evt_proto::DR_EVT_Params::Simulation_Params &cfg,
     sp.m_trace_format = "simple";
   }
 
-  // Timestamp format (options: "epoch" or "iso", default: "iso")
+  // Retained timestamp compatibility value (default: "epoch")
   if (!cfg.timestamp_format().empty()) {
     std::string format = cfg.timestamp_format();
     if (format == "epoch" || format == "iso") {
@@ -143,7 +158,7 @@ set_sim_options(const dr_evt_proto::DR_EVT_Params::Simulation_Params &cfg,
                                format);
     }
   } else {
-    sp.m_timestamp_format = "iso";
+    sp.m_timestamp_format = "epoch";
   }
 
   // Timezone (examples: "UTC", "America/Los_Angeles", "America/New_York",

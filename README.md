@@ -63,7 +63,8 @@ minimum input fields are `job_submit_time`, `num_nodes`, and `time_limit`.
 job's execution duration is selected separately with `--run_time_mode`:
 
 - `actual` (default) uses `actual_run_time` from the input trace (also accepted as
-  `duration`, `actual_duration`, or `run_time`).
+  `actual_runtime`, `duration`, `actual_duration`, or `run_time`). A supplied
+  value must be finite and no greater than `time_limit`.
 - `limit` runs each job for exactly its requested `time_limit`.
 - `distribution` draws a duration from the selected `normal`, `lognormal`, or
   `uniform` distribution using `--run_time_scale`, `--run_time_stddev`, and
@@ -186,9 +187,12 @@ job_submit_time,begin_time,end_time,num_nodes,time_limit
 0,100,120,60,20
 ```
 
-The recorded `begin_time` and `end_time` are authoritative. Replay does not
-invoke a scheduler or choose new start times; `total_nodes` is used only to
-derive the free-node count.
+The recorded `begin_time` and `end_time` are authoritative. An optional
+`actual_run_time` column (including its accepted aliases) is checked against
+`end_time - begin_time`; rows that disagree by more than `1e-6` seconds are
+rejected. When the column is absent, replay derives the duration from the two
+timestamps. Replay does not invoke a scheduler or choose new start times;
+`total_nodes` is used only to derive the free-node count.
 
 Replay writes:
 

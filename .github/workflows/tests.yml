@@ -200,7 +200,7 @@ jobs:
         id: feature
         run: |
           echo "========================================"
-          echo "Running Feature Tests (6 tests)"
+          echo "Running Feature Tests (8 tests)"
           echo "========================================"
           ./tests/run_feature_tests.sh
 
@@ -246,14 +246,14 @@ jobs:
         id: config
         run: |
           echo "========================================"
-          echo "Running Config Tests (9 tests)"
+          echo "Running Config Tests (12 tests)"
           echo "========================================"
           ./tests/run_configs_tests.sh
 
       - name: Run Core CTest Tests
         id: core-ctest
         run: |
-          echo "Running 12 native CTest registrations plus MPI when available"
+          echo "Running 15 native CTest registrations, the trace-tools test, plus MPI when available"
           cd build
           ctest --output-on-failure
 
@@ -262,7 +262,7 @@ jobs:
         run: |
           source venv/bin/activate
           echo "========================================"
-          echo "Running Python API Tests (17 tests)"
+          echo "Running Python API Tests (18 tests)"
           echo "========================================"
           PYTHON_EXECUTABLE=$(command -v python) ./tests/run_python_tests.sh
 
@@ -278,7 +278,7 @@ jobs:
         id: append-job
         run: |
           echo "========================================"
-          echo "Running Append-Job Tests (19 C++ + 3 gRPC)"
+          echo "Running Append-Job Tests (20 C++ + 5 optional gRPC checks)"
           echo "========================================"
           ./tests/run_append_job_tests.sh
 
@@ -334,16 +334,16 @@ jobs:
           echo "  Column Aliases (8 tests): ${{ steps.column-alias.outcome }}"
           echo "  Run Time Mode (7 tests): ${{ steps.run-time-mode.outcome }}"
           echo "  Unit (7 tests): ${{ steps.unit.outcome }}"
-          echo "  Feature (6 tests): ${{ steps.feature.outcome }}"
+          echo "  Feature (8 tests): ${{ steps.feature.outcome }}"
           echo "  Conservative (2 tests): ${{ steps.conservative.outcome }}"
           echo "  Replay (5 tests): ${{ steps.replay.outcome }}"
           echo "  Resource History (5 tests): ${{ steps.resource-history.outcome }}"
           echo "  Job Store (6 tests): ${{ steps.job-store.outcome }}"
-          echo "  Config (9 tests): ${{ steps.config.outcome }}"
-          echo "  Native CTest (12 + MPI when available): ${{ steps.core-ctest.outcome }}"
-          echo "  Python API (17 tests): ${{ steps.python-api.outcome }}"
-          echo "  Append-Job (19 C++ + 3 gRPC): ${{ steps.append-job.outcome }}"
-          echo "  Backfill-window focused rerun (3 checks already counted): ${{ steps.backfill-window.outcome }}"
+          echo "  Config (12 tests): ${{ steps.config.outcome }}"
+          echo "  CTest (15 native + trace tools + MPI when available): ${{ steps.core-ctest.outcome }}"
+          echo "  Python API (18 tests): ${{ steps.python-api.outcome }}"
+          echo "  Append-Job (20 C++ + 5 optional gRPC checks): ${{ steps.append-job.outcome }}"
+          echo "  Backfill-window focused rerun (5 checks already counted): ${{ steps.backfill-window.outcome }}"
           echo "  Single-Coordinator gRPC: ${{ steps.grpc-single-coordinator.outcome }}"
           echo "  Progressive Loading (11 C++ + 4 CLI): ${{ steps.progressive-load.outcome }}"
           echo "  Queue Input Schema: ${{ steps.queue-input-schema.outcome }}"

@@ -70,6 +70,8 @@ protected:
   tdiff_t m_resource_area;
   /// Last simulation-time boundary incorporated into m_resource_area.
   sim_time_t m_resource_area_time;
+  /// Boundary from which the current resource-area interval is measured.
+  sim_time_t m_resource_area_start;
   /// Free nodes after the most recently settled scheduling cycle.
   num_nodes_t m_accounted_available_nodes;
 
@@ -79,8 +81,12 @@ protected:
   /** Store free capacity after all scheduling at the current time settles. */
   void commit_available_nodes(num_nodes_t available_nodes);
 
-  /** Reset resource accounting before a new simulation run. */
+  /** Reset resource accounting for a traditional empty time-zero start. */
   void reset_resource_accounting();
+
+  /** Reset resource accounting at a populated simulation boundary. */
+  void reset_resource_accounting(sim_time_t start_time,
+                                 num_nodes_t available_nodes);
 
   /** Return allocated-node area through a finite snapshot time. */
   tdiff_t resource_area_through(sim_time_t through_time) const;

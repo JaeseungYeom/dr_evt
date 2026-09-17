@@ -256,6 +256,114 @@ else
         FAIL=$((FAIL + 1))
     fi
 fi
+
+# Test 10: capacity_schedule is available through protobuf field 30, and a
+# later CLI option overrides the config value just like the other options.
+echo "Test 10: capacity schedule config and CLI precedence"
+CAPACITY_TRACE="tests/test_traces/feature/capacity_schedule.csv"
+CAPACITY_CONFIG="$TEST_WORK_DIR/capacity_config.pb"
+CAPACITY_OVERRIDE="$TEST_WORK_DIR/capacity_override.csv"
+cat > "$CAPACITY_CONFIG" <<'EOF'
+total_nodes: 100
+trace_format: "simple"
+timestamp_format: "epoch"
+run_time_mode: "limit"
+capacity_schedule: "tests/test_traces/feature/capacity_schedule.capacity.csv"
+EOF
+cat > "$CAPACITY_OVERRIDE" <<'EOF'
+time,total_nodes
+1000,25
+EOF
+
+$SIMULATOR "$CAPACITY_TRACE" \
+    --total_nodes 100 \
+    --trace_format simple \
+    --timestamp_format epoch \
+    --run_time_mode limit \
+    --capacity_schedule tests/test_traces/feature/capacity_schedule.capacity.csv \
+    --outfile "$TEST_WORK_DIR/cli_capacity.csv"
+
+$SIMULATOR "$CAPACITY_TRACE" \
+    --config "$CAPACITY_CONFIG" \
+    --outfile "$TEST_WORK_DIR/pb_capacity.csv"
+
+$SIMULATOR "$CAPACITY_TRACE" \
+    --total_nodes 100 \
+    --trace_format simple \
+    --timestamp_format epoch \
+    --run_time_mode limit \
+    --capacity_schedule "$CAPACITY_OVERRIDE" \
+    --outfile "$TEST_WORK_DIR/cli_capacity_override.csv"
+
+$SIMULATOR "$CAPACITY_TRACE" \
+    --config "$CAPACITY_CONFIG" \
+    --capacity_schedule "$CAPACITY_OVERRIDE" \
+    --outfile "$TEST_WORK_DIR/pb_capacity_override.csv"
+
+if diff -q "$TEST_WORK_DIR/cli_capacity.csv" "$TEST_WORK_DIR/pb_capacity.csv" > /dev/null && \
+   diff -q "$TEST_WORK_DIR/cli_capacity_override.csv" "$TEST_WORK_DIR/pb_capacity_override.csv" > /dev/null; then
+    echo "  ✓ capacity schedule config and later CLI override both match"
+    PASS=$((PASS + 1))
+else
+    echo "  ✗ capacity schedule config or CLI precedence differs"
+    FAIL=$((FAIL + 1))
+fi
+
+# Test 11: sim_start_time is available through protobuf field 31 and produces the
+# same replay-based warm-start schedule as the CLI.
+echo "Test 11: warm-start time config"
+WARM_TRACE="tests/test_traces/feature/warm_start_native.csv"
+WARM_CONFIG="$TEST_WORK_DIR/warm_start_config.pb"
+cat > "$WARM_CONFIG" <<'EOF'
+total_nodes: 100
+trace_format: "simple"
+timestamp_format: "epoch"
+run_time_mode: "actual"
+sim_start_time: 50
+EOF
+
+$SIMULATOR "$WARM_TRACE" \
+    --total_nodes 100 \
+    --trace_format simple \
+    --timestamp_format epoch \
+    --run_time_mode actual \
+    --sim_start_time 50 \
+    --outfile "$TEST_WORK_DIR/cli_warm_start.csv"
+
+$SIMULATOR "$WARM_TRACE" \
+    --config "$WARM_CONFIG" \
+    --outfile "$TEST_WORK_DIR/pb_warm_start.csv"
+
+if diff -q "$TEST_WORK_DIR/cli_warm_start.csv" \
+           "$TEST_WORK_DIR/pb_warm_start.csv" > /dev/null; then
+    echo "  ✓ sim_start_time config matches CLI"
+    PASS=$((PASS + 1))
+else
+    echo "  ✗ sim_start_time config differs from CLI"
+    FAIL=$((FAIL + 1))
+fi
+
+# Test 12: protobuf sim_start_time validation rejects every invalid numeric class.
+echo "Test 12: invalid simulation-start-time config"
+INVALID_START_OK=1
+for VALUE in -1 nan inf; do
+    INVALID_CONFIG="$TEST_WORK_DIR/invalid_start_${VALUE}.pb"
+    INVALID_LOG="$TEST_WORK_DIR/invalid_start_${VALUE}.log"
+    printf 'sim_start_time: %s\n' "$VALUE" > "$INVALID_CONFIG"
+    if $SIMULATOR "$WARM_TRACE" --config "$INVALID_CONFIG" \
+        > "$INVALID_LOG" 2>&1; then
+        INVALID_START_OK=0
+    elif ! grep -q "sim_start_time" "$INVALID_LOG"; then
+        INVALID_START_OK=0
+    fi
+done
+if [ "$INVALID_START_OK" -eq 1 ]; then
+    echo "  ✓ negative and non-finite sim_start_time values are rejected"
+    PASS=$((PASS + 1))
+else
+    echo "  ✗ an invalid sim_start_time was accepted or misdiagnosed"
+    FAIL=$((FAIL + 1))
+fi
 echo ""
 echo "=========================================="
 echo "Results: $PASS passed, $FAIL failed"

@@ -61,10 +61,20 @@ bool approx_equal(double a, double b, double tol = 1e-6) {
 // (that's the whole point - each job only becomes known via
 // append_job()), so this file is always header-only, zero data rows.
 const char *EMPTY_TRACE_PATH = "/tmp/test_append_job_api_empty.csv";
+const char *CAPACITY_SCHEDULE_PATH =
+    "/tmp/test_append_job_api_capacity_schedule.csv";
+const char *CAPACITY_RESET_TRACE_PATH =
+    "/tmp/test_append_job_api_capacity_reset_resources.csv";
 
 void write_empty_trace_fixture() {
   std::ofstream ofs(EMPTY_TRACE_PATH);
   ofs << "job_submit_time,num_nodes,time_limit\n";
+
+  std::ofstream capacity(CAPACITY_SCHEDULE_PATH);
+  capacity << "time,total_nodes\n"
+           << "5,0\n"
+           << "20,100\n"
+           << "1000,25\n";
 }
 
 Sim_Params make_params() {
@@ -568,7 +578,82 @@ void test_advance_to_idle_gap() {
 
   sim.advance_to(std::numeric_limits<sim_time_t>::max());
   assert(sim.get_nodes_in_use() == 0);
+  assert(approx_equal(sim.get_current_time(), 550.0));
   std::cout << "  All jobs complete after draining to infinity" << std::endl;
+
+  std::cout << "  PASSED" << std::endl;
+}
+
+// A finite streaming advance must consume capacity changes even if no jobs
+// exist yet. Capacity zero then pauses a newly appended job until the increase
+// at t=20. Once that job finishes, draining an otherwise empty simulation to
+// infinity must not consume the irrelevant change at t=1000.
+void test_capacity_schedule_across_streaming_advances() {
+  std::cout << "\n=== Capacity schedule across streaming advances ==="
+            << std::endl;
+
+  Sim_Params params = make_params();
+  params.m_capacity_schedule = CAPACITY_SCHEDULE_PATH;
+  Simulation sim(params);
+  sim.get_trace().load_data(0);
+
+  sim.advance_to(10.0);
+  assert(approx_equal(sim.get_current_time(), 10.0));
+  assert(sim.get_current_capacity() == 0);
+  assert(sim.get_available_nodes() == 0);
+
+  const job_no_t job = sim.append_job(10.0, 30, kTestQueueInput, 10);
+  sim.advance_to(15.0);
+  assert(!sim.get_trace().job_at(job).is_scheduled());
+  assert(sim.get_nodes_in_use() == 0);
+
+  sim.advance_to(20.0);
+  assert(sim.get_current_capacity() == 100);
+  assert(sim.get_trace().job_at(job).is_scheduled());
+  assert(sim.get_nodes_in_use() == 30);
+
+  sim.advance_to(30.0);
+  assert(sim.get_nodes_in_use() == 0);
+  sim.advance_to(std::numeric_limits<sim_time_t>::max());
+  assert(sim.get_current_capacity() == 100);
+
+  // A finite advance on another idle simulation does consume the transition.
+  // Reinitializing that same Simulation must reset both Simulation's capacity
+  // and Trace's capacity used to derive free_nodes in resource samples.
+  Simulation reused(params);
+  reused.get_trace().load_data(0);
+  reused.advance_to(1000.0);
+  assert(reused.get_current_capacity() == 25);
+  reused.initialize_trace();
+  assert(reused.get_current_capacity() == 100);
+  const job_no_t reset_job = reused.append_job(0.0, 30, kTestQueueInput, 10);
+  reused.advance_to(0.0);
+  assert(reused.get_trace().job_at(reset_job).is_scheduled());
+  reused.write_resource_trace(CAPACITY_RESET_TRACE_PATH);
+
+  std::ifstream resource_trace(CAPACITY_RESET_TRACE_PATH);
+  std::string line;
+  std::string last_line;
+  while (std::getline(resource_trace, line)) {
+    if (!line.empty()) {
+      last_line = line;
+    }
+  }
+  assert(last_line == "0,70,30");
+
+  // A non-preemptive reduction below live occupancy uses that occupancy as
+  // effective capacity until the running work drains. Down nodes therefore
+  // do not dilute either instantaneous or time-accounted utilization.
+  Simulation draining(params);
+  draining.get_trace().load_data(0);
+  draining.append_job(0.0, 30, kTestQueueInput, 10);
+  draining.advance_to(5.0);
+  assert(draining.get_current_capacity() == 0);
+  assert(draining.get_nodes_in_use() == 30);
+  assert(approx_equal(draining.get_current_utilization(), 1.0));
+  const auto draining_stats = draining.get_statistics();
+  assert(approx_equal(draining_stats.resource_area, 300.0));
+  assert(approx_equal(draining_stats.utilization, 300.0 / 650.0));
 
   std::cout << "  PASSED" << std::endl;
 }
@@ -921,6 +1006,7 @@ int main() {
     test_online_scheduling();
     test_no_resource_leaks();
     test_advance_to_idle_gap();
+    test_capacity_schedule_across_streaming_advances();
     test_submit_job_records_busy_nodes();
     test_append_jobs_memory_pressure();
     test_resource_area_and_time_accounted_utilization();

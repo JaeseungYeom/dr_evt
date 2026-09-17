@@ -15,6 +15,7 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <grpcpp/grpcpp.h>
 #include <iostream>
@@ -195,6 +196,12 @@ public:
           if (!r.infile().empty())
             sp.m_infile = r.infile();
           sp.m_msec_output = r.msec_output();
+          if (!std::isfinite(r.sim_start_time()) ||
+              r.sim_start_time() < 0.0) {
+            throw std::runtime_error(
+                "sim_start_time must be finite and nonnegative");
+          }
+          sp.m_sim_start_time = r.sim_start_time();
 
           if (r.backfill_policy().empty())
             sp.m_backfill_policy = dr_evt::BackfillPolicy::EASY;
@@ -320,6 +327,12 @@ public:
           require_init(sim);
           sim->advance_to(req.advance_to().target_time());
           resp.mutable_advance_to();
+          break;
+        }
+        case ClientMessage::kRun: {
+          require_init(sim);
+          sim->run();
+          resp.mutable_run();
           break;
         }
         case ClientMessage::kRunUntilExclusive: {

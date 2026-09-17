@@ -66,6 +66,11 @@ PYBIND11_MODULE(dr_evt, m) {
                      "initialize_trace().")
       .def_readwrite("total_nodes", &Sim_Params::m_total_nodes,
                      "int: Total scheduler-managed compute nodes.")
+      .def_readwrite("capacity_schedule", &Sim_Params::m_capacity_schedule,
+                     "str: Optional capacity-change CSV path.")
+      .def_readwrite("sim_start_time", &Sim_Params::m_sim_start_time,
+                     "float: Global simulation start time; a positive value "
+                     "enables replay-based warm start for replay input.")
       .def_readwrite("trace_format", &Sim_Params::m_trace_format,
                      "str: Input trace format identifier.")
       .def_readwrite("timestamp_format", &Sim_Params::m_timestamp_format,

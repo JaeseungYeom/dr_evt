@@ -22,6 +22,11 @@ the gRPC simulation request. Internally, `Data_Columns` temporarily sets the
 process `TZ` value while parsing a trace and restores the previous value when
 the mapping is destroyed.
 
+Input encoding is detected from the first data row of each input file and then
+used for the entire file. Mixed encodings are rejected. `--timestamp_format`
+is currently retained as a validated compatibility setting but does not select
+input parsing or output formatting. Simulator output is always numeric.
+
 The supported user-facing behavior is documented in:
 
 - [Trace Formats](../../user-guide/trace-formats.md)

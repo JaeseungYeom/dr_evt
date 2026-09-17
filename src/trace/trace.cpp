@@ -34,6 +34,9 @@ BasicTrace<Policy>::BasicTrace(const std::string &fname)
       m_resource_history_capacity(0),
       m_resource_history_capacity_resolved(false),
       m_resource_trace_total_nodes(static_cast<num_nodes_t>(0u)),
+      m_resource_trace_current_capacity(static_cast<num_nodes_t>(0u)),
+      m_resource_capacity_initialized(false), m_resource_recording_start(0.0),
+      m_resource_recording_baseline{}, m_has_resource_recording_baseline(false),
       m_resource_trace_msec(false), m_simulated_trace_msec(false),
       m_next_job_to_write(0) {
   if (!m_dcols.check_header(fname)) {
@@ -54,6 +57,9 @@ BasicTrace<Policy>::BasicTrace(const std::string &fname,
       m_resource_history_capacity(0),
       m_resource_history_capacity_resolved(false),
       m_resource_trace_total_nodes(static_cast<num_nodes_t>(0u)),
+      m_resource_trace_current_capacity(static_cast<num_nodes_t>(0u)),
+      m_resource_capacity_initialized(false), m_resource_recording_start(0.0),
+      m_resource_recording_baseline{}, m_has_resource_recording_baseline(false),
       m_resource_trace_msec(false), m_simulated_trace_msec(false),
       m_next_job_to_write(0) {
   if (!m_dcols.check_header(fname)) {
@@ -78,6 +84,9 @@ BasicTrace<Policy>::BasicTrace(const std::string &fname,
       m_resource_history_capacity(0),
       m_resource_history_capacity_resolved(false),
       m_resource_trace_total_nodes(static_cast<num_nodes_t>(0u)),
+      m_resource_trace_current_capacity(static_cast<num_nodes_t>(0u)),
+      m_resource_capacity_initialized(false), m_resource_recording_start(0.0),
+      m_resource_recording_baseline{}, m_has_resource_recording_baseline(false),
       m_resource_trace_msec(false), m_simulated_trace_msec(false),
       m_next_job_to_write(0) {
   if (!m_dcols.check_header(fname)) {
@@ -251,7 +260,8 @@ void BasicTrace<Policy>::process_events_until(const epoch_t &t_sub) {
 
 template <typename Policy>
 void BasicTrace<Policy>::run_job_trace(const std::string &resource_trace_file,
-                                       num_nodes_t total_nodes) {
+                                       num_nodes_t total_nodes,
+                                       sim_time_t max_time) {
   if (m_data.empty()) {
     return;
   }
@@ -287,6 +297,9 @@ void BasicTrace<Policy>::run_job_trace(const std::string &resource_trace_file,
       static_cast<job_no_t>(m_num_reclaimed + m_data.size());
   for (job_no_t job_no = first_job; job_no < jobs_end; ++job_no) {
     const auto t_sub = job_at(job_no).get_submit_time();
+    if (convert_epoch<sim_time_t>(t_sub) > max_time) {
+      break;
+    }
     process_events_until(t_sub);
     auto &job = job_at(job_no);
 
@@ -301,9 +314,13 @@ void BasicTrace<Policy>::run_job_trace(const std::string &resource_trace_file,
     m_ctx.m_evtq.emplace(job_no, job.get_end_time(), departure);
     m_replay_jobs_enqueued = static_cast<size_t>(job_no) + 1;
   }
-  // Process all the remaiing events. Use any time later than any timestamp
-  // in the trace for flushing.
-  process_events_until(convert_time(max_tstamp));
+  if (max_time == std::numeric_limits<sim_time_t>::max()) {
+    // Process all remaining events. Use any time later than any timestamp in
+    // the trace for flushing.
+    process_events_until(convert_time(max_tstamp));
+  } else {
+    run_until_inclusive(max_time);
+  }
 
   write_resource_trace(resource_trace_file, total_nodes);
 }
@@ -577,6 +594,24 @@ void BasicTrace<Policy>::insert_job(job_no_t job_idx, sim_time_t start_time) {
   // Update job record with computed times (for output)
   job_at(job_idx).set_begin_time(start_epoch);
   job_at(job_idx).compute_end_time();
+
+  // A replay-format record rescheduled by Simulation's warm-start path now
+  // owns ordinary scheduler-created events. Mark its permanent position as
+  // enqueued so replay-mode front reclamation can advance past it.
+  m_replay_jobs_enqueued =
+      std::max(m_replay_jobs_enqueued, static_cast<size_t>(job_idx) + 1);
+}
+
+template <typename Policy>
+void BasicTrace<Policy>::enqueue_replay_job(job_no_t job_idx) {
+  if (m_dcols.get_trace_mode() != TraceMode::REPLAY) {
+    throw std::logic_error("enqueue_replay_job() requires replay-format input");
+  }
+  const auto &job = job_at(job_idx);
+  m_ctx.m_evtq.emplace(job_idx, job.get_begin_time(), arrival);
+  m_ctx.m_evtq.emplace(job_idx, job.get_end_time(), departure);
+  m_replay_jobs_enqueued =
+      std::max(m_replay_jobs_enqueued, static_cast<size_t>(job_idx) + 1);
 }
 
 template <typename Policy>
@@ -596,8 +631,8 @@ void BasicTrace<Policy>::run_until_inclusive(sim_time_t target_time) {
   while (!m_ctx.m_evtq.empty()) {
     const auto &event = *m_ctx.m_evtq.begin();
     const epoch_t event_timestamp = event.get_time();
-    sim_time_t event_time = static_cast<sim_time_t>(event_timestamp.first) +
-                            event_timestamp.second;
+    sim_time_t event_time =
+        static_cast<sim_time_t>(event_timestamp.first) + event_timestamp.second;
 
     if (event_time > target_time) {
       break; // Stop after processing all events <= target_time
@@ -659,6 +694,14 @@ template <typename Policy>
 void BasicTrace<Policy>::start_resource_trace(const std::string &filename,
                                               num_nodes_t total_nodes,
                                               bool msec) {
+  // Capacity is also needed by in-memory samples when output is opened only
+  // later by write_resource_trace().
+  m_resource_trace_total_nodes = total_nodes;
+  m_resource_trace_msec = msec;
+  if (!m_resource_capacity_initialized) {
+    m_resource_trace_current_capacity = total_nodes;
+    m_resource_capacity_initialized = true;
+  }
   if (filename.empty()) {
     return;
   }
@@ -675,21 +718,34 @@ void BasicTrace<Policy>::start_resource_trace(const std::string &filename,
               << std::endl;
     return;
   }
-  m_resource_trace_total_nodes = total_nodes;
-  m_resource_trace_msec = msec;
-
   std::string header = "time,free_nodes,allocated_nodes";
   header += Policy::resource_columns();
   header += "\n";
   m_resource_trace_ofs << header;
 
-  // Baseline row: all nodes free at time 0, matching the convention
-  // used elsewhere for this file format.
-  const auto baseline_sample = this->sample(epoch_t{}, 0);
-  std::string baseline = format_sim_time(0.0, msec) + "," +
-                         std::to_string(total_nodes) + ",0" +
-                         Policy::resource_values(baseline_sample) + "\n";
+  // Baseline row. For a traditional run this remains time 0 with no
+  // allocation. A warm run resets m_resource_recording_start at its boundary
+  // while preserving the occupancy and Pcon state established by replay.
+  const time_t baseline_sec = static_cast<time_t>(m_resource_recording_start);
+  const epoch_t baseline_time = {
+      baseline_sec,
+      static_cast<float>(m_resource_recording_start - baseline_sec)};
+  const auto baseline_sample =
+      m_has_resource_recording_baseline
+          ? m_resource_recording_baseline
+          : this->sample(baseline_time, m_ctx.m_n_nodes_in_use,
+                         m_resource_trace_current_capacity);
+  const auto allocated = baseline_sample.allocated;
+  const auto capacity = baseline_sample.capacity;
+  const sim_time_t baseline_output_time =
+      convert_epoch<sim_time_t>(baseline_sample.time);
+  std::string baseline =
+      format_sim_time(baseline_output_time, msec) + "," +
+      std::to_string(allocated < capacity ? capacity - allocated : 0) + "," +
+      std::to_string(allocated) + Policy::resource_values(baseline_sample) +
+      "\n";
   m_resource_trace_ofs << baseline;
+  m_has_resource_recording_baseline = false;
 }
 
 template <typename Policy>
@@ -732,7 +788,9 @@ template <typename Policy> void BasicTrace<Policy>::flush_resource_history() {
     buf += format_sim_time(convert_epoch<sim_time_t>(sample.time),
                            m_resource_trace_msec) +
            "," +
-           std::to_string(m_resource_trace_total_nodes - sample.allocated) +
+           std::to_string(sample.allocated < sample.capacity
+                              ? sample.capacity - sample.allocated
+                              : 0) +
            "," + std::to_string(sample.allocated) +
            Policy::resource_values(sample) + "\n";
     if (buf.size() >= blk_sz) {
@@ -756,7 +814,17 @@ void BasicTrace<Policy>::record_resource_sample(const epoch_t &time,
     // in one batch, rather than reclaiming one at a time.
     flush_resource_history();
   }
-  m_ctx.m_resource_history.push_back(this->sample(time, allocated));
+  m_ctx.m_resource_history.push_back(
+      this->sample(time, allocated, m_resource_trace_current_capacity));
+}
+
+template <typename Policy>
+void BasicTrace<Policy>::set_resource_capacity(sim_time_t time,
+                                               num_nodes_t capacity) {
+  m_resource_trace_current_capacity = capacity;
+  const time_t sec = static_cast<time_t>(time);
+  record_resource_sample({sec, static_cast<float>(time - sec)},
+                         m_ctx.m_n_nodes_in_use);
 }
 
 template <typename Policy>
@@ -990,7 +1058,8 @@ void BasicTrace<Policy>::start_simulated_trace(const std::string &filename,
 
 template <typename Policy>
 void BasicTrace<Policy>::write_simulated_trace(const std::string &filename,
-                                               bool msec) {
+                                               bool msec,
+                                               sim_time_t completed_through) {
   if (filename.empty()) {
     return;
   }
@@ -1004,7 +1073,10 @@ void BasicTrace<Policy>::write_simulated_trace(const std::string &filename,
   size_t job_no = m_num_reclaimed;
   for (const auto &job : m_data) {
     if (job_no == m_next_job_to_write) {
-      write_job_line(job);
+      if (job.is_scheduled() &&
+          convert_epoch<sim_time_t>(job.get_end_time()) <= completed_through) {
+        write_job_line(job);
+      }
       ++m_next_job_to_write;
     } else if (job_no > m_next_job_to_write) {
       throw std::logic_error(

@@ -45,7 +45,7 @@ protected:
   col_by_name_t m_col_by_name;
 
   /// Saved process timezone, restored when this mapping is destroyed.
-  const char *m_cur_tz;
+  char *m_cur_tz;
 
   /// Number of physical columns declared by the validated header.
   num_cols_t m_total_columns;
@@ -72,16 +72,18 @@ public:
   /** @brief Construct a mapping for a named trace format.
    * @param[in] format Supported format name, such as "simple" or "lassen". */
   Data_Columns(const std::string &format);
-  /** @brief Construct a mapping with timestamp and timezone controls.
+  /** @brief Construct a mapping with timestamp compatibility metadata and a
+   * timezone used for calendar-time parsing.
    * @param[in] format Supported trace format name.
-   * @param[in] timestamp_format Timestamp encoding name.
+   * @param[in] timestamp_format Retained epoch/iso compatibility setting;
+   * input timestamp encoding is auto-detected.
    * @param[in] timezone Timezone used for timestamps without offsets. */
   Data_Columns(const std::string &format, const std::string &timestamp_format,
                const std::string &timezone);
   /// Restore the process timezone saved during construction.
   virtual ~Data_Columns();
 
-  /// Return the configured timestamp encoding name.
+  /// Return the retained timestamp-format compatibility value.
   std::string get_timestamp_format() const { return m_timestamp_format; }
   /// Return the timezone used for timestamps without explicit offsets.
   std::string get_timezone() const { return m_timezone_str; }
@@ -143,7 +145,7 @@ protected:
 
   /// Requested input layout name, such as `simple` or `lassen`.
   std::string m_trace_format;
-  /// Requested timestamp encoding, such as `epoch` or `iso`.
+  /// Retained timestamp-format compatibility value (`epoch` or `iso`).
   std::string m_timestamp_format;
   /// Timezone for timestamps that do not carry their own offset.
   std::string m_timezone_str;

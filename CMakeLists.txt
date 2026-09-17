@@ -692,6 +692,31 @@ set_target_properties(test_block_queue-bin PROPERTIES CMAKE_INSTALL_RPATH
 
 list(APPEND DR_EVT_UNIT_TEST_TARGETS test_block_queue-bin)
 
+# Time-varying capacity schedule parser validation.
+add_executable(test_capacity_schedule-bin tests/test_capacity_schedule.cpp)
+target_include_directories(test_capacity_schedule-bin PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
+  $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}>)
+target_link_libraries(test_capacity_schedule-bin PRIVATE dr_evt)
+set_target_properties(test_capacity_schedule-bin PROPERTIES
+  OUTPUT_NAME test_capacity_schedule
+  CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
+list(APPEND DR_EVT_UNIT_TEST_TARGETS test_capacity_schedule-bin)
+
+# Native warm-start coverage: boundary classification, capacity transitions,
+# statistics, all scheduler policies/queue backends, and differential traces.
+add_executable(test_warm_start-bin tests/test_warm_start.cpp)
+target_include_directories(test_warm_start-bin PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
+  $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}>)
+target_link_libraries(test_warm_start-bin PRIVATE dr_evt)
+set_target_properties(test_warm_start-bin PROPERTIES
+  OUTPUT_NAME test_warm_start
+  CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
+list(APPEND DR_EVT_UNIT_TEST_TARGETS test_warm_start-bin)
+
 
 # MPI streaming test (requires MPI)
 # Only search for MPI for this test - dr_evt library itself has no MPI dependency
@@ -714,6 +739,7 @@ if(MPI_CXX_FOUND)
 endif()
 
 if(DR_EVT_WITH_UNIT_TESTING)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
   add_test(
     NAME test_append_job_api
     COMMAND $<TARGET_FILE:test_append_job_api-bin>)
@@ -735,11 +761,38 @@ if(DR_EVT_WITH_UNIT_TESTING)
   add_test(
     NAME test_block_queue
     COMMAND $<TARGET_FILE:test_block_queue-bin>)
+  add_test(
+    NAME test_capacity_schedule
+    COMMAND $<TARGET_FILE:test_capacity_schedule-bin>)
+  add_test(
+    NAME test_warm_start
+    COMMAND $<TARGET_FILE:test_warm_start-bin>)
+  add_test(
+    NAME test_warm_start_validation
+    COMMAND /bin/bash
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_warm_start_validation_tests.sh
+      $<TARGET_FILE:sim-bin>)
+  add_test(
+    NAME test_max_time
+    COMMAND /bin/bash
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_max_time_tests.sh
+      $<TARGET_FILE:sim-bin>)
+  if(Python3_Interpreter_FOUND)
+    add_test(
+      NAME test_trace_tools
+      COMMAND ${CMAKE_COMMAND} -E env
+        DR_EVT_SIMULATOR=$<TARGET_FILE:sim-bin>
+        ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_trace_tools.py)
+    set_tests_properties(test_trace_tools PROPERTIES
+      LABELS "unit;scripts"
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+  endif()
 
   set_tests_properties(
     test_append_job_api test_custom_scheduler test_progressive_load
     test_queue_input
-    test_batch_vs_streaming test_block_queue
+    test_batch_vs_streaming test_block_queue test_capacity_schedule
+    test_warm_start test_warm_start_validation test_max_time
     PROPERTIES
       LABELS "unit;native"
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

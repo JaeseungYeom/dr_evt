@@ -11,8 +11,7 @@ package dr_evt_proto;
 
 message DR_EVT_Params {
     message Simulation_Params {
-        // The seed for random number generator. Without this,
-        // it will use a value dependent on the current system clock.
+        // Random-number seed (default: deterministic zero).
         uint32 seed = 1;
 
         // The maximum number of jobs to run.
@@ -44,7 +43,7 @@ message DR_EVT_Params {
         // Trace format parameters
         string trace_type = 12;         // "standard" or "pcon" (default: "standard")
         string trace_format = 13;       // "simple" or "lassen" (default: "simple")
-        string timestamp_format = 14;   // "epoch" or "iso" (default: "iso")
+        string timestamp_format = 14;   // retained "epoch"/"iso" compatibility value (default: "epoch")
         string timezone = 15;           // e.g., "UTC", "America/Los_Angeles" (default: "America/Los_Angeles")
 
         // Run time determination parameters
@@ -98,6 +97,14 @@ message DR_EVT_Params {
         // Maximum feasible jobs passed to an experimental external backfill
         // selector in one decision. 0 keeps Sim_Params' default (1).
         uint64 num_max_candidates = 29;
+
+        // Optional CSV with time,total_nodes change points. Values may not
+        // exceed total_nodes; reductions do not preempt running jobs.
+        string capacity_schedule = 30;
+
+        // Global simulation start time. A positive value enables replay-based
+        // warm start; replay jobs already running at the boundary seed resources.
+        double sim_start_time = 31;
     }
 
     message Tracing_Params {

@@ -58,36 +58,36 @@ std::map<job_queue_t, std::string> jobq2str{
     {QueueUnknown, ""}};
 #endif
 
-void set_by(epoch_t &t, const std::string &str) {
-  // Auto-detect format: if string contains only digits (and optional minus
-  // sign), treat as Unix epoch seconds; otherwise parse as ISO timestamp
+TimestampEncoding detect_timestamp_encoding(const std::string &str) {
+  size_t pos = 0;
+  try {
+    std::stod(str, &pos);
+    if (pos == str.size()) {
+      return TimestampEncoding::EPOCH;
+    }
+  } catch (const std::exception &) {
+  }
+  return TimestampEncoding::CALENDAR;
+}
+
+void set_by(epoch_t &t, const std::string &str, TimestampEncoding encoding) {
   if (str.empty()) {
     t = {0, 0.0f};
     return;
   }
 
-  bool is_epoch = true;
-  for (char c : str) {
-    if (!std::isdigit(c) && c != '-' && c != '.') {
-      is_epoch = false;
-      break;
-    }
-  }
-
-  if (is_epoch) {
+  if (encoding == TimestampEncoding::EPOCH) {
     // Parse as Unix epoch seconds
-    try {
-      size_t pos;
-      double seconds = std::stod(str, &pos);
-      time_t sec_int = static_cast<time_t>(seconds);
-      float sec_frac = static_cast<float>(seconds - sec_int);
-      t = {sec_int, sec_frac};
-    } catch (...) {
-      // Fallback to ISO parsing if epoch parsing fails
-      t = convert_time(str);
+    size_t pos = 0;
+    const double seconds = std::stod(str, &pos);
+    if (pos != str.size()) {
+      throw std::invalid_argument{"Failed to parse epoch timestamp: " + str};
     }
+    time_t sec_int = static_cast<time_t>(seconds);
+    float sec_frac = static_cast<float>(seconds - sec_int);
+    t = {sec_int, sec_frac};
   } else {
-    // Parse as ISO/human-readable timestamp
+    // Parse as an ISO/human-readable calendar timestamp.
     // Check if it has timezone offset (±HH:MM or Z)
     bool has_timezone = (str.find_last_of("+-Z") != std::string::npos &&
                          str.find_last_of("+-Z") > 10);
@@ -103,6 +103,10 @@ void set_by(epoch_t &t, const std::string &str) {
       t = convert_time(str);
     }
   }
+}
+
+void set_by(epoch_t &t, const std::string &str) {
+  set_by(t, str, detect_timestamp_encoding(str));
 }
 
 void set_by(unsigned &v, const std::string &str) {

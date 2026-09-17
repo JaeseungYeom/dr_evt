@@ -57,6 +57,8 @@ int load(const string &fname, const Data_Columns &dcols,
     max_cnt = std::numeric_limits<num_jobs_t>::max();
   }
   num_jobs_t cnt = static_cast<num_jobs_t>(0u);
+  TimestampEncoding timestamp_encoding = TimestampEncoding::EPOCH;
+  bool timestamp_encoding_detected = false;
 
   while (std::getline(ifs, line)) { // Read a line
     if (cnt++ >= max_cnt) {
@@ -121,15 +123,20 @@ int load(const string &fname, const Data_Columns &dcols,
       rec_str.insert(rec_str.begin() + queue_pos, "pbatch");
     }
 
+    if (!timestamp_encoding_detected) {
+      timestamp_encoding = detect_timestamp_encoding(rec_str.at(1));
+      timestamp_encoding_detected = true;
+    }
+
     try {
       // Constructor may raise an exception based on filtering.
       // In that case, it can be handled as below to ignore this
       // particular sample that is not compliant.
 #if SHOW_ORG_NO
       // line number starts from 1
-      data.push_back(Job_Record(cnt, rec_str));
+      data.push_back(Job_Record(cnt, rec_str, timestamp_encoding));
 #else
-      data.push_back(Job_Record(rec_str));
+      data.push_back(Job_Record(rec_str, timestamp_encoding));
 #endif
     } catch (std::domain_error &e) {
       // Ignore this case
@@ -174,6 +181,8 @@ int load(const string &fname, const Data_Columns &dcols,
   if (max_cnt == static_cast<num_jobs_t>(0u)) {
     max_cnt = std::numeric_limits<num_jobs_t>::max();
   }
+  TimestampEncoding timestamp_encoding = TimestampEncoding::EPOCH;
+  bool timestamp_encoding_detected = false;
 
   if (dcols.has_q_id_column()) {
     const auto q_idx = dcols.get_queue_idx();
@@ -202,8 +211,13 @@ int load(const string &fname, const Data_Columns &dcols,
           }
           fields.emplace_back(std::move(value));
         }
+        if (!timestamp_encoding_detected) {
+          timestamp_encoding = detect_timestamp_encoding(fields.at(1));
+          timestamp_encoding_detected = true;
+        }
         data.emplace_back(fields, queue,
-                          dcols.get_trace_mode() == TraceMode::REPLAY);
+                          dcols.get_trace_mode() == TraceMode::REPLAY,
+                          timestamp_encoding);
 #if SHOW_ORG_NO
         data.back().set_org_line_no(cnt);
 #endif
@@ -239,8 +253,13 @@ int load(const string &fname, const Data_Columns &dcols,
         const auto &pos = val_pos[col_idx];
         fields.emplace_back(trim(line.substr(pos.first, pos.second)));
       }
+      if (!timestamp_encoding_detected) {
+        timestamp_encoding = detect_timestamp_encoding(fields.at(1));
+        timestamp_encoding_detected = true;
+      }
       data.emplace_back(fields, Queue1,
-                        dcols.get_trace_mode() == TraceMode::REPLAY);
+                        dcols.get_trace_mode() == TraceMode::REPLAY,
+                        timestamp_encoding);
 #if SHOW_ORG_NO
       data.back().set_org_line_no(cnt);
 #endif

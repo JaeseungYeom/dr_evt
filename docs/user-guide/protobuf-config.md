@@ -15,7 +15,7 @@ Configuration field names match the long command-line names with the leading
 | Group | Fields |
 |---|---|
 | Input and output | `infile`, `infile_list`, `outfile`, `resource_trace` |
-| Limits | `max_jobs`, `max_time`, `total_nodes` |
+| Limits/system | `max_jobs`, `max_time`, `sim_start_time`, `total_nodes`, `capacity_schedule` |
 | Scheduling | `backfill_policy`, `priority_policy`, `num_max_candidates`, `queue_impl`, `block_size` |
 | Queue storage | `wait_queue_capacity`, `wait_queue_overflow` |
 | Job storage | `job_store_capacity`, `job_store_overflow`, `job_flush_interval`, `memory_pressure_fraction` |
@@ -29,6 +29,10 @@ interactions. Input schemas are documented in
 [Input Trace Files](trace-formats.md), and generated files in
 [Output Trace Files](output-traces.md).
 
+`max_time`, when positive, is an inclusive absolute simulation-time boundary:
+events at that timestamp are processed and later events are left pending. It
+must be greater than or equal to `sim_start_time` when warm start is enabled.
+
 ## File format
 
 The file contains fields from the `Simulation_Params` message at the top
@@ -39,6 +43,7 @@ infile: "trace.csv"
 outfile: "results.csv"
 resource_trace: "resources.csv"
 total_nodes: 1000
+sim_start_time: 1713139200
 backfill_policy: "easy"
 priority_policy: "fcfs"
 trace_format: "simple"

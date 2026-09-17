@@ -17,6 +17,7 @@
 
 #include <array>
 #include <cassert>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -158,6 +159,40 @@ void parse_and_check(const std::string &format, bool replay,
   }
 }
 
+std::vector<Job_Record> load_simple(const std::string &name,
+                                    const std::string &contents) {
+  const std::string path = "/tmp/test_runtime_validation_" + name + ".csv";
+  write_file(path, contents);
+  Data_Columns columns("simple", "epoch", "UTC");
+  assert(columns.check_header(path));
+  std::vector<Job_Record> records;
+  assert(load(path, columns, records) == EXIT_SUCCESS);
+  return records;
+}
+
+void test_input_runtime_validation() {
+  const auto replay =
+      load_simple("replay",
+                  "job_submit_time,begin_time,end_time,num_nodes,time_limit,"
+                  "actual_run_time\n"
+                  "0,0.1,0.3,1,1,0.2\n" // equal within timestamp precision
+                  "0,1,3,1,2,2.1\n"     // greater than observed interval
+                  "0,1,3,1,2,1.9\n");   // less than observed interval
+  assert(replay.size() == 1u);
+  assert(std::fabs(replay.front().get_actual_run_time() - 0.2) < 1.0e-12);
+
+  const auto simulation =
+      load_simple("simulation",
+                  "job_submit_time,num_nodes,time_limit,actual_run_time\n"
+                  "0,1,10,9\n"  // below the requested limit
+                  "1,1,10,10\n" // equal to the requested limit
+                  "2,1,10,11\n" // exceeds the requested limit
+                  "3,1,10,nan\n");
+  assert(simulation.size() == 2u);
+  assert(simulation[0].get_actual_run_time() == 9.0);
+  assert(simulation[1].get_actual_run_time() == 10.0);
+}
+
 } // namespace
 
 int main() {
@@ -173,6 +208,7 @@ int main() {
       parse_and_check(format, replay, false);
     }
   }
+  test_input_runtime_validation();
   std::cout << "queue input parser tests passed\n";
   return EXIT_SUCCESS;
 }

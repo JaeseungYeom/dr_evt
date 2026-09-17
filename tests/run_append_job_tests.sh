@@ -8,10 +8,10 @@
 # sitting in a preloaded m_data. See
 # docs/dev/OUTPUT_TRACE_BUFFERS.md for the design.
 #
-# The in-process binary contains 19 focused append, batch, capacity,
+# The in-process binary contains 20 focused append, batch, capacity,
 # advancement, accounting, and memory-pressure checks. When gRPC is built,
-# the runner also executes three wire-level checks covering AppendJobRequest,
-# AppendJobsRequest, and GetBackfillWindowRequest against a real server.
+# the runner also executes wire-level append, monitoring, and warm-start batch
+# checks against a real server.
 
 set -e
 
@@ -46,7 +46,7 @@ echo ""
 PASS=0
 FAIL=0
 
-# --- Test: C++ API (test_append_job_api.cpp's 19 focused checks) ---
+# --- Test: C++ API (test_append_job_api.cpp's 20 focused checks) ---
 echo "Testing: append_job_api (C++ level)"
 
 # Test binaries are installed under bin/tests/ (see CMakeLists.txt's

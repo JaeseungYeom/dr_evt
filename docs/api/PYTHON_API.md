@@ -51,6 +51,8 @@ or `None`.
 |---|---|
 | `infile` | `str` |
 | `total_nodes` | `int` |
+| `capacity_schedule` | `str` |
+| `sim_start_time` | `float` |
 | `trace_format` | `str` |
 | `timestamp_format` | `str` |
 | `run_time_mode` | `RunTimeMode` |
@@ -58,6 +60,10 @@ or `None`.
 | `num_max_candidates` | `int` |
 | `priority_policy` | `PriorityPolicy` |
 | `verbose` | `bool` |
+
+`sim_start_time` is the global simulation boundary; it is distinct from each
+job's historical `begin_time`. A positive value enables replay-based warm start
+for replay input, while zero preserves ordinary full replay.
 
 Other C++/CLI configuration fields are not exposed by the binding. Use the
 `simulator` executable when one of those settings is required; its options
@@ -91,7 +97,7 @@ Their scheduling semantics are documented in
 | `run_until_exclusive(target_time)` | Process events strictly before the target. |
 | `get_current_time()` | Return current simulation time. |
 | `get_nodes_in_use()` | Return allocated nodes. |
-| `get_current_utilization()` | Return instantaneous `nodes_in_use / total_nodes`. |
+| `get_current_utilization()` | Return instantaneous usage of effective scheduled capacity. |
 | `get_resource_area()` | Return Custom-FCFS allocated-node area in node-seconds; unavailable for standard schedulers. |
 | `get_available_nodes()` | Return free nodes. |
 | `get_active_job_count()` | Return waiting jobs. |
@@ -126,12 +132,13 @@ contains `time` and `nodes_released`.
 
 For simulations constructed with Custom-FCFS callbacks, `resource_area` is
 accumulated as `nodes_in_use * interval` between settled scheduling times.
-`utilization` divides that area by `total_nodes` and the elapsed accounting
-horizon (the snapshot time while work is running, or the last resource event
-after it becomes idle). Unlike `get_current_utilization()`, intervals that are
-far apart therefore carry proportionally more weight. Standard schedulers
-retain the post-hoc scheduled-workload calculation and do not perform live
-area bookkeeping.
+`utilization` divides that area by integrated effective capacity over the
+accounting horizon (the snapshot time while work is running, or the last
+resource event after it becomes idle). During non-preemptive draining,
+effective capacity is at least the running allocation. Unlike
+`get_current_utilization()`, intervals that are far apart therefore carry
+proportionally more weight. Standard schedulers retain the post-hoc
+scheduled-workload calculation and do not perform live area bookkeeping.
 
 Metric definitions are in
 [Output Trace Files](../user-guide/output-traces.md#cli-summary).

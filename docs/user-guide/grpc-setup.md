@@ -59,10 +59,10 @@ DR_EVT simulation server listening on 0.0.0.0:50051
 
 and otherwise runs silently, one `Simulation` instance per connected
 session, until stopped (e.g. `Ctrl-C`, or however your process
-supervisor manages it). A server starts with no job samples and does not load
-the input file's data rows. The current `InitRequest` does require a
-server-readable CSV path so the simulator can validate its header before jobs
-are streamed.
+supervisor manages it). A streaming session starts with no job samples and
+does not load the input file's data rows until requested. `InitRequest`
+requires a server-readable CSV path so the simulator can validate its header;
+`RunRequest` loads and executes that trace for batch or replay operation.
 
 Bind `0.0.0.0` (shown above) so the server is reachable from other
 machines; bind `127.0.0.1` instead if you only need same-machine access.
@@ -93,6 +93,13 @@ same `.proto` service. Its
 [C++ source](https://github.com/LLNL/dr_evt/blob/main/src/proto/dr_evt_client.cpp)
 is a complete usage example. See the full guide for what each RPC
 corresponds to in the in-process [streaming API](../api/STREAMING_API.md).
+
+For batch replay or warm start, set `InitRequest.sim_start_time` (zero for an
+ordinary full run), point `infile` at the server-readable trace, and send
+`RunRequest`. This is the global simulation start time, not a job's
+`begin_time`. A positive simulation start time requires replay columns
+including `begin_time` and `end_time`; negative and non-finite values are
+rejected.
 
 ## Session identity and completion
 

@@ -14,6 +14,7 @@
 #error "no config"
 #endif
 
+#include <algorithm>
 #include <cmath>
 #include <deque>
 #include <iostream>
@@ -26,6 +27,7 @@
 
 #include "common.hpp"
 #include "params/sim_params.hpp"
+#include "sim/capacity_schedule.hpp"
 #include "sim/scheduler_base.hpp"
 #include "sim/scheduler_fcfs_custom.hpp"
 #include "trace/dr_event.hpp"
@@ -65,9 +67,28 @@ protected:
   /// Current simulation time
   sim_time_t m_current_time;
 
+  /// Fixed physical limit used only to reject jobs that can never fit.
+  num_nodes_t m_job_rejection_capacity;
+
+  /// Ordered external machine-capacity changes and the active cursor.
+  std::vector<Capacity_Change> m_capacity_changes;
+  size_t m_next_capacity_change;
+  num_nodes_t m_current_capacity;
+  /// Integral of effective capacity over the current accounting horizon.
+  /// Without a schedule, effective capacity remains m_params.m_total_nodes.
+  tdiff_t m_capacity_area;
+  /// Last timestamp incorporated into m_capacity_area.
+  sim_time_t m_capacity_area_time;
+
   /// Counters
   num_jobs_t m_jobs_completed;
   num_jobs_t m_jobs_submitted; ///< Jobs submitted during the current run.
+  /// Historical jobs still running during the temporary warm-start stage.
+  size_t m_pre_start_jobs;
+  /// Post-boundary node-seconds contributed by suppressed historical jobs.
+  tdiff_t m_warm_resource_area;
+  /// Latest departure among historical jobs active after the boundary.
+  sim_time_t m_warm_resource_end;
 
   /// Serializable random-number engine used for duration sampling.
   RNGen<> m_rng;
@@ -106,9 +127,10 @@ public:
   /**
    * @brief Run a complete batch simulation for the configured trace.
    * @details
-   * Loads and prepares the input trace when necessary, submits every job,
-   * and drains the event queue. For externally fed work, use append_job()
-   * or append_jobs() followed by advance_to() instead.
+   * Loads and prepares the input trace when necessary and submits its jobs.
+   * With max_time configured, processes events through that inclusive
+   * boundary; otherwise drains the event queue. For externally fed work, use
+   * append_job() or append_jobs() followed by advance_to() instead.
    */
   void run();
 
@@ -237,8 +259,10 @@ public:
    * - All jobs have already been submitted, OR
    * - External tool knows the next job arrival is at >= target_time
    *
-   * POSTCONDITION: m_current_time == target_time, and all scheduling
-   * decisions have been made up to that time.
+   * POSTCONDITION: for a finite target, m_current_time == target_time and all
+   * scheduling decisions have been made up to that time. The maximum
+   * representable value is treated as a drain sentinel; after draining,
+   * m_current_time is the last real event time.
    *
    * Jobs selected by the scheduler are recorded through Trace::insert_job().
    * @see submit_job()
@@ -254,13 +278,18 @@ public:
 
   /**
    * @brief Return instantaneous node utilization.
-   * @return nodes currently used divided by total configured nodes, in [0,1].
+   * @return Nodes currently used divided by effective current capacity.
+   * @details Effective capacity is the scheduled capacity, raised to current
+   * occupancy while a non-preemptive reduction is still draining. The result
+   * therefore remains in [0,1], including when scheduled capacity is zero.
    */
   double get_current_utilization() const {
-    return m_params.m_total_nodes == 0
+    const auto used = get_nodes_in_use();
+    const auto effective_capacity = std::max(m_current_capacity, used);
+    return effective_capacity == 0
                ? 0.0
-               : static_cast<double>(get_nodes_in_use()) /
-                     static_cast<double>(m_params.m_total_nodes);
+               : static_cast<double>(used) /
+                     static_cast<double>(effective_capacity);
   }
 
   /**
@@ -298,8 +327,12 @@ public:
    * @return Unallocated-node count as num_nodes_t.
    */
   num_nodes_t get_available_nodes() const {
-    return m_params.m_total_nodes - get_nodes_in_use();
+    const auto used = get_nodes_in_use();
+    return used < m_current_capacity ? m_current_capacity - used : 0;
   }
+
+  /** @brief Capacity currently available to this simulated workload. */
+  num_nodes_t get_current_capacity() const { return m_current_capacity; }
 
   /**
    * @brief Get the count of jobs that have arrived but remain unscheduled.
@@ -437,8 +470,9 @@ public:
     tdiff_t resource_area;
     /**
      * @brief Resource-area utilization.
-     * @details Uses the live accounting horizon for Custom FCFS and makespan
-     * for standard schedulers.
+     * @details Divides allocated-node area by effective-capacity area. Uses
+     * the live accounting horizon for Custom FCFS and makespan for standard
+     * schedulers.
      */
     double utilization;
     tdiff_t avg_wait_time;       ///< Mean completed-job wait duration.
@@ -504,10 +538,18 @@ public:
   num_jobs_t initialize_trace(num_jobs_t max_jobs = 0);
 
 protected:
-  /** Advance using a compile-time-selected Custom-FCFS accounting path. */
-  template <bool AccountResources>
+  /**
+   * Advance using compile-time-selected accounting and warm-start paths.
+   * WarmStage is instantiated only while historical jobs remain; the normal
+   * stage contains no pre-start-time condition.
+   */
+  template <bool AccountResources, bool WarmStage = false>
   void advance_to_impl(sim_time_t target_time,
                        CustomFCFSScheduler *custom_scheduler);
+
+  /** Seed replay jobs active before m_params.m_sim_start_time, then reschedule
+   * post-boundary work through the ordinary scheduler. */
+  void run_warm_start();
 
   /**
    * @brief Process an arrival event for an existing trace job.
@@ -585,6 +627,21 @@ protected:
    * observations: if n earlier jobs are waiting, they observe n, n+1, ... .
    */
   void record_queue_arrivals(sim_time_t current_time);
+
+  /** Reset the capacity cursor to the configured maximum. */
+  void reset_capacity_schedule();
+
+  /** Reset time-integrated effective-capacity accounting at start_time. */
+  void reset_capacity_accounting(sim_time_t start_time);
+
+  /** Accumulate effective capacity through current_time. */
+  void advance_capacity_accounting_to(sim_time_t current_time);
+
+  /** Return effective-capacity area through a finite snapshot time. */
+  tdiff_t capacity_area_through(sim_time_t through_time) const;
+
+  /** Apply every capacity change effective at the supplied timestamp. */
+  bool apply_capacity_changes(sim_time_t current_time);
 
   /**
    * @brief Sample a job duration from the configured distribution.

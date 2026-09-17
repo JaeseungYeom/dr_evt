@@ -22,12 +22,35 @@ plus golden-output comparisons for a targeted simultaneous-backfill case and a
 times match the default circular-buffer FCFS scheduler when the callback
 selects candidates in FCFS order.
 
-The append-job API test also covers Custom-FCFS time-accounted resource area
-and prediction-horizon estimation. Its accounting case combines two
-allocations and two releases at one timestamp. Its horizon scenario uses four
-running and four waiting jobs to exercise successive running-job completion
-boundaries, the post-replay full-capacity tail, the ``U=0`` fallback, future-
-arrival exclusion, and invalid utilization values.
+The append-job API test also covers Custom-FCFS time-accounted resource area,
+capacity-aware instantaneous and aggregate utilization, and
+prediction-horizon estimation. Its accounting cases include two allocations
+and two releases at one timestamp and a scheduled-capacity reduction below
+live occupancy. Its horizon scenario uses four running and four waiting jobs
+to exercise successive running-job completion boundaries, the post-replay
+full-capacity tail, the ``U=0`` fallback, future-arrival exclusion, and invalid
+utilization values. The warm-start suite separately checks integrated
+effective capacity across capacity changes at and after the start boundary.
+
+The replay-based warm-start test exercises completed history, live historical jobs,
+inherited waiters, boundary and future arrivals, empty tails, fractional and
+simultaneous timestamps, every supported priority/backfill/queue combination,
+and randomized differential workloads. Runtime-policy cases verify that
+``actual``, ``limit``, and ``distribution`` affect only ordinarily scheduled
+jobs while warmup jobs retain their recorded end times. Capacity coverage
+includes overcommit after a reduction and a capacity change exactly at the
+final warmup departure. A separate case protects the documented
+``sim_start_time == 0`` behavior: zero disables replay-based warm start and
+preserves a traditional full replay. Inclusive ``max_time`` boundaries are checked in
+ordinary simulation, replay, and warm-start execution. CLI coverage accepts an ISO simulation start time,
+rejects mixed timestamp encodings within one input file, and
+rejects negative or non-finite values, simulation-format input, and progressive
+file lists.
+
+The queue-input parser test verifies both queue schemas and runtime validity:
+a supplied replay runtime must agree with ``end_time - begin_time`` within the
+timestamp tolerance, while a supplied simulation runtime must be finite and
+no greater than ``time_limit``.
 
 ## Test inventory and commands
 
@@ -38,6 +61,13 @@ and [runner commands](https://github.com/LLNL/dr_evt/blob/main/tests/README.md#b
 CTest discovers tests enabled by the current build configuration. Optional
 features such as Protobuf, gRPC, MPI, Python bindings, and Catch2 add their
 corresponding tests only when available.
+
+Run only the replay-based warm-start behavior and CLI validation registrations with:
+
+```bash
+ctest --test-dir build --output-on-failure \
+  -R '^(test_warm_start|test_warm_start_validation)$'
+```
 
 ## Expected outputs
 

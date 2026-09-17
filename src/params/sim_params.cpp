@@ -10,8 +10,11 @@
  */
 
 #include "params/sim_params.hpp"
+#include "trace/parse_utils.hpp"
 #include "utils/file.hpp"
+#include <cmath>
 #include <cstdlib>
+#include <ctime>
 #include <fstream>
 #include <getopt.h>
 #include <iostream>
@@ -27,6 +30,8 @@ namespace dr_evt {
 static constexpr int OPT_TRACE_TYPE = 1000;
 static constexpr int OPT_JOB_FLUSH_INTERVAL = 1001;
 static constexpr int OPT_NUM_MAX_CANDIDATES = 1002;
+static constexpr int OPT_CAPACITY_SCHEDULE = 1003;
+static constexpr int OPT_SIM_START_TIME = 1004;
 
 /** @brief getopt short-option specification for the simulator CLI. */
 #define OPTIONS "hi:j:n:o:s:t:b:p:q:Q:A:G:r:f:T:z:D:S:V:vc:R:MK:W:H:L:m:"
@@ -37,6 +42,8 @@ static const struct option sim_longopts[] = {
     {"infile_list", required_argument, 0, 'L'},
     {"max_jobs", required_argument, 0, 'j'},
     {"total_nodes", required_argument, 0, 'n'},
+    {"capacity_schedule", required_argument, 0, OPT_CAPACITY_SCHEDULE},
+    {"sim_start_time", required_argument, 0, OPT_SIM_START_TIME},
     {"outfile", required_argument, 0, 'o'},
     {"seed", required_argument, 0, 's'},
     {"max_time", required_argument, 0, 't'},
@@ -69,9 +76,8 @@ static const struct option sim_longopts[] = {
 
 Sim_Params::Sim_Params()
     : m_seed(0u), m_max_jobs(10u), m_max_time(dr_evt::max_sim_time),
-      m_is_jobs_set(false), m_is_time_set(false),
-      m_backfill_policy(BackfillPolicy::EASY),
-      m_num_max_candidates(1),
+      m_sim_start_time(0.0), m_is_jobs_set(false), m_is_time_set(false),
+      m_backfill_policy(BackfillPolicy::EASY), m_num_max_candidates(1),
       m_priority_policy(PriorityPolicy::FCFS),
       m_queue_impl(QueueImplementation::CIRCULAR), m_block_size(128),
       m_wait_queue_capacity(0), // 0 = size of job trace (never overflows)
@@ -81,8 +87,8 @@ Sim_Params::Sim_Params()
       m_job_flush_interval(0), m_memory_pressure_fraction(0.0),
       m_resource_history_capacity(0), m_total_nodes(dr_evt::total_nodes),
       m_trace_type(TraceType::STANDARD),
-      m_trace_format("simple"),  // Default to simple format
-      m_timestamp_format("iso"), // Default to ISO/human-readable timestamps
+      m_trace_format("simple"),    // Default to simple format
+      m_timestamp_format("epoch"), // Retained timestamp compatibility value
       m_timezone("America/Los_Angeles"),    // Default timezone
       m_run_time_mode(RunTimeMode::ACTUAL), // Default: jobs run actual_run_time
                                             // from trace (most realistic)
@@ -95,6 +101,57 @@ Sim_Params::Sim_Params()
 
 void Sim_Params::getopt(int &argc, char **&argv) {
   int c;
+  std::string sim_start_time_arg;
+  auto apply_sim_start_time = [&]() {
+    if (sim_start_time_arg.empty()) {
+      return;
+    }
+    const char *old_tz_ptr = std::getenv("TZ");
+    const bool had_old_tz = old_tz_ptr != nullptr;
+    const std::string old_tz = had_old_tz ? old_tz_ptr : "";
+    try {
+      setenv("TZ", m_timezone.c_str(), 1);
+      tzset();
+      size_t parsed_chars = 0;
+      bool parsed_numeric = false;
+      try {
+        const double numeric = std::stod(sim_start_time_arg, &parsed_chars);
+        if (parsed_chars == sim_start_time_arg.size()) {
+          m_sim_start_time = numeric;
+          parsed_numeric = true;
+        }
+      } catch (const std::exception &) {
+        // Fall through to ISO timestamp parsing.
+      }
+      if (!parsed_numeric) {
+        epoch_t parsed;
+        set_by(parsed, sim_start_time_arg);
+        m_sim_start_time = convert_epoch<sim_time_t>(parsed);
+      }
+    } catch (const std::exception &e) {
+      if (had_old_tz) {
+        setenv("TZ", old_tz.c_str(), 1);
+      } else {
+        unsetenv("TZ");
+      }
+      tzset();
+      std::cerr << "Error: invalid --sim_start_time: " << e.what()
+                << std::endl;
+      print_usage(argv[0], 1);
+    }
+    if (had_old_tz) {
+      setenv("TZ", old_tz.c_str(), 1);
+    } else {
+      unsetenv("TZ");
+    }
+    tzset();
+    if (!std::isfinite(m_sim_start_time) || m_sim_start_time < 0.0) {
+      std::cerr << "Error: --sim_start_time must be finite and nonnegative"
+                << std::endl;
+      print_usage(argv[0], 1);
+    }
+    sim_start_time_arg.clear();
+  };
   m_is_jobs_set = false;
   m_is_time_set = false;
 
@@ -115,6 +172,13 @@ void Sim_Params::getopt(int &argc, char **&argv) {
       break;
     case 'n': /* --total_nodes */
       m_total_nodes = static_cast<num_nodes_t>(atoi(optarg));
+      break;
+    case OPT_CAPACITY_SCHEDULE: /* --capacity_schedule */
+      m_capacity_schedule = std::string(optarg);
+      break;
+    case OPT_SIM_START_TIME: /* --sim_start_time */
+      // Parse after all options so --timezone is order-independent.
+      sim_start_time_arg = optarg;
       break;
     case 'o': /* --outfile */
       m_outfile = std::string(optarg);
@@ -295,7 +359,7 @@ void Sim_Params::getopt(int &argc, char **&argv) {
     {
       std::string format(optarg);
       if (format.empty()) {
-        m_timestamp_format = "iso";
+        m_timestamp_format = "epoch";
       } else if (format == "epoch" || format == "iso") {
         m_timestamp_format = format;
       } else {
@@ -354,6 +418,9 @@ void Sim_Params::getopt(int &argc, char **&argv) {
     case 'c': /* --config */
     {
 #if defined(DR_EVT_HAS_PROTOBUF)
+      // Preserve left-to-right precedence: a following config replaces any
+      // earlier command-line simulation start time.
+      apply_sim_start_time();
       std::string config_file(optarg);
       try {
         read_proto_params(config_file, *this, m_verbose);
@@ -377,6 +444,8 @@ void Sim_Params::getopt(int &argc, char **&argv) {
     }
   }
 
+  apply_sim_start_time();
+
   // --infile_list mode has no single positional trace file to require -
   // the file it names lists several instead. Otherwise, unchanged:
   // exactly one positional argument, which always wins over -i/--infile
@@ -397,6 +466,12 @@ void Sim_Params::getopt(int &argc, char **&argv) {
     }
   }
   set_outfile(m_outfile);
+
+  if (m_is_time_set && (!std::isfinite(m_max_time) || m_max_time < 0.0)) {
+    std::cerr << "Error: --max_time must be finite and nonnegative"
+              << std::endl;
+    print_usage(argv[0], 1);
+  }
 
   if (!m_is_jobs_set && m_is_time_set) {
     m_max_jobs = std::numeric_limits<decltype(m_max_jobs)>::max();
@@ -442,15 +517,31 @@ void Sim_Params::print_usage(const std::string exec, int code) {
          "    -n, --total_nodes\n"
          "        Specify total number of nodes in the system (default: 795).\n"
          "\n"
+         "    --capacity_schedule FILENAME\n"
+         "        CSV change points with columns time,total_nodes. Capacity\n"
+         "        defaults to --total_nodes before the first row. Reductions\n"
+         "        are non-preemptive: running jobs finish, and new starts\n"
+         "        wait until they fit. Jobs are rejected only when they\n"
+         "        exceed --total_nodes, not the scheduled capacity. A zero\n"
+         "        value pauses new starts.\n"
+         "\n"
+         "    --sim_start_time TIME\n"
+         "        Set the global simulation start time as nonnegative epoch\n"
+         "        seconds or an ISO timestamp. With replay-format\n"
+         "        input, jobs that began before TIME seed live resource state\n"
+         "        without entering output or job statistics. Their remaining\n"
+         "        departures still release resources normally.\n"
+         "\n"
          "    -o, --outfile\n"
          "        Specify the output file name for simulation.\n"
          "\n"
          "    -s, --seed\n"
          "        Specify the seed for random number generator. Without this,\n"
-         "        it will use a value dependent on the current system clock.\n"
+         "        the deterministic default seed is 0.\n"
          "\n"
          "    -t, --max_time\n"
-         "        Specify the upper limit of simulation time to run.\n"
+         "        Stop batch simulation after processing all events at this\n"
+         "        nonnegative simulation timestamp.\n"
          "\n"
          "    -b, --backfill_policy {easy|conservative|none}\n"
          "        Backfilling policy (default: easy).\n"
@@ -571,15 +662,15 @@ void Sim_Params::print_usage(const std::string exec, int code) {
          "        lassen: 33-column LLNL Lassen format\n"
          "\n"
          "    -T, --timestamp_format {epoch|iso}\n"
-         "        Timestamp format in trace file (default: iso).\n"
-         "        epoch: Unix epoch seconds (integers)\n"
-         "        iso: ISO 8601 or human-readable timestamps\n"
+         "        Compatibility setting (default: epoch). Input timestamps\n"
+         "        are auto-detected as epoch seconds or calendar timestamps;\n"
+         "        simulator output is numeric in either setting.\n"
          "\n"
          "    -z, --timezone TIMEZONE\n"
          "        Timezone for timestamp parsing (default: "
          "America/Los_Angeles).\n"
          "        Examples: UTC, America/New_York, America/Los_Angeles\n"
-         "        Only used when timestamp_format=iso\n"
+         "        Used for calendar timestamps without an embedded offset.\n"
          "\n"
          "    -r, --run_time_mode {actual|distribution|limit}\n"
          "        How to determine the job's actual run time in simulation "
@@ -653,9 +744,11 @@ void Sim_Params::print() const {
   msg += " - seed: " + to_string(m_seed) + "\n";
   msg += " - max_jobs: " + to_string(m_max_jobs) + "\n";
   msg += " - max_time: " + to_string(m_max_time) + "\n";
+  msg += " - sim_start_time: " + to_string(m_sim_start_time) + "\n";
   msg += " - infile: " + m_infile + "\n";
   msg += " - outfile: " + m_outfile + "\n";
   msg += " - total_nodes: " + to_string(m_total_nodes) + "\n";
+  msg += " - capacity_schedule: " + m_capacity_schedule + "\n";
   msg += " - num_max_candidates: " + to_string(m_num_max_candidates) + "\n";
   msg += " - job_flush_interval: " + to_string(m_job_flush_interval) + "\n";
   msg += " - is_jobs_set: " + string{m_is_jobs_set ? "true" : "false"} + "\n";

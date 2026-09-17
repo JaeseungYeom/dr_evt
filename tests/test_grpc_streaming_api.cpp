@@ -19,8 +19,10 @@
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <grpcpp/grpcpp.h>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <string>
 
@@ -354,6 +356,107 @@ bool test_backfill_window(const std::string &server_address,
   return true;
 }
 
+// Test 4: execute a replay-format warm start through the actual service. This
+// uses RunRequest because InitializeTrace only loads records for streaming
+// callers; it intentionally does not execute batch initialization semantics.
+bool test_warm_start(const std::string &server_address,
+                     const std::string &trace_file) {
+  std::cout << "=== Test: warm-start RunRequest ===\n";
+
+  // The service validates values independently of the CLI/config parsers.
+  for (const double invalid_value :
+       {-1.0, std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::infinity()}) {
+    SimulationClient invalid(grpc::CreateChannel(
+        server_address, grpc::InsecureChannelCredentials()));
+    ClientMessage request;
+    auto *init = request.mutable_init();
+    init->set_total_nodes(10);
+    init->set_trace_format("simple");
+    init->set_timestamp_format("epoch");
+    init->set_run_time_mode("actual");
+    init->set_infile(trace_file);
+    init->set_session_name("invalid-warm-start");
+    init->set_sim_start_time(invalid_value);
+    bool rejected = false;
+    try {
+      invalid.call(request);
+    } catch (const std::runtime_error &e) {
+      rejected =
+          std::string(e.what()).find("sim_start_time") != std::string::npos;
+    }
+    if (!rejected) {
+      std::cerr << "  FAIL: invalid gRPC sim_start_time was not rejected\n";
+      invalid.finish();
+      return false;
+    }
+    invalid.finish();
+  }
+
+  SimulationClient client(
+      grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials()));
+  try {
+    ClientMessage init_request;
+    auto *init = init_request.mutable_init();
+    init->set_total_nodes(10);
+    init->set_trace_format("simple");
+    init->set_timestamp_format("epoch");
+    init->set_backfill_policy("easy");
+    init->set_priority_policy("fcfs");
+    init->set_run_time_mode("actual");
+    init->set_infile(trace_file);
+    init->set_session_name("warm-start-test");
+    init->set_sim_start_time(10.0);
+    client.call(init_request);
+
+    ClientMessage run_request;
+    run_request.mutable_run();
+    client.call(run_request);
+
+    ClientMessage stats_request;
+    stats_request.mutable_get_statistics();
+    const auto stats_response = client.call(stats_request);
+    const auto &stats = stats_response.get_statistics();
+    const bool correct =
+        stats.jobs_submitted() == 2 && stats.jobs_completed() == 2 &&
+        stats.jobs_running() == 0 && stats.jobs_waiting() == 0 &&
+        stats.total_nodes() == 10 && stats.nodes_in_use() == 0 &&
+        stats.nodes_available() == 10 &&
+        std::fabs(stats.resource_area() - 51.0) < 1e-12 &&
+        std::fabs(stats.utilization() - 0.85) < 1e-12 &&
+        std::fabs(stats.avg_wait_time() - 1.5) < 1e-12 &&
+        std::fabs(stats.avg_turnaround_time() - 4.5) < 1e-12 &&
+        std::fabs(stats.makespan() - 16.0) < 1e-12;
+    if (!correct) {
+      std::cerr << "  FAIL: warm-start statistics did not match native run\n";
+      client.finish();
+      return false;
+    }
+
+    ClientMessage finish_request;
+    finish_request.mutable_finish_simulation();
+    const auto finish = client.call(finish_request).finish_simulation();
+    if (finish.statistics().jobs_submitted() != 2 ||
+        finish.statistics().jobs_completed() != 2) {
+      std::cerr << "  FAIL: warm-start finish statistics changed\n";
+      client.finish();
+      return false;
+    }
+  } catch (const std::exception &e) {
+    std::cerr << "  FAIL: " << e.what() << "\n";
+    client.finish();
+    return false;
+  }
+
+  const grpc::Status status = client.finish();
+  if (!status.ok()) {
+    std::cerr << "  FAIL: RPC failed: " << status.error_message() << "\n";
+    return false;
+  }
+  std::cout << "  PASSED\n";
+  return true;
+}
+
 int main(int argc, char **argv) {
   if (argc < 3) {
     std::cerr << "Usage: " << argv[0]
@@ -361,16 +464,20 @@ int main(int argc, char **argv) {
               << "  <empty_trace_file> must have a valid header and zero data "
                  "rows -\n"
               << "  this test's whole point is appending jobs the server never "
-                 "loaded.\n";
+                 "loaded. warm_start_grpc.csv must be in the same directory.\n";
     return 1;
   }
   std::string server_address = argv[1];
   std::string trace_file = argv[2];
+  const std::string warm_trace =
+      (std::filesystem::path(trace_file).parent_path() / "warm_start_grpc.csv")
+          .string();
 
   bool ok = true;
   ok &= test_single_append(server_address, trace_file);
   ok &= test_batch_append(server_address, trace_file);
   ok &= test_backfill_window(server_address, trace_file);
+  ok &= test_warm_start(server_address, warm_trace);
 
   if (!ok) {
     std::cerr << "SOME TESTS FAILED\n";

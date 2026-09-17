@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <string>
 #include <vector>
@@ -201,6 +202,16 @@ protected:
   std::ofstream m_resource_trace_ofs;
   /// Cluster size used to derive free nodes in resource-trace output.
   num_nodes_t m_resource_trace_total_nodes;
+  /// Capacity effective at the current resource-history timestamp.
+  num_nodes_t m_resource_trace_current_capacity;
+  /// Whether the initial resource capacity has been installed.
+  bool m_resource_capacity_initialized;
+  /// Timestamp used for the first row when resource recording begins.
+  sim_time_t m_resource_recording_start;
+  /// Policy-aware snapshot retained when warm output is opened after the run.
+  resource_sample_t m_resource_recording_baseline;
+  /// Whether m_resource_recording_baseline should replace the default row.
+  bool m_has_resource_recording_baseline;
   /// Whether resource-trace timestamps are rendered in milliseconds.
   bool m_resource_trace_msec;
 
@@ -230,7 +241,8 @@ public:
   /** @brief Construct a trace with explicit input and timestamp formats.
    * @param[in] fname Input path.
    * @param[in] format Trace format name.
-   * @param[in] timestamp_format Timestamp encoding name.
+   * @param[in] timestamp_format Retained epoch/iso compatibility setting;
+   * input timestamp encoding is auto-detected.
    * @param[in] timezone Default timezone for timestamps without offsets. */
   BasicTrace(const std::string &fname, const std::string &format,
              const std::string &timestamp_format, const std::string &timezone);
@@ -353,9 +365,13 @@ public:
    *         time,free_nodes,allocated_nodes resource-occupancy trace; no
    *         such file is written if left empty.
    *  @param[in] total_nodes Pool size used only to derive free_nodes above.
+   *  @param[in] max_time Inclusive event-time boundary. The default drains
+   *         the trace completely.
    */
-  void run_job_trace(const std::string &resource_trace_file = std::string(),
-                     num_nodes_t total_nodes = static_cast<num_nodes_t>(0u));
+  void run_job_trace(
+      const std::string &resource_trace_file = std::string(),
+      num_nodes_t total_nodes = static_cast<num_nodes_t>(0u),
+      sim_time_t max_time = std::numeric_limits<sim_time_t>::max());
 
   /**
    * @brief Record that the scheduler has started an existing job.
@@ -370,6 +386,9 @@ public:
    * @see SchedulerBase::insert_job()
    */
   void insert_job(job_no_t job_idx, sim_time_t start_time);
+
+  /** Enqueue the recorded begin/end events of one replay-format job. */
+  void enqueue_replay_job(job_no_t job_idx);
 
   /**
    * @brief Append a genuinely new job to m_data - the real streaming
@@ -581,6 +600,21 @@ public:
                             num_nodes_t total_nodes, bool msec = false);
 
   /**
+   * Discard resource samples before a warm-start boundary while preserving
+   * live occupancy and policy state. The next resource trace begins with a
+   * baseline at start_time.
+   */
+  void reset_resource_recording(sim_time_t start_time) {
+    m_ctx.m_resource_history.clear();
+    m_resource_recording_start = start_time;
+    const time_t sec = static_cast<time_t>(start_time);
+    m_resource_recording_baseline =
+        this->sample({sec, static_cast<float>(start_time - sec)},
+                     m_ctx.m_n_nodes_in_use, m_resource_trace_current_capacity);
+    m_has_resource_recording_baseline = true;
+  }
+
+  /**
    * @brief Write this Trace's recorded resource-occupancy history to a
    * CSV file (same "time,free_nodes,allocated_nodes" format used by the
    * simulator). Shared by the standalone tracer and the scheduling
@@ -602,6 +636,23 @@ public:
    */
   void write_resource_trace(const std::string &filename,
                             num_nodes_t total_nodes, bool msec = false);
+
+  /**
+   * Record a time-varying capacity transition in the resource history.
+   * Running allocation is unchanged; free nodes are clamped to zero when a
+   * non-preemptive reduction temporarily leaves the system overcommitted.
+   */
+  void set_resource_capacity(sim_time_t time, num_nodes_t capacity);
+
+  /**
+   * Reset the effective resource capacity without recording a transition.
+   * Simulation uses this at the start of each run so a reused Trace does not
+   * retain the previous run's final scheduled capacity.
+   */
+  void reset_resource_capacity(num_nodes_t capacity) {
+    m_resource_trace_current_capacity = capacity;
+    m_resource_capacity_initialized = true;
+  }
 
   /**
    * @brief Open filename early so a job's line gets written the moment
@@ -630,8 +681,13 @@ public:
    * @param[in] filename Output path; no-op if empty
    * @param[in] msec Format timestamps with millisecond precision instead of
    *        truncating to whole seconds
+   * @param[in] completed_through Include only jobs completed at or before
+   *        this time. The default includes every scheduled job.
    */
-  void write_simulated_trace(const std::string &filename, bool msec = false);
+  void write_simulated_trace(
+      const std::string &filename, bool msec = false,
+      sim_time_t completed_through =
+          std::numeric_limits<sim_time_t>::max());
 
   /**
    * @brief Explicitly write and reclaim the completed front prefix.

@@ -51,12 +51,14 @@ private:
 struct Standard_Resource_Sample {
   epoch_t time;
   num_nodes_t allocated;
+  num_nodes_t capacity;
 };
 
 /** Resource-history entry emitted by the Pcon experiment. */
 struct Pcon_Resource_Sample {
   epoch_t time;
   num_nodes_t allocated;
+  num_nodes_t capacity;
   Pcon_Values pcon;
 };
 
@@ -74,9 +76,9 @@ struct Standard_Trace_Policy {
     return record_type(submit_time, num_nodes, queue, limit_time);
   }
 
-  static resource_sample_type sample(const epoch_t &time,
-                                     num_nodes_t allocated) {
-    return {time, allocated};
+  static resource_sample_type sample(const epoch_t &time, num_nodes_t allocated,
+                                     num_nodes_t capacity) {
+    return {time, allocated, capacity};
   }
   static const char *resource_columns() { return ""; }
   static std::string resource_values(const resource_sample_type &) {
@@ -100,9 +102,9 @@ struct Pcon_Trace_Policy {
     return record_type(Job_Record(submit_time, num_nodes, queue, limit_time));
   }
 
-  resource_sample_type sample(const epoch_t &time,
-                              num_nodes_t allocated) const {
-    return {time, allocated, m_current};
+  resource_sample_type sample(const epoch_t &time, num_nodes_t allocated,
+                              num_nodes_t capacity) const {
+    return {time, allocated, capacity, m_current};
   }
   static const char *resource_columns() { return ",avgpcon,minpcon,maxpcon"; }
   static std::string resource_values(const resource_sample_type &sample) {

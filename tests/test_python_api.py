@@ -77,6 +77,20 @@ def create_test_trace(filename, jobs):
             f.write(f"{job[0]},{job[1]},{job[2]}\n")
 
 
+def create_replay_trace(filename):
+    """Create a replay trace spanning a nonzero warm-start boundary."""
+    with open(filename, 'w') as f:
+        f.write("job_submit_time,begin_time,end_time,num_nodes,"
+                "exit_status,time_limit\n")
+        f.write("0,0,5,2,0,5\n")       # completed history
+        f.write("1,2,10,3,0,8\n")      # ends exactly at t
+        f.write("2,4,15,2,0,11\n")     # active history
+        f.write("3,5,15,3,0,10\n")     # active history
+        f.write("4,12,14,1,0,2\n")     # inherited waiter: excluded
+        f.write("10,10,14,4,0,4\n")    # boundary arrival
+        f.write("11,12,14,5,0,2\n")    # future arrival
+
+
 def test_module_import(result):
     """Test 1: Module import and version"""
     print("\n1. Module Import")
@@ -550,6 +564,49 @@ def test_batch_mode(result):
         os.unlink(trace_file.name)
 
 
+def test_warm_start_batch_mode(result):
+    """Python run() exposes replay-based warm-start classification/accounting."""
+    print("\n10. Warm-start Batch Mode")
+
+    trace_file = tempfile.NamedTemporaryFile(mode='w', suffix='.csv',
+                                             delete=False)
+    trace_file.close()
+    try:
+        create_replay_trace(trace_file.name)
+        params = dr_evt.SimParams()
+        params.infile = trace_file.name
+        params.total_nodes = 10
+        params.sim_start_time = 10.0
+        params.trace_format = "simple"
+        params.timestamp_format = "epoch"
+        params.run_time_mode = dr_evt.RunTimeMode.ACTUAL
+
+        sim = dr_evt.Simulation(params)
+        sim.run()
+        stats = sim.get_statistics()
+
+        # Only the boundary/future workload is counted. Completed history,
+        # the exact-boundary departure, active seeds, and inherited waiting
+        # work are all absent from job accounting.
+        assert stats.jobs_submitted == 2
+        assert stats.jobs_completed == 2
+        assert stats.jobs_running == 0
+        assert stats.jobs_waiting == 0
+        assert stats.total_nodes == 10
+        assert stats.nodes_in_use == 0
+        assert stats.nodes_available == 10
+        assert abs(stats.resource_area - 51.0) < 1e-12
+        assert abs(stats.utilization - 0.85) < 1e-12
+        assert abs(stats.avg_wait_time - 1.5) < 1e-12
+        assert abs(stats.avg_turnaround_time - 4.5) < 1e-12
+        assert abs(stats.makespan - 16.0) < 1e-12
+        result.record_pass("Native replay warm start")
+    except Exception as e:
+        result.record_fail("Warm-start batch mode", str(e))
+    finally:
+        os.unlink(trace_file.name)
+
+
 def main():
     print("="*60)
     print("DR_EVT Python API Test Suite")
@@ -570,6 +627,7 @@ def main():
     test_backfill_policies(result)
     test_priority_policies(result)
     test_batch_mode(result)
+    test_warm_start_batch_mode(result)
 
     # Print summary and exit
     return result.summary()

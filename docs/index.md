@@ -34,6 +34,7 @@ user-guide/trace-formats
 user-guide/output-traces
 user-guide/grpc-setup
 user-guide/client-server-use-cases
+user-guide/maintenance-and-warm-start
 user-guide/fugaku-power-experiment
 ```
 

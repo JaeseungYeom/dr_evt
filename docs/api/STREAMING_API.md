@@ -130,7 +130,9 @@ void advance_to(sim_time_t target_time);
 - Advances through all events up to AND INCLUDING `target_time`
 - Scheduler makes decisions at each event
 - Jobs may start/end during advancement
-- `current_time` becomes `target_time` after call
+- `current_time` becomes a finite `target_time` after the call. Passing the
+  maximum representable value drains the simulation and leaves `current_time`
+  at the last real event rather than exposing the sentinel as a timestamp.
 
 **Example:**
 ```cpp
@@ -210,16 +212,20 @@ tdiff_t get_resource_area() const; // Custom-FCFS simulations only
 ```
 
 `get_current_utilization()` is the point-in-time ratio of allocated nodes to
-configured nodes. For a simulation created with the Custom-FCFS callback
+effective scheduled capacity. During a non-preemptive reduction below live
+occupancy, the running allocation is treated as effective capacity until it
+drains, keeping utilization bounded by one. For a simulation created with the Custom-FCFS callback
 constructor, `get_resource_area()` is the area under the allocated-node curve:
 the time integral of allocated nodes, accumulated once per settled scheduling
 timestamp and reported in node-seconds. Standard schedulers do not perform
 this live bookkeeping, and calling `get_resource_area()` for one throws
 `std::logic_error`.
 
-For Custom FCFS, `Statistics::utilization` divides this area by configured
-nodes and the elapsed accounting horizon. Standard schedulers retain their
-post-hoc completed-schedule utilization calculation.
+For Custom FCFS, `Statistics::utilization` divides this area by the integrated
+effective capacity over the accounting horizon. Standard schedulers use the
+same capacity-aware denominator with their post-hoc completed-workload area.
+Without a capacity schedule, this is equivalent to configured nodes times the
+elapsed horizon.
 
 **Get count of jobs waiting to be scheduled:**
 ```cpp

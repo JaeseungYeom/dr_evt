@@ -14,6 +14,7 @@
 
 #include "common.hpp"
 #include "trace/epoch.hpp"
+#include "trace/parse_utils.hpp"
 #include <limits>
 #include <string>
 #include <vector>
@@ -70,11 +71,14 @@ protected:
 
 public:
 #if SHOW_ORG_NO
-  Job_Record(job_no_t n, const std::vector<std::string> &svec) noexcept(false);
+  Job_Record(job_no_t n, const std::vector<std::string> &svec,
+             TimestampEncoding timestamp_encoding) noexcept(false);
 #else
   /** @brief Parse a job record from the fields of one trace row.
-   * @param[in] str_vec Parsed input fields in configured column order. */
-  Job_Record(const std::vector<std::string> &str_vec) noexcept(false);
+   * @param[in] str_vec Parsed input fields in configured column order.
+   * @param[in] timestamp_encoding Encoding detected for the input trace. */
+  Job_Record(const std::vector<std::string> &str_vec,
+             TimestampEncoding timestamp_encoding) noexcept(false);
 #endif
 
   /**
@@ -85,9 +89,11 @@ public:
    * @param[in] queue Typed queue identifier for the job.
    * @param[in] is_replay_mode Whether input timestamps describe replayed
    * execution rather than a new simulation.
+   * @param[in] timestamp_encoding Encoding detected for the input trace.
    */
   Job_Record(const std::vector<std::string> &fields, job_queue_t queue,
-             bool is_replay_mode) noexcept(false);
+             bool is_replay_mode,
+             TimestampEncoding timestamp_encoding) noexcept(false);
 
   /** @brief Copy a job record.
    * @param[in] other Record to copy. */
@@ -135,6 +141,18 @@ public:
   /// will never resolve" rather than "still waiting."
   /** @param[in] t Replacement submission time. */
   void set_submit_time(const epoch_t &t) { m_t_submit = t; }
+  /** Exclude a completed warm-start seed from output, stats, and retention. */
+  void suppress_output() {
+    m_is_simulated = false;
+    m_t_end = unscheduled_sentinel();
+    m_t_submit = unscheduled_sentinel();
+  }
+  /** Retain replay duration and attributes but clear its recorded schedule. */
+  void prepare_for_resimulation() {
+    m_is_simulated = false;
+    m_t_begin = unscheduled_sentinel();
+    m_t_end = unscheduled_sentinel();
+  }
   /** @brief Return time spent waiting before execution. */
   tdiff_t get_wait_time() const { return (m_t_begin - m_t_submit); }
   /** @brief Return the requested run-time limit. */
