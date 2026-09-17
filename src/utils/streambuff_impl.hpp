@@ -71,8 +71,8 @@ void ostreambuff<CharT, Traits>::shrink_to_fit() {
   m_capacity = size();
 
   auto const end = m_capacity == 0 ? buf : buf + m_capacity;
-  this->setp(buf, end);              // set pbase and epptr
-  this->pbump(m_capacity);           // set pptr
+  this->setp(buf, end);    // set pbase and epptr
+  this->pbump(m_capacity); // set pptr
 }
 
 //---------------------------- istreambuff --------------------------------
@@ -84,8 +84,7 @@ istreambuff<CharT, Traits>::istreambuff(const CharT *data, size_t sz) noexcept
 }
 
 template <binary_character CharT, typename Traits>
-istreambuff<CharT, Traits>::istreambuff(
-    std::span<const CharT> storage) noexcept
+istreambuff<CharT, Traits>::istreambuff(std::span<const CharT> storage) noexcept
     : istreambuff(storage.data(), storage.size()) {}
 
 template <binary_character CharT, typename Traits>
@@ -135,7 +134,7 @@ streambuff<CharT, Traits>::streambuff(CharT *data, size_t max_size,
 
 template <binary_character CharT, typename Traits>
 streambuff<CharT, Traits>::streambuff(std::span<CharT> storage,
-                                     size_t current_size) noexcept
+                                      size_t current_size) noexcept
     : streambuff(storage.data(), storage.size(), current_size) {}
 
 template <binary_character CharT, typename Traits>

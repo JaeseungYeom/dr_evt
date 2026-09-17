@@ -88,7 +88,8 @@ public:
   using generator_list_t = std::vector<std::unique_ptr<generator_type>>;
 #endif // DR_EVT_THREAD_PRIVATE_RNG
 
-  /** @brief Construct and initialize an engine with its standard default seed. */
+  /** @brief Construct and initialize an engine with its standard default seed.
+   */
   RNGen();
 
   /** @brief Construct and initialize an engine with a deterministic seed.
@@ -253,7 +254,7 @@ protected:
   generator_list_t m_gen;
 #else
   generator_type m_gen; ///< Engine used by every caller in non-thread mode.
-#endif // DR_EVT_THREAD_PRIVATE_RNG
+#endif                           // DR_EVT_THREAD_PRIVATE_RNG
   distribution_t m_distribution; ///< Shared distribution used by operator()()
                                  ///< and pull(); not safe for concurrent draws.
 

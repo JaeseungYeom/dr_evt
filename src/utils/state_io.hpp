@@ -37,9 +37,7 @@ template <typename T> struct bits_t {
  * @tparam T Trivially copyable scalar or vector of trivially copyable values.
  * @param[in,out] v Object whose representation will be transferred.
  * @return bits_t<T&> retaining a reference to @p v. */
-template <raw_binary_serializable T> bits_t<T &> bits(T &v) {
-  return {v};
-}
+template <raw_binary_serializable T> bits_t<T &> bits(T &v) { return {v}; }
 
 /** @brief Write a wrapped object's binary representation.
  * @tparam S Output stream type. @tparam T Wrapped payload type.

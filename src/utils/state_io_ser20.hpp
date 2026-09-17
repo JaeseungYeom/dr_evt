@@ -18,14 +18,14 @@
 #include "streambuff.hpp"
 #include "streamvec.hpp"
 #include "traits.hpp"
-#include <ser20/archives/binary.hpp>
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
-#include <istream>
 #include <iostream>
+#include <istream>
 #include <limits>
 #include <memory>
+#include <ser20/archives/binary.hpp>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -60,19 +60,18 @@ template <typename T> constexpr bool is_custom_bin_ser20_serializable() {
  * @details The generated functions preserve the exact object representation;
  * they do not provide endian, compiler, or library-version portability.
  */
-#define ENABLE_CUSTOM_SER20(T)                                                \
-  namespace ser20 {                                                           \
-  inline void SER20_SAVE_FUNCTION_NAME(BinaryOutputArchive &ar, T const &t) { \
-    static_assert(dr_evt::custom_binary_ser20_serializable<T>);               \
+#define ENABLE_CUSTOM_SER20(T)                                                 \
+  namespace ser20 {                                                            \
+  inline void SER20_SAVE_FUNCTION_NAME(BinaryOutputArchive &ar, T const &t) {  \
+    static_assert(dr_evt::custom_binary_ser20_serializable<T>);                \
     const auto bytes = std::as_bytes(std::span{std::addressof(t), 1u});        \
     ar.saveBinary(bytes.data(), static_cast<std::streamsize>(bytes.size()));   \
-  }                                                                           \
-  inline void SER20_LOAD_FUNCTION_NAME(BinaryInputArchive &ar, T &t) {        \
-    static_assert(dr_evt::custom_binary_ser20_serializable<T>);               \
-    auto bytes = std::as_writable_bytes(                                      \
-        std::span{std::addressof(t), 1u});                                    \
+  }                                                                            \
+  inline void SER20_LOAD_FUNCTION_NAME(BinaryInputArchive &ar, T &t) {         \
+    static_assert(dr_evt::custom_binary_ser20_serializable<T>);                \
+    auto bytes = std::as_writable_bytes(std::span{std::addressof(t), 1u});     \
     ar.loadBinary(bytes.data(), static_cast<std::streamsize>(bytes.size()));   \
-  }                                                                           \
+  }                                                                            \
   }
 
 namespace dr_evt {
@@ -117,8 +116,7 @@ public:
   }
 
 protected:
-  std::streamsize xsputn(const char *source,
-                         std::streamsize count) override {
+  std::streamsize xsputn(const char *source, std::streamsize count) override {
     if (count <= 0) {
       return 0;
     }
@@ -172,8 +170,7 @@ template <typename T>
  * @return Number of serialized bytes.
  * @throws std::length_error if @p buffer is too small. */
 template <typename T, binary_character CharT>
-[[nodiscard]] size_t serialize_binary(const T &state,
-                                      std::span<CharT> buffer) {
+[[nodiscard]] size_t serialize_binary(const T &state, std::span<CharT> buffer) {
   auto bytes = std::span<char>{reinterpret_cast<char *>(buffer.data()),
                                buffer.size_bytes()};
   detail::bounded_binary_output_buffer stream_buffer(bytes);
@@ -184,10 +181,9 @@ template <typename T, binary_character CharT>
   }
 
   if (stream_buffer.overflowed()) {
-    throw std::length_error("Ser20 output requires " +
-                            std::to_string(stream_buffer.size()) +
-                            " bytes; fixed buffer has " +
-                            std::to_string(buffer.size()));
+    throw std::length_error(
+        "Ser20 output requires " + std::to_string(stream_buffer.size()) +
+        " bytes; fixed buffer has " + std::to_string(buffer.size()));
   }
   return stream_buffer.size();
 }
@@ -195,9 +191,8 @@ template <typename T, binary_character CharT>
 /** @brief Deserialize one object directly from caller-owned storage. */
 template <typename T, binary_character CharT>
 void deserialize_binary(T &state, std::span<const CharT> buffer) {
-  const auto bytes =
-      std::span<const char>{reinterpret_cast<const char *>(buffer.data()),
-                            buffer.size_bytes()};
+  const auto bytes = std::span<const char>{
+      reinterpret_cast<const char *>(buffer.data()), buffer.size_bytes()};
   istreambuff<char> stream_buffer(bytes);
   std::istream stream(&stream_buffer);
   ser20::BinaryInputArchive archive(stream);

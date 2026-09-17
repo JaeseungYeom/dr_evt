@@ -13,8 +13,8 @@
  */
 
 #include <array>
-#include <concepts>
 #include <cmath>
+#include <concepts>
 #include <functional>
 #include <random>
 #include <type_traits>
@@ -27,8 +27,7 @@ namespace dr_evt {
 
 /** Hash an array without adding an unsupported specialization to namespace
  * std. */
-template <typename T, size_t N>
-struct array_hash {
+template <typename T, size_t N> struct array_hash {
   using arg_t = std::array<T, N>; ///< Array type accepted by operator()().
   using result_t = size_t;        ///< Hash result type.
 
@@ -64,12 +63,12 @@ using seed_seq_param_t = std::vector<std::seed_seq::result_type>;
 /** Type accepted by make_seed_seq_input(). Enumerations are hashed through
  * their underlying integer type. */
 template <typename T>
-concept seed_hashable =
-    std::is_enum_v<std::remove_cvref_t<T>> ||
-    requires(const std::remove_cvref_t<T> &value) {
-      { std::hash<std::remove_cvref_t<T>>{}(value) } ->
-          std::convertible_to<size_t>;
-    };
+concept seed_hashable = std::is_enum_v<std::remove_cvref_t<T>> ||
+                        requires(const std::remove_cvref_t<T> &value) {
+                          {
+                            std::hash<std::remove_cvref_t<T>>{}(value)
+                          } -> std::convertible_to<size_t>;
+                        };
 
 /**
  * @brief Convert one hashable value into seed-sequence input words.
@@ -86,8 +85,7 @@ concept seed_hashable =
  * @param[in] v Value to hash.
  * @return Seed words containing the complete hash representation.
  */
-template <seed_hashable T>
-seed_seq_param_t make_seed_seq_input(const T &v) {
+template <seed_hashable T> seed_seq_param_t make_seed_seq_input(const T &v) {
   using item_type = std::seed_seq::result_type; // at least 32 bit
   using value_type = std::remove_cvref_t<T>;
 

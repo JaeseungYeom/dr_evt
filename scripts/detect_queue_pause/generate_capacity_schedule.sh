@@ -81,6 +81,7 @@ python3 "$SCRIPT_DIR/backfill_opportunity_audit.py" "$TRACE_PATTERN" \
     --timeline "$TIMELINE" \
     --nodes "$CAPACITY_NODES" \
     --timezone "$TRACE_TIMEZONE" \
+    --overlap-policy "$OVERLAP_POLICY" \
     --grace-minutes "$GRACE_MINUTES" \
     --release-delay-minutes "$RELEASE_DELAY_MINUTES" \
     --output "$EVIDENCE"

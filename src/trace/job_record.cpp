@@ -347,8 +347,8 @@ Job_Record::Job_Record(const std::vector<std::string> &fields,
 
 std::string Job_Record::get_header_str() {
   return std::string("num_nodes") + ',' + "begin_time" + ',' + "end_time" +
-         ',' + "submit_time" + ',' + "time_limit" + ',' + "wait_time" +
-         ',' + "exec_time" + ',' + "busy_nodes" + ',' + "queue"
+         ',' + "submit_time" + ',' + "time_limit" + ',' + "wait_time" + ',' +
+         "exec_time" + ',' + "busy_nodes" + ',' + "queue"
 #if MARK_DAT_PERIOD
          + ",DAT"
 #endif
@@ -366,21 +366,21 @@ std::string Job_Record::to_string() const {
   static constexpr const char *const dat_str[2] = {",No", ",Yes"};
 #endif
 
-  std::string str =
-      to_string(m_num_nodes) + ',' + to_string(m_t_begin) + ',' +
-      to_string(m_t_end) + ',' + to_string(m_t_submit) + ',' +
-      to_string(m_t_limit) + ',' + to_string(get_wait_time()) + ',' +
-      to_string(get_actual_run_time()) + ',' + to_string(m_busy_nodes) + ',' +
+  std::string str = to_string(m_num_nodes) + ',' + to_string(m_t_begin) + ',' +
+                    to_string(m_t_end) + ',' + to_string(m_t_submit) + ',' +
+                    to_string(m_t_limit) + ',' + to_string(get_wait_time()) +
+                    ',' + to_string(get_actual_run_time()) + ',' +
+                    to_string(m_busy_nodes) + ',' +
 #if DR_EVT_LEGACY_QUEUE_INPUT
-      to_string(m_q)
+                    to_string(m_q)
 #else
-      std::to_string(static_cast<unsigned>(m_q))
+                    std::to_string(static_cast<unsigned>(m_q))
 #endif
 #if MARK_DAT_PERIOD
-      + dat_str[m_dat]
+                    + dat_str[m_dat]
 #endif
 #if SHOW_ORG_NO
-      + ',' + to_string(m_org_no)
+                    + ',' + to_string(m_org_no)
 #endif
       ;
   return str;

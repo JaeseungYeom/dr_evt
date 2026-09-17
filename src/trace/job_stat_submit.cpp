@@ -164,8 +164,8 @@ std::ostream &Job_Stat_Submit::print(std::ostream &os) const {
     const auto &week = m_tsubmit[i];
     for (size_t j = 0ul; j < week.size(); ++j, ++cnt) {
       const auto &hour = week[j];
-      str += std::to_string(cnt) + ',' + std::to_string(hour.num_jobs()) +
-             ',' + std::to_string(hour.availability()) + '\n';
+      str += std::to_string(cnt) + ',' + std::to_string(hour.num_jobs()) + ',' +
+             std::to_string(hour.availability()) + '\n';
     }
     os << str;
   }
@@ -193,8 +193,8 @@ std::string Job_Stat_Submit::Summary::to_string() const {
   return to_string(m_tot_submit) + ',' + to_string(m_num_blocked) + ',' +
          to_string(m_min_submit) + ',' + to_string(m_max_submit) + ',' +
          to_string(m_avg_submit) + ',' + to_string(m_std_submit) + ',' +
-         to_string(m_avg_submit_unscaled) + ',' + to_string(m_avg_avail) +
-         ',' + to_string(m_std_avail) + '\n';
+         to_string(m_avg_submit_unscaled) + ',' + to_string(m_avg_avail) + ',' +
+         to_string(m_std_avail) + '\n';
 }
 
 Job_Stat_Submit::summary_week_t Job_Stat_Submit::get_summary() const {

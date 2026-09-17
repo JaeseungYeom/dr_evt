@@ -214,7 +214,7 @@ TEST_CASE("RNGen State IO", "[state I/O]")
 #else
 #define CHECK_RESULT                                                           \
   std::cout << sstr.str();                                                     \
-  std::cout << (ok ? "PASS" : "FAILED") << std::endl << std::endl;           \
+  std::cout << (ok ? "PASS" : "FAILED") << std::endl << std::endl;             \
   all_ok = all_ok && ok
 #define SECTION(T) std::cout << T << std::endl;
 
@@ -330,9 +330,8 @@ int main(int argc, char **argv)
 
   // StreamVec with no space reservation
 #if defined(DR_EVT_HAS_SER20)
-  SECTION(
-      "Save and load the state of RNGen based on integer type uniform "
-      "distribution using Ser20 and StreamVec without space reservation") {
+  SECTION("Save and load the state of RNGen based on integer type uniform "
+          "distribution using Ser20 and StreamVec without space reservation") {
     std::stringstream sstr;
     ok = test_RNGen_state_io<rng_uint_t>(rng_uint_t::param_type(100, 999),
                                          Ser20, StreamVec, sstr, false);

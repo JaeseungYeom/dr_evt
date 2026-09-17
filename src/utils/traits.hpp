@@ -7,8 +7,8 @@
 
 #ifndef DR_EVT_UTILS_TRAITS_HPP
 #define DR_EVT_UTILS_TRAITS_HPP
-#include <cstddef>
 #include <concepts>
+#include <cstddef>
 #include <type_traits>
 #include <vector>
 
@@ -24,16 +24,14 @@ template <typename T, typename A>
 struct is_vector<std::vector<T, A>> : public std::true_type {};
 
 template <typename T>
-inline constexpr bool is_vector_v =
-    is_vector<std::remove_cvref_t<T>>::value;
+inline constexpr bool is_vector_v = is_vector<std::remove_cvref_t<T>>::value;
 
 /** One-byte character type suitable for raw binary stream storage. */
 template <typename T>
-concept binary_character =
-    std::same_as<std::remove_cv_t<T>, char> ||
-    std::same_as<std::remove_cv_t<T>, signed char> ||
-    std::same_as<std::remove_cv_t<T>, unsigned char> ||
-    std::same_as<std::remove_cv_t<T>, std::byte>;
+concept binary_character = std::same_as<std::remove_cv_t<T>, char> ||
+                           std::same_as<std::remove_cv_t<T>, signed char> ||
+                           std::same_as<std::remove_cv_t<T>, unsigned char> ||
+                           std::same_as<std::remove_cv_t<T>, std::byte>;
 
 /** Non-container value whose object representation may be copied as bytes. */
 template <typename T>
@@ -45,8 +43,7 @@ template <typename T>
 concept raw_binary_vector =
     is_vector_v<T> &&
     (!std::same_as<typename std::remove_cvref_t<T>::value_type, bool>) &&
-    std::is_trivially_copyable_v<
-        typename std::remove_cvref_t<T>::value_type>;
+    std::is_trivially_copyable_v<typename std::remove_cvref_t<T>::value_type>;
 
 /** Value supported by DR_EVT's raw binary state helpers. */
 template <typename T>
