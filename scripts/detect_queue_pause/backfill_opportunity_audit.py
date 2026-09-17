@@ -22,10 +22,12 @@ from discover_maintenance import TimestampFormatter, expand_paths, filename_mont
 
 class Job:
     __slots__ = (
-        "idx", "submit", "begin", "end", "nodes", "limit", "family",
+        "idx", "submit", "begin", "end", "nodes", "limit", "family", "source",
     )
 
-    def __init__(self, idx, submit, begin, end, nodes, limit_seconds, family):
+    def __init__(
+        self, idx, submit, begin, end, nodes, limit_seconds, family, source="",
+    ):
         self.idx = idx
         self.submit = submit
         self.begin = begin
@@ -33,6 +35,7 @@ class Job:
         self.nodes = nodes
         self.limit = limit_seconds
         self.family = family
+        self.source = source
 
 
 class FenwickTree:
@@ -112,6 +115,7 @@ def recurring_families(jobs, minimum_occurrences, maximum_gap_cv):
 
 def load_jobs(path, window, release_delay_seconds=0):
     jobs = []
+    source = os.path.basename(path).replace("_scheduling_trace.csv", "")
     with open(path, "r", newline="", encoding="utf-8-sig") as stream:
         reader = csv.reader(stream)
         header = next(reader)
@@ -139,10 +143,10 @@ def load_jobs(path, window, release_delay_seconds=0):
             jobs.append(
                 Job(
                     index, submit, begin, end, nodes, limit_seconds,
-                    family_key(row, names, nodes, limit_seconds),
+                    family_key(row, names, nodes, limit_seconds), source,
                 )
             )
-    jobs.sort(key=lambda job: (job.submit, job.idx))
+    jobs.sort(key=lambda job: (job.submit, job.source, job.idx))
     return jobs
 
 
@@ -203,6 +207,32 @@ def replay_file(
     release_delay_seconds=0,
 ):
     jobs = load_jobs(path, window, release_delay_seconds)
+    return replay_jobs(
+        jobs, target_times, capacity, grace_seconds, recurrence_minimum,
+        recurrence_cv, habitual_fraction, scan_limit, release_delay_seconds,
+    )
+
+
+def replay_files(
+    paths, window, target_times, capacity, grace_seconds,
+    recurrence_minimum, recurrence_cv, habitual_fraction, scan_limit,
+    release_delay_seconds=0,
+):
+    """Replay distinct records from multiple files in one time window."""
+    jobs = []
+    for path in paths:
+        jobs.extend(load_jobs(path, window, release_delay_seconds))
+    jobs.sort(key=lambda job: (job.submit, job.source, job.idx))
+    return replay_jobs(
+        jobs, target_times, capacity, grace_seconds, recurrence_minimum,
+        recurrence_cv, habitual_fraction, scan_limit, release_delay_seconds,
+    )
+
+
+def replay_jobs(
+    jobs, target_times, capacity, grace_seconds, recurrence_minimum,
+    recurrence_cv, habitual_fraction, scan_limit, release_delay_seconds=0,
+):
     recurring = recurring_families(jobs, recurrence_minimum, recurrence_cv)
     start_order = sorted(range(len(jobs)), key=lambda index: (jobs[index].begin, index))
     release_times = sorted(set(
@@ -221,20 +251,20 @@ def replay_file(
     results = {}
     missed_by_time = {}
     opportunities_by_time = {}
-    source_id = os.path.basename(path).replace("_scheduling_trace.csv", "")
     ordered_begin_times = [jobs[index].begin for index in start_order]
 
     for now in target_times:
         while start_cursor < len(start_order) and jobs[start_order[start_cursor]].begin <= now:
             job = jobs[start_order[start_cursor]]
+            job_key = (job.source, job.idx)
             if job.end > now:
-                running[job.idx] = job
-                heapq.heappush(running_end_heap, (job.end, job.idx))
+                running[job_key] = job
+                heapq.heappush(running_end_heap, (job.end, job_key))
             if job.end + release_delay_seconds > now:
-                unavailable[job.idx] = job
+                unavailable[job_key] = job
                 heapq.heappush(
                     unavailable_end_heap,
-                    (job.end + release_delay_seconds, job.idx),
+                    (job.end + release_delay_seconds, job_key),
                 )
                 release_tree.add(
                     release_indices[
@@ -376,9 +406,9 @@ def replay_file(
         nonrecurring_missed_ids = {"backfill": set()}
         for job, kind in opportunities_by_time[now]:
             if kind == "backfill":
-                opportunity_ids[kind].add("{}:{}".format(source_id, job.idx))
+                opportunity_ids[kind].add("{}:{}".format(job.source, job.idx))
         for job, kind in records:
-            identifier = "{}:{}".format(source_id, job.idx)
+            identifier = "{}:{}".format(job.source, job.idx)
             if kind == "backfill":
                 missed_ids[kind].add(identifier)
             if job.family in excluded_families:
@@ -443,6 +473,14 @@ def parse_args():
     parser.add_argument("--output", default="backfill_opportunities.csv")
     parser.add_argument("--nodes", type=int, required=True)
     parser.add_argument("--timezone", default="UTC")
+    parser.add_argument(
+        "--overlap-policy", choices=("combine", "filename-month"),
+        default="filename-month",
+        help=(
+            "combine distinct records across files, or assign each file to "
+            "its filename month (default: filename-month)"
+        ),
+    )
     parser.add_argument("--candidate-fraction", type=float, default=0.85)
     parser.add_argument("--grace-minutes", type=int, default=60)
     parser.add_argument(
@@ -477,26 +515,52 @@ def main():
     all_results = {}
     owned_targets = set()
 
-    for path in paths:
-        window = filename_month_window(path, timestamps)
-        file_targets = sorted(
-            value for value in target_set if window[0] <= value < window[1]
-        )
-        owned_targets.update(file_targets)
-        if not file_targets:
-            continue
-        print(
-            "Auditing {} ({} candidate bins)".format(os.path.basename(path), len(file_targets)),
-            file=sys.stderr,
-        )
-        all_results.update(
-            replay_file(
-                path, window, file_targets, args.nodes, args.grace_minutes * 60,
-                args.recurring_minimum, args.recurring_gap_cv,
-                args.habitual_miss_fraction, args.scan_limit,
-                args.release_delay_minutes * 60,
+    if args.overlap_policy == "combine":
+        targets_by_month = {}
+        for value in targets:
+            month = timestamps.month(value)
+            targets_by_month.setdefault(month, []).append(value)
+        for month, file_targets in sorted(targets_by_month.items()):
+            year, month_number = map(int, month.split("-"))
+            window = timestamps.month_bounds(year, month_number)
+            owned_targets.update(file_targets)
+            print(
+                "Auditing {} across {} files ({} candidate bins)".format(
+                    month, len(paths), len(file_targets)
+                ),
+                file=sys.stderr,
             )
-        )
+            all_results.update(
+                replay_files(
+                    paths, window, file_targets, args.nodes,
+                    args.grace_minutes * 60, args.recurring_minimum,
+                    args.recurring_gap_cv, args.habitual_miss_fraction,
+                    args.scan_limit, args.release_delay_minutes * 60,
+                )
+            )
+    else:
+        for path in paths:
+            window = filename_month_window(path, timestamps)
+            file_targets = sorted(
+                value for value in target_set if window[0] <= value < window[1]
+            )
+            owned_targets.update(file_targets)
+            if not file_targets:
+                continue
+            print(
+                "Auditing {} ({} candidate bins)".format(
+                    os.path.basename(path), len(file_targets)
+                ),
+                file=sys.stderr,
+            )
+            all_results.update(
+                replay_file(
+                    path, window, file_targets, args.nodes,
+                    args.grace_minutes * 60, args.recurring_minimum,
+                    args.recurring_gap_cv, args.habitual_miss_fraction,
+                    args.scan_limit, args.release_delay_minutes * 60,
+                )
+            )
 
     fields = [
         "start", "observed_running_nodes", "observed_free_nodes",

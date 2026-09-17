@@ -3,7 +3,12 @@ import os
 import tempfile
 import unittest
 
-from backfill_opportunity_audit import Job, recurring_families, replay_file
+from backfill_opportunity_audit import (
+    Job,
+    recurring_families,
+    replay_file,
+    replay_files,
+)
 
 
 class BackfillAuditTests(unittest.TestCase):
@@ -83,6 +88,37 @@ class BackfillAuditTests(unittest.TestCase):
             self.assertEqual(result["observed_free_nodes"], 2)
         finally:
             os.unlink(path)
+
+    def test_combined_replay_includes_carry_in_jobs_from_other_files(self):
+        work = tempfile.TemporaryDirectory()
+        try:
+            paths = []
+            rows_by_file = (
+                [(-200, -100, 1000, 1100, 8, 800)],
+                [
+                    (-90, 500, 600, 100, 5, 500),
+                    (-80, 400, 500, 100, 2, 200),
+                ],
+            )
+            for number, rows in enumerate(rows_by_file):
+                path = os.path.join(work.name, "trace_{}.csv".format(number))
+                paths.append(path)
+                with open(path, "w", newline="") as stream:
+                    writer = csv.writer(stream)
+                    writer.writerow(
+                        ["job_submit_time", "begin_time", "end_time",
+                         "time_limit", "num_nodes", "avgpcon"]
+                    )
+                    writer.writerows(rows)
+
+            result = replay_files(
+                paths, (0, 3600), [0], 10, 60, 3, 0.2, 0.5, 1000
+            )[0]
+            self.assertEqual(result["observed_running_nodes"], 8)
+            self.assertEqual(result["backfill_opportunity_jobs"], 1)
+            self.assertEqual(result["missed_nonrecurring_backfill_jobs"], 1)
+        finally:
+            work.cleanup()
 
 
 if __name__ == "__main__":

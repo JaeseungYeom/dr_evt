@@ -74,8 +74,7 @@ template <typename TraceType> void BasicSimulation<TraceType>::run() {
 
   if (m_params.m_is_time_set &&
       (!std::isfinite(m_params.m_max_time) || m_params.m_max_time < 0.0)) {
-    throw std::invalid_argument(
-        "--max_time must be finite and nonnegative");
+    throw std::invalid_argument("--max_time must be finite and nonnegative");
   }
   if (m_params.m_is_time_set &&
       m_params.m_max_time < m_params.m_sim_start_time) {
@@ -151,13 +150,11 @@ template <typename TraceType> void BasicSimulation<TraceType>::run() {
       // tracer binary uses, driven into Trace's own owned context so the rest
       // of this class (write_simulated_trace(), write_resource_trace())
       // sees the result exactly as if the scheduler had run.
-      const sim_time_t run_limit =
-          m_params.m_is_time_set
-              ? m_params.m_max_time
-              : std::numeric_limits<sim_time_t>::max();
+      const sim_time_t run_limit = m_params.m_is_time_set
+                                       ? m_params.m_max_time
+                                       : std::numeric_limits<sim_time_t>::max();
       sim_time_t replay_end = m_current_time;
-      job_no_t replay_job_no =
-          static_cast<job_no_t>(m_trace.num_reclaimed());
+      job_no_t replay_job_no = static_cast<job_no_t>(m_trace.num_reclaimed());
       for (const auto &job : m_trace.data()) {
         const sim_time_t submit =
             convert_epoch<sim_time_t>(job.get_submit_time());
@@ -189,10 +186,9 @@ template <typename TraceType> void BasicSimulation<TraceType>::run() {
 
       // A configured maximum is an inclusive event-time boundary. Without
       // one, use the internal drain sentinel and stop at the last real event.
-      const sim_time_t run_limit =
-          m_params.m_is_time_set
-              ? m_params.m_max_time
-              : std::numeric_limits<sim_time_t>::max();
+      const sim_time_t run_limit = m_params.m_is_time_set
+                                       ? m_params.m_max_time
+                                       : std::numeric_limits<sim_time_t>::max();
       advance_to(run_limit);
     }
   }
@@ -316,10 +312,9 @@ num_jobs_t BasicSimulation<TraceType>::initialize_trace(num_jobs_t max_jobs) {
 template <typename TraceType>
 void BasicSimulation<TraceType>::run_warm_start() {
   const sim_time_t sim_start_time = m_params.m_sim_start_time;
-  const sim_time_t run_limit =
-      m_params.m_is_time_set
-          ? m_params.m_max_time
-          : std::numeric_limits<sim_time_t>::max();
+  const sim_time_t run_limit = m_params.m_is_time_set
+                                   ? m_params.m_max_time
+                                   : std::numeric_limits<sim_time_t>::max();
   if (m_trace.dcols().get_trace_mode() != TraceMode::REPLAY) {
     throw std::runtime_error(
         "--sim_start_time requires replay-format input with begin_time and "
@@ -552,10 +547,9 @@ void BasicSimulation<TraceType>::run_progressive() {
 
   // Drain whatever is still running, or stop at the configured inclusive
   // time boundary.
-  const sim_time_t run_limit =
-      m_params.m_is_time_set
-          ? m_params.m_max_time
-          : std::numeric_limits<sim_time_t>::max();
+  const sim_time_t run_limit = m_params.m_is_time_set
+                                   ? m_params.m_max_time
+                                   : std::numeric_limits<sim_time_t>::max();
   if (m_current_time < run_limit) {
     advance_to(run_limit);
   }
@@ -613,9 +607,8 @@ tdiff_t BasicSimulation<TraceType>::sample_run_time(tdiff_t time_limit,
 template <typename TraceType>
 void BasicSimulation<TraceType>::write_simulated_trace() {
   const sim_time_t completed_through =
-      m_params.m_is_time_set
-          ? m_params.m_max_time
-          : std::numeric_limits<sim_time_t>::max();
+      m_params.m_is_time_set ? m_params.m_max_time
+                             : std::numeric_limits<sim_time_t>::max();
   m_trace.write_simulated_trace(m_params.get_outfile(), m_params.m_msec_output,
                                 completed_through);
   if (m_params.m_verbose && !m_params.get_outfile().empty()) {
@@ -1302,8 +1295,7 @@ BasicSimulation<TraceType>::get_statistics() const {
       continue;
     }
 
-    const sim_time_t completion =
-        convert_epoch<sim_time_t>(job.get_end_time());
+    const sim_time_t completion = convert_epoch<sim_time_t>(job.get_end_time());
     max_scheduled_completion = std::max(max_scheduled_completion, completion);
     total_node_seconds +=
         static_cast<tdiff_t>(job.get_num_nodes()) * job.get_actual_run_time();
@@ -1316,7 +1308,6 @@ BasicSimulation<TraceType>::get_statistics() const {
       max_completion = std::max(max_completion, completion);
       completed_count++;
     }
-
   }
 
   stats.avg_wait_time =

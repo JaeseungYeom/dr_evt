@@ -196,8 +196,7 @@ public:
           if (!r.infile().empty())
             sp.m_infile = r.infile();
           sp.m_msec_output = r.msec_output();
-          if (!std::isfinite(r.sim_start_time()) ||
-              r.sim_start_time() < 0.0) {
+          if (!std::isfinite(r.sim_start_time()) || r.sim_start_time() < 0.0) {
             throw std::runtime_error(
                 "sim_start_time must be finite and nonnegative");
           }

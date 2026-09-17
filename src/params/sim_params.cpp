@@ -135,8 +135,7 @@ void Sim_Params::getopt(int &argc, char **&argv) {
         unsetenv("TZ");
       }
       tzset();
-      std::cerr << "Error: invalid --sim_start_time: " << e.what()
-                << std::endl;
+      std::cerr << "Error: invalid --sim_start_time: " << e.what() << std::endl;
       print_usage(argv[0], 1);
     }
     if (had_old_tz) {

@@ -71,8 +71,7 @@ bool contains_raw_binary_state(std::span<const CharT> buffer) noexcept {
 }
 } // namespace detail
 
-template <raw_binary_serializable ObjT, binary_character CharT,
-          typename Traits>
+template <raw_binary_serializable ObjT, binary_character CharT, typename Traits>
 bool save_state(const ObjT &obj, std::vector<CharT> &buffer) {
   /* Resize or reserve vector space to avoid overhead of reallocation
        Especially when there are multiple items to pack and the sizes are
@@ -92,8 +91,7 @@ bool save_state(const ObjT &obj, std::vector<CharT> &buffer) {
   return oss.good();
 }
 
-template <raw_binary_serializable ObjT, binary_character CharT,
-          typename Traits>
+template <raw_binary_serializable ObjT, binary_character CharT, typename Traits>
 bool load_state(ObjT &obj, const std::vector<CharT> &buffer) {
   if (!detail::contains_raw_binary_state<ObjT>(
           std::span<const CharT>{buffer.data(), buffer.size()})) {
@@ -106,8 +104,7 @@ bool load_state(ObjT &obj, const std::vector<CharT> &buffer) {
   return iss.good();
 }
 
-template <raw_binary_serializable ObjT, binary_character CharT,
-          typename Traits>
+template <raw_binary_serializable ObjT, binary_character CharT, typename Traits>
 bool save_state(const ObjT &obj, std::span<CharT> buffer) {
   ostreambuff<CharT, Traits> ostrmbuf(buffer);
   std::basic_ostream<CharT, Traits> oss(&ostrmbuf);
@@ -116,8 +113,7 @@ bool save_state(const ObjT &obj, std::span<CharT> buffer) {
   return oss.good();
 }
 
-template <raw_binary_serializable ObjT, binary_character CharT,
-          typename Traits>
+template <raw_binary_serializable ObjT, binary_character CharT, typename Traits>
 bool load_state(ObjT &obj, std::span<const CharT> buffer) {
   if (!detail::contains_raw_binary_state<ObjT>(buffer)) {
     return false;

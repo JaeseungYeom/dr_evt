@@ -115,18 +115,16 @@ read_settled_resources(const std::filesystem::path &path,
   return rows;
 }
 
-RunResult run_trace(const std::string &trace, double sim_start_time,
-                    unsigned total_nodes,
-                    PriorityPolicy priority = PriorityPolicy::FCFS,
-                    BackfillPolicy backfill = BackfillPolicy::EASY,
-                    QueueImplementation queue = QueueImplementation::CIRCULAR,
-                    const std::string &capacity = {},
-                    RunTimeMode run_time_mode = RunTimeMode::ACTUAL,
-                    DistributionType run_time_distribution =
-                        DistributionType::NORMAL,
-                    double run_time_scale = 1.0,
-                    double run_time_stddev = 0.0,
-                    double max_time = -1.0) {
+RunResult
+run_trace(const std::string &trace, double sim_start_time, unsigned total_nodes,
+          PriorityPolicy priority = PriorityPolicy::FCFS,
+          BackfillPolicy backfill = BackfillPolicy::EASY,
+          QueueImplementation queue = QueueImplementation::CIRCULAR,
+          const std::string &capacity = {},
+          RunTimeMode run_time_mode = RunTimeMode::ACTUAL,
+          DistributionType run_time_distribution = DistributionType::NORMAL,
+          double run_time_scale = 1.0, double run_time_stddev = 0.0,
+          double max_time = -1.0) {
   const std::string stem = "run_" + std::to_string(run_number++);
   const auto trace_path = work_dir / (stem + ".csv");
   const auto job_path = work_dir / (stem + ".jobs.csv");
@@ -257,10 +255,9 @@ void test_max_time_is_an_inclusive_event_boundary() {
       "0,2,15,2,0,13\n"
       "10,20,24,2,0,4\n";
   const auto warm =
-      run_trace(warm_trace, 10.0, 4, PriorityPolicy::FCFS,
-                BackfillPolicy::EASY, QueueImplementation::CIRCULAR, {},
-                RunTimeMode::ACTUAL, DistributionType::NORMAL, 1.0, 0.0,
-                12.0);
+      run_trace(warm_trace, 10.0, 4, PriorityPolicy::FCFS, BackfillPolicy::EASY,
+                QueueImplementation::CIRCULAR, {}, RunTimeMode::ACTUAL,
+                DistributionType::NORMAL, 1.0, 0.0, 12.0);
   expect_close(warm.stats.current_time, 12.0);
   assert(warm.stats.jobs_completed == 0);
   assert(warm.stats.jobs_running == 2);
@@ -418,7 +415,7 @@ void test_fractional_boundary() {
 void test_runtime_mode_applies_only_to_simulated_jobs() {
   const std::string trace =
       "job_submit_time,begin_time,end_time,num_nodes,exit_status,time_limit\n"
-      "0,2,20,1,0,18\n"    // warmup job: fixed historical departure
+      "0,2,20,1,0,18\n"   // warmup job: fixed historical departure
       "10,12,14,1,0,7\n"; // simulated job: observed runtime 2, limit 7
 
   const auto actual =
@@ -433,10 +430,10 @@ void test_runtime_mode_applies_only_to_simulated_jobs() {
   assert(limit.jobs.size() == 1);
   expect_job(limit.jobs[0], 10.0, 10.0, 17.0, 1);
 
-  const auto distribution = run_trace(
-      trace, 10.0, 2, PriorityPolicy::FCFS, BackfillPolicy::EASY,
-      QueueImplementation::CIRCULAR, {}, RunTimeMode::DISTRIBUTION,
-      DistributionType::NORMAL, 0.5, 0.0);
+  const auto distribution =
+      run_trace(trace, 10.0, 2, PriorityPolicy::FCFS, BackfillPolicy::EASY,
+                QueueImplementation::CIRCULAR, {}, RunTimeMode::DISTRIBUTION,
+                DistributionType::NORMAL, 0.5, 0.0);
   assert(distribution.jobs.size() == 1);
   expect_job(distribution.jobs[0], 10.0, 10.0, 13.5, 1);
 
@@ -455,13 +452,11 @@ std::vector<JobRow> without_seed_jobs(const std::vector<JobRow> &jobs,
 
 void compare_equivalent(const std::string &warm_trace,
                         const std::string &reference_trace,
-                        double sim_start_time,
-                        unsigned total_nodes, size_t seed_count,
-                        PriorityPolicy priority, BackfillPolicy backfill,
-                        QueueImplementation queue) {
-  const auto warm =
-      run_trace(warm_trace, sim_start_time, total_nodes, priority, backfill,
-                queue);
+                        double sim_start_time, unsigned total_nodes,
+                        size_t seed_count, PriorityPolicy priority,
+                        BackfillPolicy backfill, QueueImplementation queue) {
+  const auto warm = run_trace(warm_trace, sim_start_time, total_nodes, priority,
+                              backfill, queue);
   const auto reference =
       run_trace(reference_trace, 0.0, total_nodes, priority, backfill, queue);
   const auto reference_jobs = without_seed_jobs(reference.jobs, seed_count);
@@ -490,9 +485,9 @@ void compare_equivalent(const std::string &warm_trace,
   }
   expect_close(warm.stats.resource_area, reference.stats.resource_area);
   const double reference_from_boundary =
-      reference.stats.resource_area / (static_cast<double>(total_nodes) *
-                                       (reference.stats.makespan -
-                                        sim_start_time));
+      reference.stats.resource_area /
+      (static_cast<double>(total_nodes) *
+       (reference.stats.makespan - sim_start_time));
   expect_close(warm.stats.utilization, reference_from_boundary);
 }
 

@@ -368,10 +368,10 @@ public:
    *  @param[in] max_time Inclusive event-time boundary. The default drains
    *         the trace completely.
    */
-  void run_job_trace(
-      const std::string &resource_trace_file = std::string(),
-      num_nodes_t total_nodes = static_cast<num_nodes_t>(0u),
-      sim_time_t max_time = std::numeric_limits<sim_time_t>::max());
+  void
+  run_job_trace(const std::string &resource_trace_file = std::string(),
+                num_nodes_t total_nodes = static_cast<num_nodes_t>(0u),
+                sim_time_t max_time = std::numeric_limits<sim_time_t>::max());
 
   /**
    * @brief Record that the scheduler has started an existing job.
@@ -686,8 +686,7 @@ public:
    */
   void write_simulated_trace(
       const std::string &filename, bool msec = false,
-      sim_time_t completed_through =
-          std::numeric_limits<sim_time_t>::max());
+      sim_time_t completed_through = std::numeric_limits<sim_time_t>::max());
 
   /**
    * @brief Explicitly write and reclaim the completed front prefix.

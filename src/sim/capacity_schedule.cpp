@@ -61,9 +61,8 @@ load_capacity_schedule(const std::string &filename,
     epoch_t parsed_time;
     unsigned parsed_nodes = 0;
     try {
-      const std::string time_value =
-          trim(line.substr(fields[time_it->second].first,
-                           fields[time_it->second].second));
+      const std::string time_value = trim(line.substr(
+          fields[time_it->second].first, fields[time_it->second].second));
       if (!timestamp_encoding_detected) {
         timestamp_encoding = detect_timestamp_encoding(time_value);
         timestamp_encoding_detected = true;

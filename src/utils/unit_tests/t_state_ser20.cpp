@@ -81,8 +81,8 @@ bool use_streamvec(const simulation_state &original,
 
   bool ok = check(written == buffer.size(),
                   "vector result has exact serialized size");
-  ok &= check(allocation == buffer.data(),
-              "reserved vector storage was reused");
+  ok &=
+      check(allocation == buffer.data(), "reserved vector storage was reused");
 
   simulation_state restored;
   dr_evt::deserialize_binary(restored, buffer);
@@ -98,9 +98,9 @@ bool use_streambuff(const simulation_state &original,
       dr_evt::serialize_binary(original, std::span<char>{fixed_buffer});
   ok &= check(written == expected.size(),
               "fixed and vector buffers report the same byte count");
-  ok &= check(std::equal(expected.begin(), expected.end(),
-                         fixed_buffer.begin()),
-              "fixed and vector buffers contain identical binary data");
+  ok &=
+      check(std::equal(expected.begin(), expected.end(), fixed_buffer.begin()),
+            "fixed and vector buffers contain identical binary data");
 
   simulation_state restored;
   dr_evt::deserialize_binary(
@@ -114,8 +114,7 @@ bool use_streambuff(const simulation_state &original,
   dr_evt::deserialize_binary(
       restored_from_bytes,
       std::span<const std::byte>{byte_buffer.data(), byte_count});
-  ok &= check(byte_count == expected.size() &&
-                  restored_from_bytes == original,
+  ok &= check(byte_count == expected.size() && restored_from_bytes == original,
               "std::byte span round trip");
 
   std::array<char, 1> undersized{};
