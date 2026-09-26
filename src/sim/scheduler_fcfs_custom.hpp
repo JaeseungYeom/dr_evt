@@ -136,6 +136,16 @@ protected:
       const backfill_candidates_t &candidates, num_nodes_t available_nodes,
       const running_jobs_t &effective_running_jobs, sim_time_t current_time);
 
+  /** Return whether a resource-fitting FCFS head may start now. */
+  virtual bool can_start_fcfs_job(job_no_t job_id, num_nodes_t available_nodes,
+                                  const running_jobs_t &effective_running_jobs,
+                                  sim_time_t current_time) const;
+
+  /** Project the reservation time for a blocked FCFS head. */
+  virtual sim_time_t fcfs_head_reservation_time(
+      job_no_t job_id, num_nodes_t nodes_requested, num_nodes_t available_nodes,
+      const running_jobs_t &effective_running_jobs, sim_time_t current_time);
+
   /**
    * Called once after a complete same-timestamp arrival batch becomes
    * eligible and before any FCFS dispatch from that batch.

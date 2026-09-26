@@ -147,6 +147,25 @@ std::optional<job_no_t> CustomFCFSScheduler::select_backfill_candidate(
   return m_backfill_selector(candidates);
 }
 
+bool CustomFCFSScheduler::can_start_fcfs_job(
+    job_no_t job_id, num_nodes_t available_nodes,
+    const running_jobs_t &effective_running_jobs,
+    sim_time_t current_time) const {
+  (void)job_id;
+  (void)available_nodes;
+  (void)effective_running_jobs;
+  (void)current_time;
+  return true;
+}
+
+sim_time_t CustomFCFSScheduler::fcfs_head_reservation_time(
+    job_no_t job_id, num_nodes_t nodes_requested, num_nodes_t available_nodes,
+    const running_jobs_t &effective_running_jobs, sim_time_t current_time) {
+  (void)job_id;
+  return calculate_fcfs_reservation(nodes_requested, available_nodes,
+                                    effective_running_jobs, current_time);
+}
+
 void CustomFCFSScheduler::on_jobs_became_eligible(
     size_t newly_eligible_begin, size_t eligible_end,
     num_nodes_t available_nodes, const running_jobs_t &running_jobs,
@@ -328,9 +347,13 @@ CustomFCFSScheduler::schedule(num_nodes_t free_nodes,
   num_nodes_t available_nodes = free_nodes;
   running_jobs_t effective_running_jobs = running_jobs;
 
-  while (m_eligible_end_idx > 0 && !m_wait_queue.empty() &&
-         (m_wait_queue.front().removed ||
-          m_wait_queue.front().nodes_requested <= available_nodes)) {
+  while (m_eligible_end_idx > 0 && !m_wait_queue.empty()) {
+    if (!m_wait_queue.front().removed &&
+        (m_wait_queue.front().nodes_requested > available_nodes ||
+         !can_start_fcfs_job(m_wait_queue.front().job_id, available_nodes,
+                             effective_running_jobs, current_time))) {
+      break;
+    }
     if (!m_wait_queue.front().removed) {
       const auto &job = m_wait_queue.front();
       jobs_to_run.push_back(job.job_id);
@@ -357,9 +380,9 @@ CustomFCFSScheduler::schedule(num_nodes_t free_nodes,
     return jobs_to_run;
   }
 
-  m_fcfs_reservation_time = calculate_fcfs_reservation(
-      m_wait_queue.front().nodes_requested, available_nodes,
-      effective_running_jobs, current_time);
+  m_fcfs_reservation_time = fcfs_head_reservation_time(
+      m_wait_queue.front().job_id, m_wait_queue.front().nodes_requested,
+      available_nodes, effective_running_jobs, current_time);
 
   const size_t candidate_begin =
       m_reevaluate_all_candidates ? 1 : m_newly_eligible_begin_idx;

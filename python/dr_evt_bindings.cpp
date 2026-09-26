@@ -99,6 +99,10 @@ PYBIND11_MODULE(dr_evt, m) {
       .def_readwrite("num_max_candidates", &Sim_Params::m_num_max_candidates,
                      "int: Maximum feasible jobs offered to the experimental "
                      "backfill selector.")
+      .def_readwrite("cap_backfill_power", &Sim_Params::m_cap_backfill_power,
+                     "bool: Enable the EASYPower hard backfill power cap.")
+      .def_readwrite("cap_fcfs_power", &Sim_Params::m_cap_fcfs_power,
+                     "bool: Enable the EASYPower hard FCFS power cap.")
       .def_readwrite("priority_policy", &Sim_Params::m_priority_policy,
                      "PriorityPolicy: Waiting-job ordering policy.")
       .def_readwrite("verbose", &Sim_Params::m_verbose,

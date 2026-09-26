@@ -119,6 +119,11 @@ message DR_EVT_Params {
         // SWF input only: processors per node used to convert allocated
         // processors to nodes. 0 derives it from the file header.
         uint32 cores_per_node = 36;
+
+        // Optional hard EASYPower admission controls. These default false and
+        // are consumed when an EASYPower scheduler is constructed.
+        bool cap_backfill_power = 37;
+        bool cap_fcfs_power = 38;
     }
 
     message Tracing_Params {
