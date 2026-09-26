@@ -54,6 +54,8 @@ static constexpr int OPT_NODE_RELEASE_DELAY_SPREAD = 1021;
 static constexpr int OPT_PER_PASS_ACCOUNTING = 1022;
 static constexpr int OPT_DIAGNOSTIC_NO_RESERVATIONS = 1023;
 static constexpr int OPT_RESOURCE_MODEL_DIAGNOSTICS = 1024;
+static constexpr int OPT_CAP_BACKFILL_POWER = 1025;
+static constexpr int OPT_CAP_FCFS_POWER = 1026;
 
 /** @brief getopt short-option specification for the simulator CLI. */
 #define OPTIONS "hi:j:n:o:s:t:b:p:q:Q:A:G:r:f:T:z:D:S:V:vc:R:MK:W:H:L:m:"
@@ -95,6 +97,8 @@ static const struct option sim_longopts[] = {
     {"planning_time_resolution", required_argument, 0,
      OPT_PLANNING_TIME_RESOLUTION},
     {"planning_horizon", required_argument, 0, OPT_PLANNING_HORIZON},
+    {"cap_backfill_power", no_argument, 0, OPT_CAP_BACKFILL_POWER},
+    {"cap_fcfs_power", no_argument, 0, OPT_CAP_FCFS_POWER},
     {"priority_policy", required_argument, 0, 'p'},
     {"queue_impl", required_argument, 0, 'q'},
     {"block_size", required_argument, 0, 'Q'},
@@ -143,6 +147,7 @@ Sim_Params::Sim_Params()
       m_planning_time_resolution(0.0),
       m_planning_horizon(std::numeric_limits<tdiff_t>::max()),
       m_warm_start_wait_queue(WarmStartWaitQueuePolicy::INHERIT),
+      m_cap_backfill_power(false), m_cap_fcfs_power(false),
       m_priority_policy(PriorityPolicy::FCFS),
       m_queue_impl(QueueImplementation::CIRCULAR), m_block_size(128),
       m_wait_queue_capacity(0), // 0 = size of job trace (never overflows)
@@ -439,6 +444,12 @@ void Sim_Params::getopt(int &argc, char **&argv) {
                   << std::endl;
         print_usage(argv[0], 1);
       }
+      break;
+    case OPT_CAP_BACKFILL_POWER:
+      m_cap_backfill_power = true;
+      break;
+    case OPT_CAP_FCFS_POWER:
+      m_cap_fcfs_power = true;
       break;
     case 'p': /* --priority_policy */
     {

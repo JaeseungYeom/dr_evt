@@ -208,6 +208,10 @@ message DR_EVT_Params {
         // CLI: --planning_horizon.
         optional double planning_horizon = 48;
 
+        // Optional EASYPower caps used by the experimental scheduler.
+        bool cap_backfill_power = 52;
+        bool cap_fcfs_power = 53;
+
         // Seconds a job's nodes stay unavailable after it ends before another
         // job can start on them (default 0: reusable at the job's end). Not
         // applied to replayed history.
