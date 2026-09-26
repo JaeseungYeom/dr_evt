@@ -124,6 +124,10 @@ public:
   BackfillPolicy m_backfill_policy;
   /// Maximum feasible jobs offered to an experimental backfill selector.
   size_t m_num_max_candidates;
+  /// Reject EASYPower backfills whose projected power exceeds its limit.
+  bool m_cap_backfill_power;
+  /// Reject EASYPower FCFS starts whose projected power exceeds its limit.
+  bool m_cap_fcfs_power;
   /// Job priority/order policy applied by the scheduler.
   PriorityPolicy m_priority_policy;
   /// Wait-queue implementation used by FCFS scheduling.

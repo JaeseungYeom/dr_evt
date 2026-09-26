@@ -93,6 +93,10 @@ message InitRequest {
     // Global simulation start time. A positive value selects native replay
     // warm-start execution for RunRequest; zero preserves ordinary execution.
     double sim_start_time = 15;
+
+    // Optional hard EASYPower admission controls (default: false).
+    bool cap_backfill_power = 16;
+    bool cap_fcfs_power = 17;
 }
 
 // Runs the configured input trace to completion. Unlike AdvanceToRequest,

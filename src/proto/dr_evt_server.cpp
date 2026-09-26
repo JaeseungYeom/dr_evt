@@ -202,6 +202,8 @@ public:
                 "sim_start_time must be finite and nonnegative");
           }
           sp.m_sim_start_time = r.sim_start_time();
+          sp.m_cap_backfill_power = r.cap_backfill_power();
+          sp.m_cap_fcfs_power = r.cap_fcfs_power();
 
           if (r.backfill_policy().empty())
             sp.m_backfill_policy = dr_evt::BackfillPolicy::EASY;
