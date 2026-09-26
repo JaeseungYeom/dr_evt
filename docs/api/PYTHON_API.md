@@ -58,6 +58,8 @@ or `None`.
 | `run_time_mode` | `RunTimeMode` |
 | `backfill_policy` | `BackfillPolicy` |
 | `num_max_candidates` | `int` |
+| `cap_backfill_power` | `bool` |
+| `cap_fcfs_power` | `bool` |
 | `priority_policy` | `PriorityPolicy` |
 | `verbose` | `bool` |
 

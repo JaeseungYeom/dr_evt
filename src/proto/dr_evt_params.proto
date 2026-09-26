@@ -105,6 +105,11 @@ message DR_EVT_Params {
         // Global simulation start time. A positive value enables replay-based
         // warm start; replay jobs already running at the boundary seed resources.
         double sim_start_time = 31;
+
+        // Optional hard EASYPower admission controls. These default false and
+        // are consumed when an EASYPower scheduler is constructed.
+        bool cap_backfill_power = 32;
+        bool cap_fcfs_power = 33;
     }
 
     message Tracing_Params {

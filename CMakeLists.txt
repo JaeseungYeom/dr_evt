@@ -564,7 +564,8 @@ list(APPEND DR_EVT_UNIT_TEST_TARGETS test_append_job_api-bin)
 # Custom callback-driven EASY backfill scheduler, resource accounting, and
 # prediction-horizon APIs.
 add_executable(test_custom_scheduler-bin
-  tests/test_custom_scheduler.cpp)
+  tests/test_custom_scheduler.cpp
+  src/sim/scheduler_easy_power.cpp)
 target_include_directories(test_custom_scheduler-bin PUBLIC
   $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
   $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>

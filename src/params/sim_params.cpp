@@ -32,6 +32,8 @@ static constexpr int OPT_JOB_FLUSH_INTERVAL = 1001;
 static constexpr int OPT_NUM_MAX_CANDIDATES = 1002;
 static constexpr int OPT_CAPACITY_SCHEDULE = 1003;
 static constexpr int OPT_SIM_START_TIME = 1004;
+static constexpr int OPT_CAP_BACKFILL_POWER = 1005;
+static constexpr int OPT_CAP_FCFS_POWER = 1006;
 
 /** @brief getopt short-option specification for the simulator CLI. */
 #define OPTIONS "hi:j:n:o:s:t:b:p:q:Q:A:G:r:f:T:z:D:S:V:vc:R:MK:W:H:L:m:"
@@ -49,6 +51,8 @@ static const struct option sim_longopts[] = {
     {"max_time", required_argument, 0, 't'},
     {"backfill_policy", required_argument, 0, 'b'},
     {"num_max_candidates", required_argument, 0, OPT_NUM_MAX_CANDIDATES},
+    {"cap_backfill_power", no_argument, 0, OPT_CAP_BACKFILL_POWER},
+    {"cap_fcfs_power", no_argument, 0, OPT_CAP_FCFS_POWER},
     {"priority_policy", required_argument, 0, 'p'},
     {"queue_impl", required_argument, 0, 'q'},
     {"block_size", required_argument, 0, 'Q'},
@@ -78,6 +82,7 @@ Sim_Params::Sim_Params()
     : m_seed(0u), m_max_jobs(10u), m_max_time(dr_evt::max_sim_time),
       m_sim_start_time(0.0), m_is_jobs_set(false), m_is_time_set(false),
       m_backfill_policy(BackfillPolicy::EASY), m_num_max_candidates(1),
+      m_cap_backfill_power(false), m_cap_fcfs_power(false),
       m_priority_policy(PriorityPolicy::FCFS),
       m_queue_impl(QueueImplementation::CIRCULAR), m_block_size(128),
       m_wait_queue_capacity(0), // 0 = size of job trace (never overflows)
@@ -212,6 +217,12 @@ void Sim_Params::getopt(int &argc, char **&argv) {
                   << std::endl;
         print_usage(argv[0], 1);
       }
+      break;
+    case OPT_CAP_BACKFILL_POWER: /* --cap_backfill_power */
+      m_cap_backfill_power = true;
+      break;
+    case OPT_CAP_FCFS_POWER: /* --cap_fcfs_power */
+      m_cap_fcfs_power = true;
       break;
     case 'p': /* --priority_policy */
     {
@@ -554,6 +565,14 @@ void Sim_Params::print_usage(const std::string exec, int code) {
          "        backfill selector per decision (default: 1). The callback\n"
          "        itself is installed through the C++ or Python API.\n"
          "\n"
+         "    --cap_backfill_power\n"
+         "        Ask EASYPower to reject backfill candidates whose\n"
+         "        projected total power exceeds P_max (default: off).\n"
+         "\n"
+         "    --cap_fcfs_power\n"
+         "        Ask EASYPower to reject FCFS-prefix starts whose projected\n"
+         "        total power exceeds P_max (default: off).\n"
+         "\n"
          "    -p, --priority_policy {fcfs|fcfs_alt|fcfs_conservative|sjf|ljf}\n"
          "        Job priority/ordering policy (default: fcfs).\n"
          "        fcfs: First-Come-First-Served\n"
@@ -749,6 +768,10 @@ void Sim_Params::print() const {
   msg += " - total_nodes: " + to_string(m_total_nodes) + "\n";
   msg += " - capacity_schedule: " + m_capacity_schedule + "\n";
   msg += " - num_max_candidates: " + to_string(m_num_max_candidates) + "\n";
+  msg += " - cap_backfill_power: " +
+         string{m_cap_backfill_power ? "true" : "false"} + "\n";
+  msg += " - cap_fcfs_power: " + string{m_cap_fcfs_power ? "true" : "false"} +
+         "\n";
   msg += " - job_flush_interval: " + to_string(m_job_flush_interval) + "\n";
   msg += " - is_jobs_set: " + string{m_is_jobs_set ? "true" : "false"} + "\n";
   msg += " - is_time_set: " + string{m_is_time_set ? "true" : "false"} + "\n";
