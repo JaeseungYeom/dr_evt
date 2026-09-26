@@ -102,6 +102,8 @@ set_sim_options(const dr_evt_proto::DR_EVT_Params::Simulation_Params &cfg,
   if (cfg.num_max_candidates() > 0) {
     sp.m_num_max_candidates = cfg.num_max_candidates();
   }
+  sp.m_cap_backfill_power = cfg.cap_backfill_power();
+  sp.m_cap_fcfs_power = cfg.cap_fcfs_power();
 
   // Backfill policy (default: EASY)
   if (!cfg.backfill_policy().empty()) {

@@ -116,6 +116,11 @@ message DR_EVT_Params {
         // Progressive loading also checkpoints at each input-file boundary.
         string checkpoint_file = 34;
         uint64 checkpoint_interval_jobs = 35;
+
+        // Optional hard EASYPower admission controls. These default false and
+        // are consumed when an EASYPower scheduler is constructed.
+        bool cap_backfill_power = 36;
+        bool cap_fcfs_power = 37;
     }
 
     message Tracing_Params {
