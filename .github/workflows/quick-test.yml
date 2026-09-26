@@ -63,6 +63,10 @@ jobs:
           $GITHUB_WORKSPACE/install/bin/tests/test_progressive_load
           $GITHUB_WORKSPACE/install/bin/tests/test_queue_input
 
+      - name: Validate Capped Monthly Experiment Scripts
+        id: capped-monthly-scripts
+        run: python3 tests/test_monthly_backfill_cap_scripts.py
+
       - name: Run Ser20 Memory Serialization Test
         id: serialization
         run: $GITHUB_WORKSPACE/install/bin/tests/t_state_ser20
@@ -75,4 +79,5 @@ jobs:
           echo "Scheduler correctness (34 fixtures): ${{ steps.scheduler-correctness.outcome }}"
           echo "Ser20 memory serialization: ${{ steps.serialization.outcome }}"
           echo "Trace schema / progressive-loading API: ${{ steps.trace-schema.outcome }}"
+          echo "Capped monthly experiment scripts: ${{ steps.capped-monthly-scripts.outcome }}"
           echo "========================================"
