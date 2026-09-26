@@ -192,6 +192,10 @@ message InitRequest {
     // CLI: --planning_horizon.
     optional double planning_horizon = 26;
 
+    // Optional EASYPower caps used by the experimental scheduler.
+    bool cap_backfill_power = 33;
+    bool cap_fcfs_power = 34;
+
     // Seconds a job's nodes stay unavailable after it ends (default 0).
     // Not applied to replayed history.
     double node_release_delay = 20;
