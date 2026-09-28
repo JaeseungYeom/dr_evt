@@ -94,6 +94,7 @@ message ClientMessage {
 // per_pass_accounting: false; separate periodic backfill is supported, while
 // fixed periodic dispatch and capacity schedules are rejected.
 message InitRequest {
+    // System node limit; larger file-loaded jobs are dropped before storage.
     // CLI: --total_nodes.
     uint32 total_nodes = 1;
     string trace_format = 2;       // "simple", "lassen", or "swf" (default: "simple")
