@@ -55,6 +55,13 @@ using projected_starts_t = std::vector<Running_Job>;
 /// Compatibility name for the standalone aggregate quantity timeline.
 using Reservation_Timeline = CountTimeline;
 
+/** Optional trace fields supplied alongside the scheduler's core job data. */
+struct SchedulerJobMetadata {
+  std::optional<double> predicted_power;
+  tdiff_t actual_run_time;
+  timeout_t time_limit;
+};
+
 /**
  * @brief Abstract interface shared by all job schedulers.
  * @details
@@ -205,6 +212,19 @@ public:
   virtual void insert_job(job_no_t job_id, sim_time_t submit_time,
                           tdiff_t run_time_estimate,
                           num_nodes_t nodes_requested) = 0;
+
+  /**
+   * @brief Enqueue a job with trace metadata needed by specialized schedulers.
+   * @details The default preserves the existing scheduler API. Schedulers that
+   * consume trace-specific fields can override this method without requiring
+   * callers to reread the input trace.
+   */
+  virtual void insert_job_with_metadata(
+      job_no_t job_id, sim_time_t submit_time, tdiff_t run_time_estimate,
+      num_nodes_t nodes_requested, const SchedulerJobMetadata &metadata) {
+    (void)metadata;
+    insert_job(job_id, submit_time, run_time_estimate, nodes_requested);
+  }
 
   /**
    * @brief Select wait-queue jobs that may start at current_time.

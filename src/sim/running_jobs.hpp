@@ -9,6 +9,7 @@
 #define DR_EVT_SIM_RUNNING_JOBS_HPP
 #include "sim/resource/placement_model.hpp"
 #include <map>
+#include <optional>
 #include <variant>
 namespace dr_evt {
 /** @brief Existing execution and forecast metadata, without placement storage.
@@ -17,6 +18,8 @@ struct Running_Job {
   sim_time_t start_time; ///< Actual execution start.
   tdiff_t run_time;      ///< Forecast duration until reusable.
   num_nodes_t nodes; ///< Requested quantity, equal to allocation cardinality.
+  /// Lifecycle-owned power estimate when available.
+  std::optional<double> predicted_power = std::nullopt;
 };
 /** @brief Placement-only live owner retained through END and delayed RELEASE.
  */
@@ -24,8 +27,7 @@ struct Placement_Running_Job {
   Running_Job timing{};        ///< Same metadata used by count consumers.
   BitmapAllocation allocation; ///< Exact identities owned until release.
 };
-/** @brief One authoritative running store; count records retain their original
- * size.
+/** @brief One authoritative running store; count records omit placement storage.
  * @details Only the selected map exists. Placement masks never depend on
  * resident trace records. The occupied union is derived admission state: commit
  * adds the same mask owned by the map, erase removes it, and clear resets both.
