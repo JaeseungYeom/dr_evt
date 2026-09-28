@@ -177,6 +177,14 @@ PYBIND11_MODULE(dr_evt, m) {
                     "list[ResourceRelease]: Future resource-release events in "
                     "time order.");
 
+  py::class_<BackfillCandidate>(m, "BackfillCandidate")
+      .def_readonly("queue_index", &BackfillCandidate::queue_index,
+                    "int: Ephemeral index of this job in the wait queue.")
+      .def_readonly("cost", &BackfillCandidate::cost,
+                    "float: Scheduler scalar computed when the job entered "
+                    "the "
+                    "queue.");
+
   // Main Simulation class
   py::class_<Simulation>(m, "Simulation")
       .def(py::init<const Sim_Params &>(), py::arg("params"),
@@ -186,8 +194,8 @@ PYBIND11_MODULE(dr_evt, m) {
            py::arg("params"), py::arg("job_cost_function"),
            py::arg("backfill_selector"),
            "Create an experimental circular-buffer simulation. One callback "
-           "computes each job's cost at insertion; the other selects one "
-           "feasible (job_id, cost) backfill candidate.")
+           "computes each job's cost at insertion; the other returns the "
+           "position of one feasible BackfillCandidate.")
 
       // Batch mode
       .def("run", &Simulation::run,
