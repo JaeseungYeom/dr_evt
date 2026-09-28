@@ -614,7 +614,8 @@ template <typename TraceType> void BasicSimulation<TraceType>::run() {
             ++m_jobs_completed;
           } else if (m_params.m_is_time_set && begin <= run_limit) {
             m_running_jobs[replay_job_no] = {
-                begin, static_cast<tdiff_t>(end - begin), job.get_num_nodes()};
+                begin, static_cast<tdiff_t>(end - begin), job.get_num_nodes(),
+                m_trace.scheduler_power(replay_job_no)};
           }
         }
         ++replay_job_no;
@@ -817,7 +818,7 @@ void BasicSimulation<TraceType>::run_warm_start() {
         // use that known end rather than a possibly stale original limit.
         m_running_jobs[job_no] = {
             begin, planning_run_time(begin, job.get_actual_run_time()),
-            job.get_num_nodes()};
+            job.get_num_nodes(), m_trace.scheduler_power(job_no)};
         m_warm_resource_area +=
             static_cast<tdiff_t>(job.get_num_nodes()) * (end - sim_start_time);
         m_warm_resource_end = std::max(m_warm_resource_end, end);
@@ -3154,7 +3155,12 @@ void BasicSimulation<TraceType>::submit_job(job_no_t job_idx,
   job.set_busy_nodes(get_nodes_in_use());
 #endif
 
-  m_scheduler->insert_job(job_idx, submit_time, run_time_estimate, nodes);
+  const SchedulerJobMetadata metadata{m_trace.scheduler_power(job_idx),
+                                      job.get_actual_run_time(),
+                                      job.get_limit_time()};
+  m_scheduler->insert_job_with_metadata(job_idx, submit_time,
+                                        run_time_estimate,
+                                        nodes, metadata);
   if (m_params.scheduling_interval() > 0.0) {
     m_periodic_backfill_dirty = true;
   }
@@ -3396,7 +3402,7 @@ void BasicSimulation<TraceType>::advance_to_impl(
             m_current_time,
             planning_run_time(m_current_time,
                               static_cast<tdiff_t>(record.get_limit_time())),
-            record.get_num_nodes()};
+            record.get_num_nodes(), m_trace.scheduler_power(job)};
         if (m_running_jobs.placement())
           m_running_jobs.commit(job, running,
                                 jobs_to_run.take_allocation(selected));
@@ -3748,7 +3754,7 @@ void BasicSimulation<TraceType>::advance_to_impl(
               m_current_time,
               planning_run_time(m_current_time,
                                 static_cast<tdiff_t>(record.get_limit_time())),
-              record.get_num_nodes()};
+              record.get_num_nodes(), m_trace.scheduler_power(job)};
           if (m_running_jobs.placement())
             m_running_jobs.commit(job, running,
                                   jobs_to_run.take_allocation(selected));
