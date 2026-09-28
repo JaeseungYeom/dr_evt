@@ -70,8 +70,9 @@ message DR_EVT_Params {
         bool msec_output = 9;
 
         // Scheduling parameters
+        // System node count (default: 795); larger input jobs are dropped.
         // CLI: --total_nodes.
-        uint32 total_nodes = 10;         // System node count (default: 795)
+        uint32 total_nodes = 10;
         // CLI: --backfill_policy.
         string backfill_policy = 11;     // "easy", "conservative", "hybrid", or "none" (default: "easy")
         // CLI: --priority_policy.
