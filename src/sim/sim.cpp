@@ -276,6 +276,9 @@ BasicSimulation<TraceType>::BasicSimulation(const Sim_Params &params)
       m_pre_start_jobs(0), m_warm_resource_area(0.0),
       m_warm_resource_end(0.0), m_rng(params.m_seed), m_queue_length_sum(0),
       m_queue_length_samples(0), m_queue_length_peak(0) {
+  m_trace.set_admission_limits(
+      params.m_total_nodes,
+      m_scheduler->maximum_job_power_for_admission());
   reset_capacity_schedule();
 }
 
@@ -303,6 +306,9 @@ BasicSimulation<TraceType>::BasicSimulation(const Sim_Params &params,
       m_pre_start_jobs(0), m_warm_resource_area(0.0),
       m_warm_resource_end(0.0), m_rng(params.m_seed), m_queue_length_sum(0),
       m_queue_length_samples(0), m_queue_length_peak(0) {
+  m_trace.set_admission_limits(
+      params.m_total_nodes,
+      m_scheduler->maximum_job_power_for_admission());
   reset_capacity_schedule();
 }
 
@@ -328,6 +334,9 @@ BasicSimulation<TraceType>::BasicSimulation(
   if (!m_scheduler) {
     throw std::invalid_argument("custom scheduler must not be null");
   }
+  m_trace.set_admission_limits(
+      params.m_total_nodes,
+      m_scheduler->maximum_job_power_for_admission());
   reset_capacity_schedule();
 }
 
