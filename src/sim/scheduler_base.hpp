@@ -15,6 +15,7 @@
 #include "trace/trace.hpp"
 #include <map>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace dr_evt {
@@ -62,6 +63,11 @@ public:
 
   /** @brief Destroy a scheduler through its polymorphic base interface. */
   virtual ~SchedulerBase() = default;
+
+  /** Per-job power admission limit, if this scheduler defines one. */
+  virtual std::optional<double> maximum_job_power_for_admission() const {
+    return std::nullopt;
+  }
 
   /**
    * @brief Enqueue an already-validated job in this scheduler's wait queue.
