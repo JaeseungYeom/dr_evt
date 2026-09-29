@@ -78,3 +78,9 @@ python/dr_evt_market/learn/output/
 
 # Local job traces, never committed
 python/dr_evt_market/lc_traces/
+
+# Experiments
+experimental/fugaku-power/results
+experimental/fugaku-power/literature-search
+experimental/fugaku-power/private-notes
+experimental/fugaku-power/individual-monthly-warm-start-*
