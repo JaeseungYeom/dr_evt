@@ -278,7 +278,8 @@ BasicSimulation<TraceType>::BasicSimulation(const Sim_Params &params)
       m_queue_length_samples(0), m_queue_length_peak(0) {
   m_trace.set_admission_limits(
       params.m_total_nodes,
-      m_scheduler->maximum_job_power_for_admission());
+      m_scheduler->maximum_job_power_for_admission(), true,
+      m_scheduler->maximum_average_job_power_for_admission());
   reset_capacity_schedule();
 }
 
@@ -308,7 +309,8 @@ BasicSimulation<TraceType>::BasicSimulation(const Sim_Params &params,
       m_queue_length_samples(0), m_queue_length_peak(0) {
   m_trace.set_admission_limits(
       params.m_total_nodes,
-      m_scheduler->maximum_job_power_for_admission());
+      m_scheduler->maximum_job_power_for_admission(), true,
+      m_scheduler->maximum_average_job_power_for_admission());
   reset_capacity_schedule();
 }
 
@@ -336,7 +338,8 @@ BasicSimulation<TraceType>::BasicSimulation(
   }
   m_trace.set_admission_limits(
       params.m_total_nodes,
-      m_scheduler->maximum_job_power_for_admission());
+      m_scheduler->maximum_job_power_for_admission(), true,
+      m_scheduler->maximum_average_job_power_for_admission());
   reset_capacity_schedule();
 }
 
@@ -447,7 +450,9 @@ template <typename TraceType> void BasicSimulation<TraceType>::run() {
           } else if (m_params.m_is_time_set && begin <= run_limit) {
             m_running_jobs[replay_job_no] = {
                 begin, static_cast<tdiff_t>(end - begin), job.get_num_nodes(),
-                m_trace.scheduler_power(replay_job_no)};
+                m_scheduler->scheduling_power(
+                    m_trace.scheduler_power(replay_job_no),
+                    m_trace.scheduler_maximum_power(replay_job_no))};
           }
         }
         ++replay_job_no;
@@ -627,7 +632,9 @@ void BasicSimulation<TraceType>::run_warm_start() {
         // use that known end rather than a possibly stale original limit.
         m_running_jobs[job_no] = {begin, job.get_actual_run_time(),
                                   job.get_num_nodes(),
-                                  m_trace.scheduler_power(job_no)};
+                                  m_scheduler->scheduling_power(
+                                      m_trace.scheduler_power(job_no),
+                                      m_trace.scheduler_maximum_power(job_no))};
         m_warm_resource_area +=
             static_cast<tdiff_t>(job.get_num_nodes()) * (end - sim_start_time);
         m_warm_resource_end = std::max(m_warm_resource_end, end);
@@ -2066,7 +2073,8 @@ void BasicSimulation<TraceType>::submit_job(job_no_t job_idx,
 
   const SchedulerJobMetadata metadata{m_trace.scheduler_power(job_idx),
                                       job.get_actual_run_time(),
-                                      job.get_limit_time()};
+                                      job.get_limit_time(),
+                                      m_trace.scheduler_maximum_power(job_idx)};
   m_scheduler->insert_job_with_metadata(job_idx, submit_time,
                                         run_time_estimate, nodes, metadata);
   ++m_pending_queue_arrivals[submit_time];
@@ -2214,7 +2222,9 @@ void BasicSimulation<TraceType>::advance_to_impl(
         m_running_jobs[job] = {m_current_time,
                                static_cast<tdiff_t>(record.get_limit_time()),
                                record.get_num_nodes(),
-                               m_trace.scheduler_power(job)};
+                               m_scheduler->scheduling_power(
+                                   m_trace.scheduler_power(job),
+                                   m_trace.scheduler_maximum_power(job))};
         m_jobs_submitted++;
 
         // Records a resource-history sample internally (Trace's own
@@ -2423,7 +2433,9 @@ void BasicSimulation<TraceType>::advance_to_impl(
           m_running_jobs[job] = {m_current_time,
                                  static_cast<tdiff_t>(record.get_limit_time()),
                                  record.get_num_nodes(),
-                                 m_trace.scheduler_power(job)};
+                                 m_scheduler->scheduling_power(
+                                     m_trace.scheduler_power(job),
+                                     m_trace.scheduler_maximum_power(job))};
           m_jobs_submitted++;
 
           // Process this START event - records a resource-history
