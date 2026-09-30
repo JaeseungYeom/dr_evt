@@ -282,7 +282,7 @@ def main():
         parser.error("performance dispatch requires an FCFS priority policy")
     args.server_infile = args.server_infile or args.jobs
 
-    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    repo_root = pathlib.Path(__file__).resolve().parents[2]
     grpc, pb, service, generated_dir = load_stubs(repo_root)
     try:
         decisions, statistics, system_ids = run_experiment(
