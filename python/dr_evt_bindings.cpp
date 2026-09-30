@@ -256,13 +256,13 @@ PYBIND11_MODULE(dr_evt, m) {
 
       .def("get_backfill_window", &Simulation::get_backfill_window,
            "Return a BackfillWindow snapshot for evaluating a backfill "
-           "candidate.")
+           "candidate, including all running-job releases.")
 
       .def("get_prediction_horizon", &Simulation::get_prediction_horizon,
            py::arg("utilization"),
-           "Estimate the Custom-FCFS waiting-queue drain time from the FCFS "
-           "shadow time. Requires EASY backfilling; future arrivals are "
-           "excluded.")
+           "Estimate the waiting-queue drain time from the FCFS shadow time. "
+           "Computed on demand for supported EASY schedulers; future arrivals "
+           "are excluded.")
 
       // Monitoring - Comprehensive statistics
       .def("get_statistics", &Simulation::get_statistics,

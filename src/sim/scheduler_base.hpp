@@ -15,6 +15,7 @@
 #include "trace/trace.hpp"
 #include <map>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace dr_evt {
@@ -158,6 +159,24 @@ public:
   sim_time_t get_fcfs_reservation_time() const {
     return m_fcfs_reservation_time;
   }
+
+  /**
+   * @brief Sum requested-node time for jobs currently waiting.
+   * @details Implementations compute this on demand from their existing queue
+   * records. The default reports that prediction is unsupported, avoiding any
+   * storage or scheduling-path overhead for schedulers that do not opt in.
+   */
+  virtual std::optional<tdiff_t> waiting_resource_area() const {
+    return std::nullopt;
+  }
+
+  /**
+   * @brief Estimate waiting-queue drain time after the FCFS shadow time.
+   * @details Uses waiting_resource_area() and projected running-job releases.
+   * No prediction state is maintained between calls.
+   */
+  tdiff_t prediction_horizon(const running_jobs_t &running_jobs,
+                             sim_time_t current_time, double utilization) const;
 
 protected:
   /**

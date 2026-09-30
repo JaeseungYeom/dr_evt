@@ -265,8 +265,11 @@ The snapshot contains `current_time`, immediately `available_nodes`, the
 same FCFS-head `shadow_time` (`-1` if the queue is empty), and chronologically
 ordered resource-change events in `releases`. Each event gives the simulation
 `time` at which capacity changes and the summed `nodes_released` then. Events
-use time-limit estimates and extend through the reservation; simultaneous
-releases are combined. This is an in-process API; it does not require gRPC.
+use time-limit estimates and include every currently running job, even when no
+FCFS head is waiting; simultaneous releases are combined. This is an
+in-process API; it does not require gRPC. The gRPC request returns the same
+full projection, which is useful when estimating when a prospective job could
+acquire enough nodes.
 
 ```cpp
 auto window = sim.get_backfill_window();
@@ -275,18 +278,20 @@ for (const auto& change : window.releases) {
 }
 ```
 
-**Estimate the Custom-FCFS waiting-queue prediction horizon:**
+**Estimate the waiting-queue prediction horizon:**
 
 ```cpp
 tdiff_t horizon = sim.get_prediction_horizon(utilization);
 ```
 
-This method is available only for a simulation created with the Custom-FCFS
-callback constructor and configured for EASY backfilling. Call it after the
-current backfilling cycle completes. At that point, the waiting queue contains
-only jobs that could not start, and the running set includes jobs dispatched by
-the cycle. The method holds those sets fixed: future arrivals are excluded and
-no additional waiting jobs are admitted during its forward replay.
+This method is available for the standard and Custom FCFS implementations with
+EASY backfilling. Call it after the current backfilling cycle completes. At
+that point, the waiting queue contains only jobs that could not start, and the
+running set includes jobs dispatched by the cycle. The method holds those sets
+fixed: future arrivals are excluded and no additional waiting jobs are admitted
+during its forward replay. Waiting resource-time is scanned from existing queue
+records only when this method is called; normal scheduling maintains no extra
+prediction state.
 
 Queued demand is `A_Q = sum(requested_nodes * estimated_runtime)`. Starting at
 the FCFS head's shadow time, the method integrates available nodes over each
@@ -300,7 +305,8 @@ The method returns the first completion-event offset at which accumulated
 usable area covers `A_Q`; it does not interpolate within an intermediate
 interval. If the final currently running job completes before the threshold
 is reached, the remaining area is converted to time using
-`utilization * total_nodes`. An empty queue returns zero.
+`utilization * total_nodes`. An empty queue returns zero. The gRPC
+`GetPredictionHorizonRequest` exposes the same calculation.
 
 **Get scheduling statistics** (wait times, turnaround, utilization):
 ```cpp

@@ -39,6 +39,7 @@ in-process via the streaming API:
 | `RunUntilExclusiveRequest` | `Simulation::run_until_exclusive()` |
 | `GetFCFSHeadShadowTimeRequest` | FCFS-head shadow time only: the earliest reserved start time, or `-1` with no waiting head |
 | `GetBackfillWindowRequest` | One FCFS/EASY reservation snapshot: current capacity, shadow time, and projected releases |
+| `GetPredictionHorizonRequest` | On-demand FCFS/EASY waiting-resource-time horizon after the shadow time |
 | `GetStatisticsRequest`, `GetCurrentTimeRequest`, etc. | The monitoring/statistics methods |
 
 For a replay-based warm start, set `InitRequest.sim_start_time` to a positive
@@ -85,6 +86,12 @@ For example, with no free nodes, a 40-node job predicted to end at time 50,
 a 60-node job predicted to end at time 100, and a 100-node FCFS head, the
 response at time 0 has `shadow_time = 100` and releases `(50, 40)` and
 `(100, 60)`.
+
+Send `GetPredictionHorizonRequest` with a utilization factor in `[0, 1]` to
+estimate how long the current waiting resource-time demand takes to drain after
+the shadow time. Zero selects the fallback factor `1`. The server scans fields
+already stored in supported FCFS queues only for this request; no prediction
+state is maintained during normal scheduling.
 
 Session initialization, completion, reuse, and shutdown are documented in
 [Client/Server Setup](user-guide/grpc-setup.md#session-identity-and-completion).

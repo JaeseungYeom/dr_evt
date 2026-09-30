@@ -1262,19 +1262,13 @@ BasicSimulation<TraceType>::get_backfill_window() const {
   Backfill_Window window{
       m_current_time, get_available_nodes(), get_fcfs_head_shadow_time(), {}};
 
-  // A head that can start now has no future window to describe.  Likewise,
-  // without a waiting head there is no EASY reservation.
-  if (window.shadow_time <= m_current_time) {
-    return window;
-  }
-
   // m_running_jobs stores the actual start time. The scheduler reserves
   // against each job's limit time, so this deliberately does the same.
   std::map<sim_time_t, num_nodes_t> releases_by_time;
   for (const auto &[job_idx, job] : m_running_jobs) {
     (void)job_idx;
     const sim_time_t end_time = job.start_time + job.run_time;
-    if (end_time > m_current_time && end_time <= window.shadow_time) {
+    if (end_time > m_current_time) {
       releases_by_time[end_time] += job.nodes;
     }
   }
@@ -1289,12 +1283,8 @@ BasicSimulation<TraceType>::get_backfill_window() const {
 template <typename TraceType>
 tdiff_t
 BasicSimulation<TraceType>::get_prediction_horizon(double utilization) const {
-  if (m_custom_scheduler == nullptr) {
-    throw std::logic_error(
-        "prediction horizon is available only with Custom FCFS");
-  }
-  return m_custom_scheduler->prediction_horizon(m_running_jobs, m_current_time,
-                                                utilization);
+  return m_scheduler->prediction_horizon(m_running_jobs, m_current_time,
+                                         utilization);
 }
 
 template <typename TraceType>

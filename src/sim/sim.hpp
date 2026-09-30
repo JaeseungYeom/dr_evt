@@ -375,9 +375,9 @@ public:
    * @details Returned by get_backfill_window() for a caller evaluating
    * whether a candidate can backfill without delaying the FCFS queue head.
    * `current_time` and `available_nodes` describe capacity immediately;
-   * `releases` then describes projected capacity increases up to the head's
-   * `shadow_time`. Release events use the time-limit estimates used by
-   * SchedulerBase::calculate_fcfs_reservation, rather than actual runtimes,
+   * `releases` then describes every projected capacity increase from the
+   * currently running jobs. Release events use the time-limit estimates used
+   * by SchedulerBase::calculate_fcfs_reservation, rather than actual runtimes,
    * so the projection and reservation agree. `shadow_time` is -1 when no
    * FCFS head is waiting.
    */
@@ -398,8 +398,7 @@ public:
     num_nodes_t available_nodes; ///< Nodes free immediately at current_time.
     sim_time_t
         shadow_time; ///< Reserved FCFS-head start time, or -1 if no head waits.
-    std::vector<Resource_Release>
-        releases; ///< Capacity increases through shadow_time.
+    std::vector<Resource_Release> releases; ///< Projected capacity increases.
   };
 
   /**
@@ -407,7 +406,8 @@ public:
    * @details
    * The result is a snapshot: available nodes and release times reflect
    * current scheduler state, while release times are based on the same
-   * time-limit estimates used for the FCFS reservation.
+   * time-limit estimates used for the FCFS reservation. Releases include
+   * every currently running job, including when no FCFS head waits.
    * @return Backfill_Window value for the current simulation time.
    */
   Backfill_Window get_backfill_window() const;
@@ -439,8 +439,8 @@ public:
    *
    * @pre The caller has completed scheduling at the current time, normally by
    * calling advance_to(get_current_time()) after adding jobs at that time.
-   * @pre This simulation was constructed with the CustomFCFSScheduler callback
-   * constructor and uses EASY backfilling.
+   * @pre The selected scheduler supports on-demand waiting-resource-area
+   * queries and uses EASY backfilling.
    * @param[in] utilization Expected system-utilization factor in (0, 1], or
    * zero to use the fallback factor 1.
    * @return Horizon duration from the shadow time. Returns zero for an empty
@@ -448,8 +448,8 @@ public:
    * resources.
    * @throws std::invalid_argument if utilization is non-finite, negative, or
    * greater than 1.
-   * @throws std::logic_error if this simulation does not use Custom FCFS with
-   * EASY backfilling.
+   * @throws std::logic_error if the scheduler does not support prediction or
+   * does not use EASY backfilling.
    */
   tdiff_t get_prediction_horizon(double utilization) const;
 

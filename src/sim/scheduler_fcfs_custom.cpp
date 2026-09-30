@@ -123,62 +123,15 @@ double CustomFCFSScheduler::utilization_through(sim_time_t through_time) const {
          (static_cast<double>(m_total_nodes) * duration);
 }
 
-tdiff_t
-CustomFCFSScheduler::prediction_horizon(const running_jobs_t &running_jobs,
-                                        sim_time_t current_time,
-                                        double utilization) const {
-  if (m_backfill_policy != BackfillPolicy::EASY) {
-    throw std::logic_error(
-        "prediction horizon requires Custom FCFS with EASY backfilling");
-  }
-  if (!std::isfinite(utilization) || utilization < 0.0 || utilization > 1.0) {
-    throw std::invalid_argument("utilization must be finite and in [0, 1]");
-  }
-  const double effective_utilization = utilization == 0.0 ? 1.0 : utilization;
-
-  tdiff_t queued_area = 0.0;
+std::optional<tdiff_t> CustomFCFSScheduler::waiting_resource_area() const {
+  tdiff_t area = 0.0;
   for (size_t i = 0; i < m_eligible_end_idx; ++i) {
     const auto &job = m_wait_queue[i];
     if (!job.removed) {
-      queued_area +=
-          static_cast<tdiff_t>(job.nodes_requested) * job.run_time_estimate;
+      area += static_cast<tdiff_t>(job.nodes_requested) * job.run_time_estimate;
     }
   }
-  if (queued_area <= 0.0) {
-    return 0.0;
-  }
-  if (m_total_nodes == 0) {
-    return std::numeric_limits<tdiff_t>::infinity();
-  }
-
-  const sim_time_t shadow_time =
-      std::max(current_time, m_fcfs_reservation_time);
-  double available_nodes = static_cast<double>(m_total_nodes);
-  std::map<sim_time_t, num_nodes_t> releases_by_time;
-  for (const auto &[job_id, job] : running_jobs) {
-    (void)job_id;
-    const sim_time_t end_time = job.start_time + job.run_time;
-    if (end_time > shadow_time) {
-      available_nodes -= static_cast<double>(job.nodes);
-      releases_by_time[end_time] += job.nodes;
-    }
-  }
-
-  tdiff_t usable_area = 0.0;
-  sim_time_t previous_time = shadow_time;
-  for (const auto &[release_time, nodes_released] : releases_by_time) {
-    usable_area += effective_utilization * available_nodes *
-                   (release_time - previous_time);
-    if (usable_area >= queued_area) {
-      return release_time - shadow_time;
-    }
-    available_nodes += static_cast<double>(nodes_released);
-    previous_time = release_time;
-  }
-
-  return previous_time - shadow_time +
-         (queued_area - usable_area) /
-             (effective_utilization * static_cast<double>(m_total_nodes));
+  return area;
 }
 
 std::optional<job_no_t> CustomFCFSScheduler::select_backfill_candidate(

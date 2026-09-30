@@ -321,6 +321,20 @@ def test_backfill_window_api(result):
         # No running-job completion remains after the shadow event, so the
         # 1000 node-seconds are drained at U * total_nodes = 50 nodes.
         assert abs(sim.get_prediction_horizon(0.5) - 20.0) < 1e-12
+        # Once the waiting head starts, the snapshot continues to expose the
+        # projected releases of running work.
+        sim.advance_to(100.0)
+        full_window = sim.get_backfill_window()
+        assert full_window.shadow_time == -1.0
+        assert [(release.time, release.nodes_released)
+                for release in full_window.releases] == [(110.0, 100)]
+
+        standard = dr_evt.Simulation(params)
+        standard.append_job(0.0, 100, QUEUE_INPUT, 40.0)
+        standard.advance_to(0.0)
+        standard.append_job(0.0, 50, QUEUE_INPUT, 8.0)
+        standard.advance_to(0.0)
+        assert standard.get_prediction_horizon(0.5) == 8.0
         result.record_pass("Backfill window snapshot")
     except Exception as e:
         result.record_fail("Backfill window API", str(e))

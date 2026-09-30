@@ -110,6 +110,12 @@ public:
                     num_nodes_t &nodes) const;
 
   /**
+   * Sum node-time for active jobs that have arrived by current_time.
+   * This scans existing queue records only when explicitly queried.
+   */
+  tdiff_t waiting_resource_area(sim_time_t current_time) const;
+
+  /**
    * @brief Invoke a callable for every active job in FCFS order.
    * @details
    * Iteration visits each nonempty block in insertion order and then each
@@ -381,6 +387,25 @@ bool BlockWaitQueue<BlockSize>::get_job_info(job_no_t job_id, tdiff_t &run_time,
     }
   }
   return false;
+}
+
+template <size_t BlockSize>
+tdiff_t BlockWaitQueue<BlockSize>::waiting_resource_area(
+    sim_time_t current_time) const {
+  tdiff_t area = 0.0;
+  for (const auto &block_info : m_blocks) {
+    if (block_info.active_count == 0) {
+      continue;
+    }
+    const auto &seq = block_info.block.template get<0>();
+    for (const auto &job : seq) {
+      if (job.submit_time <= current_time) {
+        area +=
+            static_cast<tdiff_t>(job.nodes_requested) * job.run_time_estimate;
+      }
+    }
+  }
+  return area;
 }
 
 template <size_t BlockSize>
