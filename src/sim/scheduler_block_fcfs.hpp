@@ -121,6 +121,10 @@ public:
   /** @copydoc SchedulerBase::has_eligible_jobs */
   bool has_eligible_jobs() override { return active_job_count() > 0; }
 
+  std::optional<tdiff_t> waiting_resource_area() const override {
+    return m_wait_queue.waiting_resource_area(m_current_tracked_time);
+  }
+
 protected:
   /** @copydoc SchedulerBase::wait_queue_size */
   size_t wait_queue_size() const override { return m_wait_queue.size(); }

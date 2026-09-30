@@ -46,6 +46,7 @@ message ClientMessage {
         GetBackfillWindowRequest get_backfill_window = 16;
         GetCurrentUtilizationRequest get_current_utilization = 17;
         RunRequest run = 18;
+        GetPredictionHorizonRequest get_prediction_horizon = 19;
     }
 }
 
@@ -160,6 +161,11 @@ message GetBackfillWindowRequest {}
 // Instantaneous nodes-in-use / total-nodes ratio. This is distinct from the
 // resource-area-based utilization in GetStatisticsResponse.
 message GetCurrentUtilizationRequest {}
+// Estimate how long the currently waiting resource-time demand takes to drain
+// after the FCFS-head shadow time. Computed only when queried.
+message GetPredictionHorizonRequest {
+    double utilization = 1;
+}
 message GetStatisticsRequest {}
 message GetTraceSizeRequest {}
 
@@ -188,6 +194,7 @@ message ServerMessage {
         GetBackfillWindowResponse get_backfill_window = 17;
         GetCurrentUtilizationResponse get_current_utilization = 18;
         RunResponse run = 19;
+        GetPredictionHorizonResponse get_prediction_horizon = 20;
     }
 }
 
@@ -243,6 +250,10 @@ message GetCurrentUtilizationResponse {
     double utilization = 1;
 }
 
+message GetPredictionHorizonResponse {
+    double horizon = 1;
+}
+
 message GetActiveJobCountResponse {
     uint64 active_job_count = 1;
 }
@@ -264,8 +275,8 @@ message GetBackfillWindowResponse {
     uint32 available_nodes = 2;
     // Earliest start of the FCFS queue head, or -1 when there is no head.
     double shadow_time = 3;
-    // Ordered release events in (current_time, shadow_time]. Empty when
-    // there is no FCFS head or it can start immediately.
+    // Ordered release events for all running jobs. May be nonempty when there
+    // is no FCFS head.
     repeated ResourceRelease releases = 4;
 }
 

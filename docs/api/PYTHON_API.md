@@ -102,8 +102,8 @@ Their scheduling semantics are documented in
 | `get_available_nodes()` | Return free nodes. |
 | `get_active_job_count()` | Return waiting jobs. |
 | `get_fcfs_head_shadow_time()` | Return the FCFS-head reservation time, or `-1`. |
-| `get_backfill_window()` | Return the current FCFS/EASY reservation snapshot. |
-| `get_prediction_horizon(utilization)` | Estimate the Custom-FCFS/EASY waiting-queue drain time from the FCFS shadow time. |
+| `get_backfill_window()` | Return the current FCFS/EASY reservation snapshot, including all running-job releases. |
+| `get_prediction_horizon(utilization)` | On demand, estimate the supported FCFS/EASY waiting-queue drain time from the shadow time. |
 | `get_statistics()` | Return a `Statistics` snapshot. |
 | `write_simulated_trace()` | Write the configured job-schedule output. |
 | `print_stats()` | Print summary statistics. |

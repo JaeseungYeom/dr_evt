@@ -14,6 +14,17 @@
 
 namespace dr_evt {
 
+std::optional<tdiff_t> FCFSAltScheduler::waiting_resource_area() const {
+  tdiff_t area = 0.0;
+  for (const auto &[submit_time, job] : m_wait_queue) {
+    (void)submit_time;
+    if (m_eligible_jobs.contains(job.job_id)) {
+      area += static_cast<tdiff_t>(job.nodes) * job.run_time;
+    }
+  }
+  return area;
+}
+
 FCFSAltScheduler::FCFSAltScheduler(num_nodes_t total_nodes,
                                    BackfillPolicy backfill_policy)
     : SchedulerBase(total_nodes, backfill_policy), m_current_tracked_time(0.0) {
@@ -98,14 +109,14 @@ FCFSAltScheduler::schedule(num_nodes_t free_nodes,
 
   // FCFS head blocked - try backfilling
   // Calculate FCFS reservation time
-  sim_time_t reservation_time = calculate_fcfs_reservation(
+  m_fcfs_reservation_time = calculate_fcfs_reservation(
       head_nodes, free_nodes, running_jobs, current_time);
 
-  if (reservation_time <= current_time) {
+  if (m_fcfs_reservation_time <= current_time) {
     return {}; // No valid reservation window
   }
 
-  tdiff_t backfill_window = reservation_time - current_time;
+  tdiff_t backfill_window = m_fcfs_reservation_time - current_time;
 
   // Scan in FCFS order (earliest submit_time first) for backfill candidates
   for (auto it = m_wait_queue.begin(); it != m_wait_queue.end(); ++it) {

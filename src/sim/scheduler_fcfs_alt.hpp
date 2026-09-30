@@ -80,6 +80,8 @@ public:
   /** @copydoc SchedulerBase::has_eligible_jobs */
   bool has_eligible_jobs() override { return !m_eligible_jobs.empty(); }
 
+  std::optional<tdiff_t> waiting_resource_area() const override;
+
 protected:
   /** @copydoc SchedulerBase::wait_queue_size */
   size_t wait_queue_size() const override { return m_wait_queue.size(); }

@@ -5,6 +5,7 @@ set -u
 
 if [ "$#" -ne 1 ]; then
     echo "Usage: $0 <simulator>" >&2
+    echo "Example: $0 ${CMAKE_INSTALL_PREFIX}/bin/simulator" >&2
     exit 2
 fi
 

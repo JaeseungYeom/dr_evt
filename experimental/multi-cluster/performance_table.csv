@@ -1,0 +1,4 @@
+profile_id,num_nodes,time_limit,system-1,system-2,system-3
+short-small,16,100,1.5,1.0,0.8
+medium,32,300,1.0,1.8,1.2
+large-long,64,900,0.7,1.1,2.0

@@ -390,6 +390,13 @@ public:
           }
           break;
         }
+        case ClientMessage::kGetPredictionHorizon: {
+          require_init(sim);
+          resp.mutable_get_prediction_horizon()->set_horizon(
+              sim->get_prediction_horizon(
+                  req.get_prediction_horizon().utilization()));
+          break;
+        }
         case ClientMessage::kGetStatistics: {
           require_init(sim);
           auto stats = sim->get_statistics();

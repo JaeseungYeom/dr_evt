@@ -948,16 +948,34 @@ void test_prediction_horizon() {
   empty.get_trace().load_data(0);
   assert(approx_equal(empty.get_prediction_horizon(0.5), 0.0));
 
-  auto standard_params = make_params();
-  Simulation standard(standard_params);
-  standard.get_trace().load_data(0);
-  bool rejected_for_standard_scheduler = false;
-  try {
-    (void)standard.get_prediction_horizon(0.5);
-  } catch (const std::logic_error &) {
-    rejected_for_standard_scheduler = true;
+  // Every standard FCFS queue computes the same demand by scanning only its
+  // existing eligible entries when this query is made.
+  for (const auto queue_impl :
+       {QueueImplementation::CIRCULAR, QueueImplementation::DEQUE,
+        QueueImplementation::MULTIMAP, QueueImplementation::BLOCK}) {
+    auto standard_params = make_params();
+    standard_params.m_queue_impl = queue_impl;
+    Simulation standard(standard_params);
+    standard.get_trace().load_data(0);
+    standard.append_job(0.0, 100, kTestQueueInput, 40.0);
+    standard.advance_to(0.0);
+    standard.append_job(0.0, 50, kTestQueueInput, 8.0);
+    standard.advance_to(0.0);
+    assert(approx_equal(standard.get_fcfs_head_shadow_time(), 40.0));
+    assert(approx_equal(standard.get_prediction_horizon(0.5), 8.0));
   }
-  assert(rejected_for_standard_scheduler);
+
+  auto unsupported_params = make_params();
+  unsupported_params.m_priority_policy = PriorityPolicy::SJF;
+  Simulation unsupported(unsupported_params);
+  unsupported.get_trace().load_data(0);
+  bool rejected_for_unsupported_scheduler = false;
+  try {
+    (void)unsupported.get_prediction_horizon(0.5);
+  } catch (const std::logic_error &) {
+    rejected_for_unsupported_scheduler = true;
+  }
+  assert(rejected_for_unsupported_scheduler);
 
   auto no_backfill_params = make_params();
   no_backfill_params.m_backfill_policy = BackfillPolicy::NONE;

@@ -104,9 +104,8 @@ protected:
    */
   double utilization_through(sim_time_t through_time) const;
 
-  /** Estimate the waiting-queue horizon for the settled Custom-FCFS state. */
-  tdiff_t prediction_horizon(const running_jobs_t &running_jobs,
-                             sim_time_t current_time, double utilization) const;
+  /** Compute queued node-time on demand from existing queue entries. */
+  std::optional<tdiff_t> waiting_resource_area() const override;
 
   /**
    * Construct the FCFS scheduling core for a subclass-owned selection policy.

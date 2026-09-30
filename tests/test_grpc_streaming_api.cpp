@@ -341,6 +341,16 @@ bool test_backfill_window(const std::string &server_address,
       client.finish();
       return false;
     }
+
+    ClientMessage horizon_query;
+    horizon_query.mutable_get_prediction_horizon()->set_utilization(1.0);
+    const auto horizon_response = client.call(horizon_query);
+    if (std::fabs(horizon_response.get_prediction_horizon().horizon() - 200.0) >
+        1e-12) {
+      std::cerr << "  FAIL: expected prediction horizon 200\n";
+      client.finish();
+      return false;
+    }
   } catch (const std::exception &e) {
     std::cerr << "  FAIL: " << e.what() << "\n";
     client.finish();
