@@ -106,6 +106,19 @@ class BaselineDispatchTests(unittest.TestCase):
             self.assertEqual(read_arrivals(path)[0]["application_type"],
                              ApplicationType.GPU_ONLY)
 
+    def test_numeric_application_type_codes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "jobs.csv"
+            path.write_text(
+                "job_submit_time,num_nodes,time_limit,application_type\n"
+                "0,4,20,0\n"
+                "1,4,20,1\n"
+                "2,4,20,2\n", encoding="utf-8")
+            self.assertEqual(
+                [job["application_type"] for job in read_arrivals(path)],
+                [ApplicationType.CPU_ONLY, ApplicationType.GPU_ONLY,
+                 ApplicationType.GPU_PORTABLE])
+
 
 if __name__ == "__main__":
     unittest.main()

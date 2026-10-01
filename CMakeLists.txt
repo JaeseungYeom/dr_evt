@@ -722,6 +722,21 @@ list(APPEND DR_EVT_UNIT_TEST_TARGETS test_warm_start-bin)
 # Only search for MPI for this test - dr_evt library itself has no MPI dependency
 find_package(MPI)
 if(MPI_CXX_FOUND)
+  if(DR_EVT_HAS_SER20)
+    add_executable(mpi_performance_dispatch-bin
+      experimental/multi-cluster/mpi_performance_dispatch.cpp)
+    target_include_directories(mpi_performance_dispatch-bin PUBLIC
+      $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
+      $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
+      $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}>)
+    target_link_libraries(mpi_performance_dispatch-bin PRIVATE
+      dr_evt MPI::MPI_CXX)
+    set_target_properties(mpi_performance_dispatch-bin PROPERTIES
+      OUTPUT_NAME mpi_performance_dispatch
+      CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
+    list(APPEND DR_EVT_EXEC_TARGETS mpi_performance_dispatch-bin)
+  endif()
+
   add_executable( test_mpi_streaming-bin tests/test_mpi_streaming.cpp )
 
   target_include_directories(test_mpi_streaming-bin PUBLIC
