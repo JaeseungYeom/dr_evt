@@ -8,7 +8,12 @@ from types import SimpleNamespace
 
 from grpc_performance_dispatch import (choose_system, estimate_release_wait,
                                        estimate_wait, nearest_profile,
-                                       read_performance_table)
+                                       read_arrivals, read_performance_table)
+
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+_SAMPLE_TRACE = _REPO_ROOT / "python/examples/sample_trace.csv"
+_PERFORMANCE_TABLE = pathlib.Path(__file__).with_name("performance_table.csv")
 
 
 def window(now, available, releases=(), shadow=-1):
@@ -51,6 +56,34 @@ class PerformanceDispatchTests(unittest.TestCase):
             [0, 0])
         self.assertEqual(choice["system_id"], "ready")
         self.assertEqual(choice["predicted_turnaround"], 100)
+
+    def test_sample_plus_large_job_uses_all_three_systems(self):
+        """A large-profile job extends the sample across all three systems."""
+        system_ids = ["system-1", "system-2", "system-3"]
+        capacities = [100, 200, 50]
+        profiles = read_performance_table(_PERFORMANCE_TABLE, system_ids)
+        jobs = read_arrivals(_SAMPLE_TRACE)
+        jobs.append({
+            "job_id": "system-3-job",
+            "submit_time": 100.0,
+            "num_nodes": 45,
+            "queue": "1",
+            "limit_time": 900.0,
+        })
+
+        choices = []
+        for job in jobs:
+            profile = nearest_profile(job, profiles)
+            choice = choose_system(
+                job, profile, system_ids, capacities,
+                [window(job["submit_time"], capacity)
+                 for capacity in capacities],
+                [0.0, 0.0, 0.0])
+            choices.append(choice["system_id"])
+
+        self.assertNotIn("system-3", choices[:-1])
+        self.assertEqual(choices[-1], "system-3")
+        self.assertEqual(set(choices), set(system_ids))
 
     def test_performance_table_requires_positive_values(self):
         with tempfile.TemporaryDirectory() as directory:

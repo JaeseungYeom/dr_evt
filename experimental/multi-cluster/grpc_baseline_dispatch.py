@@ -36,6 +36,13 @@ class ApplicationType(str, enum.Enum):
         return self.value
 
 
+APPLICATION_TYPE_CODES = {
+    "0": ApplicationType.CPU_ONLY,
+    "1": ApplicationType.GPU_ONLY,
+    "2": ApplicationType.GPU_PORTABLE,
+}
+
+
 class PlatformType(str, enum.Enum):
     GPU_ENABLED = "gpu-enabled"
     CPU_ONLY = "cpu-only"
@@ -59,10 +66,18 @@ def read_arrivals(path):
             )
         jobs = []
         for index, row in enumerate(reader):
+            application_value = row["application_type"].strip()
             try:
-                application_type = ApplicationType(row["application_type"].strip())
+                application_type = (
+                    APPLICATION_TYPE_CODES[application_value]
+                    if application_value in APPLICATION_TYPE_CODES
+                    else ApplicationType(application_value)
+                )
             except ValueError as error:
-                allowed = ", ".join(item.value for item in ApplicationType)
+                allowed = ", ".join(
+                    f"{code} ({application_type.value})"
+                    for code, application_type in APPLICATION_TYPE_CODES.items()
+                )
                 raise ValueError(
                     f"{path}: job {row.get('job_id') or index} has invalid "
                     f"application_type; expected one of: {allowed}"
