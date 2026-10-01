@@ -222,9 +222,9 @@ void test_custom_scheduler_continuation() {
         return static_cast<job_cost_t>(job);
       };
   const backfill_selector_t selector =
-      [](const backfill_candidates_t &candidates) -> std::optional<job_no_t> {
+      [](const backfill_candidates_t &candidates) -> std::optional<size_t> {
     return candidates.empty() ? std::nullopt
-                              : std::optional{candidates.back().first};
+                              : std::optional{candidates.size() - 1};
   };
 
   Simulation uninterrupted(params, cost_function, selector);
