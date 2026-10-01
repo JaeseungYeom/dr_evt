@@ -129,6 +129,13 @@ Use `srun` in place of `mpirun` on a Slurm allocation. The executable requires
 exactly one worker rank per `--system-id`; optional repeated `--system-nodes`
 values override `--total-nodes` for heterogeneous capacities.
 
+With the sample trace above, `system-3` receives no jobs: the trace selects
+only the short-small and medium profiles, where systems 1 and 2 respectively
+have the best relative performance. This is an intentional test case rather
+than a load-balancing guarantee. The focused unit test also appends a 45-node,
+900-second job, which selects the large-long profile and fits the 50-node third
+system; that augmented workload verifies that all three systems are selected.
+
 Run the experiment's focused unit tests directly:
 
 ```bash
