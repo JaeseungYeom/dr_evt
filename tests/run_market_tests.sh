@@ -6,19 +6,98 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX:-$REPO_ROOT/install}"
-PYTHON_BIN="${PYTHON_EXECUTABLE:-python3}"
 
 if [[ "$INSTALL_PREFIX" != /* ]]; then
     INSTALL_PREFIX="$REPO_ROOT/${INSTALL_PREFIX#./}"
 fi
 
-if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-    echo "Error: Python interpreter not found: $PYTHON_BIN" >&2
-    exit 1
+supports_market_package() {
+    command -v "$1" >/dev/null 2>&1 &&
+        "$1" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'
+}
+
+find_dr_evt_module() {
+    local python_bin="$1"
+    local module_dir candidate
+
+    MODULE_DIR=""
+    EXPECTED_EXTENSION=""
+    if "$python_bin" -c 'import dr_evt' >/dev/null 2>&1; then
+        return 0
+    fi
+
+    EXPECTED_EXTENSION=$("$python_bin" -c \
+        'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX") or ".so")')
+    for module_dir in \
+        "$INSTALL_PREFIX/lib/python" \
+        "$INSTALL_PREFIX/lib64/python" \
+        "$REPO_ROOT/build"; do
+        candidate="$module_dir/dr_evt$EXPECTED_EXTENSION"
+        if [[ -f "$candidate" ]]; then
+            MODULE_DIR="$module_dir"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+report_missing_binding() {
+    local python_bin="$1"
+    local extension="$2"
+
+    echo "Error: dr_evt cannot be imported by $python_bin" >&2
+    echo "No matching dr_evt$extension was found under:" >&2
+    echo "  $INSTALL_PREFIX/lib/python" >&2
+    echo "  $INSTALL_PREFIX/lib64/python" >&2
+    echo "  $REPO_ROOT/build" >&2
+    echo "Build/install the Python bindings with the same interpreter, or set PYTHONPATH." >&2
+}
+
+if [[ -n "${PYTHON_EXECUTABLE:-}" ]]; then
+    PYTHON_BIN="$PYTHON_EXECUTABLE"
+    if ! supports_market_package "$PYTHON_BIN"; then
+        echo "Error: dr_evt_market requires Python 3.10+: $PYTHON_BIN" >&2
+        exit 1
+    fi
+    if ! find_dr_evt_module "$PYTHON_BIN"; then
+        report_missing_binding "$PYTHON_BIN" "$EXPECTED_EXTENSION"
+        exit 1
+    fi
+else
+    PYTHON_BIN=""
+    FOUND_COMPATIBLE_PYTHON=0
+    for candidate in python3 python; do
+        if supports_market_package "$candidate"; then
+            FOUND_COMPATIBLE_PYTHON=1
+            candidate_path="$(command -v "$candidate")"
+            if find_dr_evt_module "$candidate_path"; then
+                PYTHON_BIN="$candidate_path"
+                break
+            fi
+        fi
+    done
+    if [[ -z "$PYTHON_BIN" ]]; then
+        if [[ "$FOUND_COMPATIBLE_PYTHON" -eq 0 ]]; then
+            echo "Error: dr_evt_market requires Python 3.10+; set PYTHON_EXECUTABLE" >&2
+        else
+            echo "Error: no Python 3.10+ interpreter has a matching dr_evt binding." >&2
+            echo "Searched the configured PYTHONPATH and:" >&2
+            echo "  $INSTALL_PREFIX/lib/python" >&2
+            echo "  $INSTALL_PREFIX/lib64/python" >&2
+            echo "  $REPO_ROOT/build" >&2
+            echo "Build/install the bindings with a compatible interpreter, or set PYTHON_EXECUTABLE." >&2
+        fi
+        exit 1
+    fi
 fi
 
-MARKET_PATH="$INSTALL_PREFIX/lib/python:$REPO_ROOT/python"
+MARKET_PATH="$REPO_ROOT/python"
+if [[ -n "$MODULE_DIR" ]]; then
+    MARKET_PATH="$MODULE_DIR:$MARKET_PATH"
+fi
 export PYTHONPATH="$MARKET_PATH${PYTHONPATH:+:$PYTHONPATH}"
 
 cd "$REPO_ROOT"
+echo "Using $PYTHON_BIN ($("$PYTHON_BIN" --version 2>&1))"
 "$PYTHON_BIN" -m unittest discover -s python/dr_evt_market/tests -v
