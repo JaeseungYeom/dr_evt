@@ -22,6 +22,7 @@
 #include <limits>
 #include <memory>
 #include <random>
+#include <sstream>
 #include <string>
 
 #include "dr_evt_service.grpc.pb.h"
@@ -407,6 +408,31 @@ public:
           require_init(sim);
           resp.mutable_get_trace_size()->set_trace_size(
               sim->get_trace().data().size());
+          break;
+        }
+        case ClientMessage::kSaveCheckpoint: {
+          require_init(sim);
+#if defined(DR_EVT_HAS_SER20)
+          std::ostringstream checkpoint(std::ios::out | std::ios::binary);
+          sim->save_checkpoint(checkpoint);
+          resp.mutable_save_checkpoint()->set_checkpoint(checkpoint.str());
+#else
+          throw std::runtime_error(
+              "checkpoint support requires DR_EVT_WITH_SER20=ON");
+#endif
+          break;
+        }
+        case ClientMessage::kLoadCheckpoint: {
+          require_init(sim);
+#if defined(DR_EVT_HAS_SER20)
+          std::istringstream checkpoint(req.load_checkpoint().checkpoint(),
+                                        std::ios::in | std::ios::binary);
+          sim->load_checkpoint(checkpoint);
+          resp.mutable_load_checkpoint();
+#else
+          throw std::runtime_error(
+              "checkpoint support requires DR_EVT_WITH_SER20=ON");
+#endif
           break;
         }
         case ClientMessage::kFinishSimulation: {

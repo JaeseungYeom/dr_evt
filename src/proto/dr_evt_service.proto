@@ -47,6 +47,8 @@ message ClientMessage {
         GetCurrentUtilizationRequest get_current_utilization = 17;
         RunRequest run = 18;
         GetPredictionHorizonRequest get_prediction_horizon = 19;
+        SaveCheckpointRequest save_checkpoint = 20;
+        LoadCheckpointRequest load_checkpoint = 21;
     }
 }
 
@@ -168,6 +170,12 @@ message GetPredictionHorizonRequest {
 }
 message GetStatisticsRequest {}
 message GetTraceSizeRequest {}
+// Returns a binary, same-build simulation checkpoint in the response.
+message SaveCheckpointRequest {}
+// Replaces the current session state from SaveCheckpointResponse.checkpoint.
+message LoadCheckpointRequest {
+    bytes checkpoint = 1;
+}
 
 // ---- Server -> Client ----
 
@@ -195,6 +203,8 @@ message ServerMessage {
         GetCurrentUtilizationResponse get_current_utilization = 18;
         RunResponse run = 19;
         GetPredictionHorizonResponse get_prediction_horizon = 20;
+        SaveCheckpointResponse save_checkpoint = 21;
+        LoadCheckpointResponse load_checkpoint = 22;
     }
 }
 
@@ -213,6 +223,12 @@ message InitResponse {
     string resource_trace_file = 4;
     string statistics_file = 5;
 }
+
+message SaveCheckpointResponse {
+    bytes checkpoint = 1;
+}
+
+message LoadCheckpointResponse {}
 
 message InitializeTraceResponse {
     uint64 num_jobs_loaded = 1;

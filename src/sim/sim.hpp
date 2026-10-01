@@ -22,6 +22,8 @@
 #include <map>
 #include <memory> // unique_ptr
 #include <random>
+#include <span>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -158,6 +160,40 @@ public:
    * schedule output, and it never reclaims an unfinished or pending record.
    */
   void flush_completed_jobs();
+
+#if defined(DR_EVT_HAS_SER20)
+  /**
+   * @brief Save an exact continuation checkpoint to a binary stream.
+   * @details The simulation must use the standard trace. Callback-based Custom
+   * FCFS is supported when restart constructs the destination with equivalent
+   * callbacks; callback objects themselves are not serialized. The checkpoint
+   * is intended for the same DR_EVT build and matching Sim_Params. Buffered
+   * output is flushed before the snapshot is written.
+   * @param[in,out] output Binary destination stream.
+   */
+  void save_checkpoint(std::ostream &output);
+
+  /**
+   * @brief Save an exact continuation checkpoint to a file.
+   * @param[in] filename Destination path, replaced after state is serialized.
+   */
+  void save_checkpoint(const std::string &filename);
+
+  /**
+   * @brief Restore a checkpoint into this simulation.
+   * @details This replaces any current state. Configuration, scheduler kind,
+   * and output paths must match those used to create the checkpoint. A Custom
+   * FCFS destination must be constructed with equivalent callbacks.
+   * @param[in,out] input Binary checkpoint source stream.
+   */
+  void load_checkpoint(std::istream &input);
+
+  /**
+   * @brief Restore an exact continuation checkpoint from a file.
+   * @param[in] filename Existing checkpoint path.
+   */
+  void load_checkpoint(const std::string &filename);
+#endif
 
   /**
    * @brief Write resource-allocation history to a CSV file.

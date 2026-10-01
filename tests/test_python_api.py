@@ -578,6 +578,83 @@ def test_batch_mode(result):
         os.unlink(trace_file.name)
 
 
+def test_checkpoint_restart(result):
+    """Save and restore running, waiting, and future streaming work."""
+    print("\n10. Checkpoint/Restart")
+
+    trace_file = tempfile.NamedTemporaryFile(mode='w', suffix='.csv',
+                                             delete=False)
+    checkpoint_file = tempfile.NamedTemporaryFile(suffix='.ckpt', delete=False)
+    trace_file.close()
+    checkpoint_file.close()
+    try:
+        create_test_trace(trace_file.name, [])
+        params = dr_evt.SimParams()
+        params.infile = trace_file.name
+        params.total_nodes = 100
+        params.trace_format = "simple"
+        params.timestamp_format = "epoch"
+        params.run_time_mode = dr_evt.RunTimeMode.LIMIT
+
+        source = dr_evt.Simulation(params)
+        source.initialize_trace()
+        source.append_job(0.0, 100, QUEUE_INPUT, 50.0)
+        source.append_job(0.0, 50, QUEUE_INPUT, 10.0)
+        source.append_job(25.0, 25, QUEUE_INPUT, 5.0)
+        source.advance_to(20.0)
+        source.save_checkpoint(checkpoint_file.name)
+
+        resumed = dr_evt.Simulation(params)
+        resumed.load_checkpoint(checkpoint_file.name)
+        restored = resumed.get_statistics()
+        assert restored.current_time == 20.0
+        assert restored.jobs_running == 1
+        assert restored.jobs_waiting == 1
+
+        source.advance_to(float("inf"))
+        resumed.advance_to(float("inf"))
+        expected = source.get_statistics()
+        actual = resumed.get_statistics()
+        assert actual.jobs_submitted == expected.jobs_submitted
+        assert actual.jobs_completed == expected.jobs_completed
+        assert actual.current_time == expected.current_time
+        assert actual.avg_wait_time == expected.avg_wait_time
+
+        params.backfill_policy = dr_evt.BackfillPolicy.EASY
+        params.num_max_candidates = 4
+        costed_jobs = []
+
+        def compute_cost(job_id, _submit_time, _runtime, _nodes):
+            costed_jobs.append(job_id)
+            return job_id
+
+        def select_last(candidates):
+            return candidates[-1][0] if candidates else None
+
+        custom_source = dr_evt.Simulation(params, compute_cost, select_last)
+        custom_source.initialize_trace()
+        custom_source.append_job(0.0, 100, QUEUE_INPUT, 50.0)
+        custom_source.append_job(0.0, 50, QUEUE_INPUT, 10.0)
+        custom_source.append_job(25.0, 25, QUEUE_INPUT, 5.0)
+        custom_source.advance_to(20.0)
+        custom_source.save_checkpoint(checkpoint_file.name)
+
+        custom_resumed = dr_evt.Simulation(params, compute_cost, select_last)
+        calls_before_load = len(costed_jobs)
+        custom_resumed.load_checkpoint(checkpoint_file.name)
+        assert len(costed_jobs) == calls_before_load
+        custom_source.advance_to(float("inf"))
+        custom_resumed.advance_to(float("inf"))
+        assert (custom_resumed.get_statistics().avg_wait_time ==
+                custom_source.get_statistics().avg_wait_time)
+        result.record_pass("Ser20 checkpoint/restart")
+    except Exception as e:
+        result.record_fail("Checkpoint/restart", str(e))
+    finally:
+        os.unlink(trace_file.name)
+        os.unlink(checkpoint_file.name)
+
+
 def test_warm_start_batch_mode(result):
     """Python run() exposes replay-based warm-start classification/accounting."""
     print("\n10. Warm-start Batch Mode")
@@ -641,6 +718,8 @@ def main():
     test_backfill_policies(result)
     test_priority_policies(result)
     test_batch_mode(result)
+    if hasattr(dr_evt.Simulation, "save_checkpoint"):
+        test_checkpoint_restart(result)
     test_warm_start_batch_mode(result)
 
     # Print summary and exit

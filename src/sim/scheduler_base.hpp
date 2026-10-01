@@ -20,6 +20,8 @@
 
 namespace dr_evt {
 
+template <typename TraceType> class BasicSimulation;
+
 /** \addtogroup dr_evt_sim
  *  @{ */
 
@@ -43,6 +45,8 @@ using running_jobs_t = std::map<job_no_t, Running_Job>;
  * with the currently available nodes.
  */
 class SchedulerBase {
+  template <typename TraceType> friend class BasicSimulation;
+
 protected:
   /// Total nodes available to jobs selected by this scheduler.
   num_nodes_t m_total_nodes;
@@ -151,6 +155,15 @@ public:
    * @return true when at least one eligible, unscheduled job exists.
    */
   virtual bool has_eligible_jobs() = 0;
+
+  /**
+   * @brief Return identifiers of jobs still owned by the wait queue.
+   * @details This is an on-demand checkpoint view, not persistent duplicate
+   * state. Scheduled/removed entries are excluded and future arrivals remain
+   * included.
+   * @return Pending job identifiers in implementation-defined order.
+   */
+  virtual std::vector<job_no_t> pending_job_ids() const = 0;
 
   /**
    * @brief Return the current FCFS-head reservation time.

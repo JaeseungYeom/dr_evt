@@ -124,7 +124,7 @@ jobs:
           # docs/getting-started/installation.md's "Livermore Computing
           # (LC) HPC systems" section for the full explanation).
           # Build test binaries
-          make test_append_job_api-bin test_grpc_streaming_api-bin test_batch_vs_streaming-bin test_progressive_load-bin test_queue_input-bin
+          make test_append_job_api-bin test_checkpoint_restart-bin test_grpc_streaming_api-bin test_batch_vs_streaming-bin test_progressive_load-bin test_queue_input-bin
           # gRPC client/server + MPI multi-client/server test harness
           # (already covered by `make -j$(nproc)` above since none of
           # these are EXCLUDE_FROM_ALL, but listed explicitly here too
@@ -253,7 +253,7 @@ jobs:
       - name: Run Core CTest Tests
         id: core-ctest
         run: |
-          echo "Running 15 native CTest registrations, the trace-tools test, plus MPI when available"
+          echo "Running 17 native CTest registrations, the trace-tools test, plus MPI when available"
           cd build
           ctest --output-on-failure
 
@@ -262,7 +262,7 @@ jobs:
         run: |
           source venv/bin/activate
           echo "========================================"
-          echo "Running Python API Tests (18 tests)"
+          echo "Running Python API Tests (19 tests)"
           echo "========================================"
           PYTHON_EXECUTABLE=$(command -v python) ./tests/run_python_tests.sh
 
@@ -349,8 +349,8 @@ jobs:
           echo "  Resource History (5 tests): ${{ steps.resource-history.outcome }}"
           echo "  Job Store (6 tests): ${{ steps.job-store.outcome }}"
           echo "  Config (12 tests): ${{ steps.config.outcome }}"
-          echo "  CTest (15 native + trace tools + MPI when available): ${{ steps.core-ctest.outcome }}"
-          echo "  Python API (18 tests): ${{ steps.python-api.outcome }}"
+          echo "  CTest (17 native + trace tools + MPI when available): ${{ steps.core-ctest.outcome }}"
+          echo "  Python API (19 tests): ${{ steps.python-api.outcome }}"
           echo "  Market Package (12 tests): ${{ steps.market-package.outcome }}"
           echo "  Append-Job (20 C++ + 5 optional gRPC checks): ${{ steps.append-job.outcome }}"
           echo "  Backfill-window focused rerun (5 checks already counted): ${{ steps.backfill-window.outcome }}"

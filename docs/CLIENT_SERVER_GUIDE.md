@@ -40,7 +40,12 @@ in-process via the streaming API:
 | `GetFCFSHeadShadowTimeRequest` | FCFS-head shadow time only: the earliest reserved start time, or `-1` with no waiting head |
 | `GetBackfillWindowRequest` | One FCFS/EASY reservation snapshot: current capacity, shadow time, and projected releases |
 | `GetPredictionHorizonRequest` | On-demand FCFS/EASY waiting-resource-time horizon after the shadow time |
+| `SaveCheckpointRequest` | Return the current simulation state as binary checkpoint bytes |
+| `LoadCheckpointRequest` | Replace the current simulation state from compatible checkpoint bytes |
 | `GetStatisticsRequest`, `GetCurrentTimeRequest`, etc. | The monitoring/statistics methods |
+
+Checkpoint requests use Ser20 and require a server built with
+`DR_EVT_WITH_SER20=ON`; otherwise the server returns an error response.
 
 For a replay-based warm start, set `InitRequest.sim_start_time` to a positive
 global simulation boundary, provide a replay-format `infile`, and send

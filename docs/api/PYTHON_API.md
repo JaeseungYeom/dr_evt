@@ -95,6 +95,8 @@ Their scheduling semantics are documented in
 | `append_jobs(requests)` | Atomically append and enqueue ordered `JobAppendRequest` values; return their IDs. |
 | `advance_to(target_time)` | Process events at or before the target. |
 | `run_until_exclusive(target_time)` | Process events strictly before the target. |
+| `save_checkpoint(filename)` | Save complete simulation state to a same-build binary checkpoint. |
+| `load_checkpoint(filename)` | Replace current state from a compatible checkpoint. |
 | `get_current_time()` | Return current simulation time. |
 | `get_nodes_in_use()` | Return allocated nodes. |
 | `get_current_utilization()` | Return instantaneous usage of effective scheduled capacity. |
@@ -111,6 +113,13 @@ Their scheduling semantics are documented in
 
 Detailed time-advancement and job-submission contracts are defined in the
 [Streaming API](STREAMING_API.md).
+
+Checkpoint methods are present when DR_EVT is built with
+`DR_EVT_WITH_SER20=ON`, and files require matching `SimParams`. Custom FCFS is
+supported when the destination `Simulation` is constructed with equivalent
+cost and selection callbacks; callback objects and external state are not
+stored in the checkpoint. Custom scheduler subclasses, Pcon, replay/warm-start,
+and progressive file loading are rejected rather than restored inexactly.
 
 ## Supporting types
 

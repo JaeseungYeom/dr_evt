@@ -200,6 +200,17 @@ public:
   sim_time_t get_next_arrival_time() override;
   bool has_eligible_jobs() override { return active_job_count() > 0; }
 
+  /** @copydoc SchedulerBase::pending_job_ids */
+  std::vector<job_no_t> pending_job_ids() const override {
+    std::vector<job_no_t> result;
+    for (const auto &job : m_wait_queue) {
+      if (!job.removed) {
+        result.push_back(job.job_id);
+      }
+    }
+    return result;
+  }
+
   /**
    * @brief Identify feasible backfill jobs without changing queue state.
    * @details The queue must already be synchronized and have a blocked FCFS
