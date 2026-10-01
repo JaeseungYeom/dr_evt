@@ -74,9 +74,10 @@ or are reported as skipped.
 | Resource history | 5 | `run_resource_history_tests.sh` | Circular-buffer output and capacity handling |
 | Job store | 6 | `run_job_store_tests.sh` | Capacity, growth/abort, reclamation, and statistics |
 | Append-job | 25 | `run_append_job_tests.sh` | 20 in-process C++ checks plus 5 optional gRPC checks, including capacity-aware instantaneous/aggregate utilization, warm start, and validation |
+| Checkpoint/restart | 5 groups | CTest (`test_checkpoint_restart`) | Uninterrupted-versus-restarted comparison of 256-job populated queues plus 256 post-restart arrivals for every standard scheduler and callback-based Custom FCFS, loaded-versus-submitted lifecycle preservation, byte-identical job/resource CSV output after reclamation, and configuration mismatch rejection |
 | Progressive loading | 15 | `run_progressive_load_tests.sh` | 11 C++ checks plus 4 CLI checks for multi-file loading, bounded storage, and memory checks |
 | Protobuf configuration | 12 | `run_configs_tests.sh` | Configuration/CLI parity, capacity/simulation-start-time validation, and documented examples |
-| Python API | 18 | `run_python_tests.sh` | Bindings, callbacks, streaming, monitoring, policy APIs, and warm-start execution |
+| Python API | 19 | `run_python_tests.sh` | Bindings, callbacks, streaming, checkpoint/restart, monitoring, policy APIs, and warm-start execution |
 | gRPC client/server | 2 | `run_grpc_tests.sh` | Single-pair and optional MPI multi-server behavior |
 | Backfill-window gRPC | 5 repeated checks | `run_backfill_window_grpc_test.sh` | Focused rerun of the gRPC streaming binary; one check targets the backfill window |
 | Single-coordinator gRPC | 1 | `test_grpc_single_coordinator.py` | Synchronized independent simulation servers |
@@ -85,7 +86,7 @@ or are reported as skipped.
 | Trace tools | 3 | `test_trace_tools.py` via CTest | Capacity inference, simulator-format conversion, direct schedule loading, and warm-start boundary/output behavior |
 | Maximum time | 3 CLI cases | `run_max_time_tests.sh` | Inclusive cutoff behavior in simulation, replay, and warm-start execution |
 | Warm start | 1 native binary + 9 CLI cases | CTest (`test_warm_start`, `test_warm_start_validation`) | Boundary classification, two-stage execution, runtime modes, capacity transitions, policies/queues, accounting/output, numeric/ISO simulation-start times, zero-start replay, inclusive maximum time, per-file timestamp encoding, and invalid configurations |
-| Native CTest | 16, plus 1 with MPI | CTest | RNG and binary serialization, trace policies, replay reclamation, custom scheduling, append/streaming APIs, maximum-time and warm-start coverage, capacity parsing, queue implementations, and CLI dispatch; CTest also registers the Python trace-tools test |
+| Native CTest | 17, plus 1 with MPI | CTest | RNG and binary serialization, exact checkpoint/restart, trace policies, replay reclamation, custom scheduling, append/streaming APIs, maximum-time and warm-start coverage, capacity parsing, queue implementations, and CLI dispatch; CTest also registers the Python trace-tools test |
 
 The gRPC portion of the append-job runner is skipped when gRPC support was not
 built. The backfill-window runner executes the same five-check gRPC test binary
@@ -215,7 +216,21 @@ After building with `DR_EVT_BUILD_PYTHON=ON`, run:
 
 [`test_python_api.py`](test_python_api.py) exercises
 configuration, single and batched job append,
-time advancement, statistics, warm-start execution, output, and error handling.
+time advancement, checkpoint/restart, statistics, warm-start execution,
+output, and error handling.
+
+### Checkpoint/restart tests
+
+[`test_checkpoint_restart.cpp`](test_checkpoint_restart.cpp) exercises exact
+Ser20 continuation for every standard scheduler backend and callback-based
+Custom FCFS. Each scheduler runs a deterministic 256-job workload, checkpoints
+with completed, running, waiting, and future jobs present, appends another 256
+jobs to both the uninterrupted and restored branches, then compares their
+completed schedules and statistics. Additional cases preserve the distinction
+between loaded and submitted jobs, resume reclaimed job/resource output in
+append mode with byte-for-byte comparison against uninterrupted output, and
+reject mismatched configuration. The test is built and registered with CTest
+only when Ser20 is available.
 
 ### Distributed client/server tests
 

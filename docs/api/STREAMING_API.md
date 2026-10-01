@@ -156,6 +156,39 @@ sim.advance_to(checkpoint_time);
 sim.flush_completed_jobs();
 ```
 
+This output flush is not a restart checkpoint. Use `save_checkpoint()` when
+the simulation itself must resume later.
+
+### `save_checkpoint()` / `load_checkpoint()`
+
+Save all logical state at a settled API boundary and restore it into a newly
+constructed simulation with matching `Sim_Params`:
+
+```cpp
+sim.advance_to(500.0);
+sim.save_checkpoint("simulation.ckpt");
+
+Simulation resumed(params);
+resumed.load_checkpoint("simulation.ckpt");
+resumed.advance_to(1000.0);
+```
+
+The checkpoint includes resident job records, scheduler queue state, running
+jobs, pending events, capacity and statistics accounting, resource history,
+and the random-number generator. If incremental output files were open, they
+are flushed when saved and reopened in append mode when loaded.
+
+Checkpoint/restart is compiled when `DR_EVT_WITH_SER20=ON`. Checkpoints are
+Ser20 binary, same-build artifacts rather than a portable exchange format. The
+destination must use matching scheduling, runtime, capacity, and output
+configuration. Callback-based Custom FCFS is supported when the destination
+simulation is constructed with equivalent cost and selection callbacks. The
+checkpoint restores its queue entries, previously computed costs, candidate
+state, and accounting without invoking the cost callback during load; callback
+objects and their externally owned state are not serialized. Custom scheduler
+subclasses remain unsupported because they may add unknown state. Pcon traces,
+replay/warm-start execution, and progressive file loading are also rejected.
+
 ### `run_until_exclusive(target_time)`
 
 Advances simulation to just before `target_time`, excluding events at that exact time.

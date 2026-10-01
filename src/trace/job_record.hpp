@@ -20,11 +20,14 @@
 #include <vector>
 
 namespace dr_evt {
+template <typename TraceType> class BasicSimulation;
 /** \addtogroup dr_evt_trace
  *  @{ */
 
 /** @brief Mutable scheduling record for one input or appended job. */
 class Job_Record {
+  template <typename TraceType> friend class BasicSimulation;
+
 public:
   /**
    * Sentinel begin_time/end_time value for a simulation-mode job that

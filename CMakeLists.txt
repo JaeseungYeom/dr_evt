@@ -561,6 +561,22 @@ set_target_properties(test_append_job_api-bin PROPERTIES CMAKE_INSTALL_RPATH
 
 list(APPEND DR_EVT_UNIT_TEST_TARGETS test_append_job_api-bin)
 
+if(DR_EVT_HAS_SER20)
+  # Exact continuation across queued/running jobs, output append, and
+  # incompatible-state rejection.
+  add_executable(test_checkpoint_restart-bin
+    tests/test_checkpoint_restart.cpp)
+  target_include_directories(test_checkpoint_restart-bin PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}>)
+  target_link_libraries(test_checkpoint_restart-bin PRIVATE dr_evt)
+  set_target_properties(test_checkpoint_restart-bin PROPERTIES
+    OUTPUT_NAME test_checkpoint_restart
+    CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
+  list(APPEND DR_EVT_UNIT_TEST_TARGETS test_checkpoint_restart-bin)
+endif()
+
 # Custom callback-driven EASY backfill scheduler, resource accounting, and
 # prediction-horizon APIs.
 add_executable(test_custom_scheduler-bin
@@ -758,6 +774,15 @@ if(DR_EVT_WITH_UNIT_TESTING)
   add_test(
     NAME test_append_job_api
     COMMAND $<TARGET_FILE:test_append_job_api-bin>)
+  if(DR_EVT_HAS_SER20)
+    add_test(
+      NAME test_checkpoint_restart
+      COMMAND $<TARGET_FILE:test_checkpoint_restart-bin>)
+    set_tests_properties(test_checkpoint_restart PROPERTIES
+      LABELS "unit;native;checkpoint"
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      RUN_SERIAL TRUE)
+  endif()
   add_test(
     NAME test_custom_scheduler
     COMMAND ${CMAKE_COMMAND} -E env

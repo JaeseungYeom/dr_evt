@@ -29,6 +29,7 @@
 #include "trace/trace_policy.hpp"
 
 namespace dr_evt {
+template <typename TraceType> class BasicSimulation;
 /** \addtogroup dr_evt_trace
  *  @{ */
 
@@ -50,6 +51,8 @@ struct Job_Append_Request {
 
 /** @brief Job store, event queue, and output-trace state for one workload. */
 template <typename Policy> class BasicTrace : private Policy {
+  template <typename TraceType> friend class BasicSimulation;
+
 public:
   /// Circular buffer, front-only reclaim: a job's slot becomes reusable
   /// once safe (see is_front_reclaimable()), same shape as

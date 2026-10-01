@@ -16,13 +16,145 @@
 #include "trace/epoch.hpp"
 #include "trace/job_io.hpp"
 #include "trace/parse_utils.hpp"
+#if defined(DR_EVT_HAS_SER20)
+#include "utils/state_io_ser20.hpp"
+#endif
 #include <algorithm>
+#include <array>
+#include <cstdint>
 #include <fstream>
 #include <iomanip>
 #include <queue>
 #include <sstream>
+#include <type_traits>
+#include <typeinfo>
 
 namespace dr_evt {
+
+namespace {
+
+#if defined(DR_EVT_HAS_SER20)
+
+constexpr std::array<char, 8> checkpoint_magic{'D', 'R', 'E', 'V',
+                                               'T', 'C', 'K', 'P'};
+constexpr std::uint32_t checkpoint_version = 2;
+constexpr std::uint64_t checkpoint_collection_limit = 100000000;
+constexpr std::uint64_t checkpoint_string_limit = 64 * 1024 * 1024;
+
+/** Thin typed facade over one Ser20 checkpoint output archive. */
+class CheckpointWriter {
+public:
+  /** @brief Start an archive on a caller-owned output stream. */
+  explicit CheckpointWriter(std::ostream &output) : m_archive(output) {}
+
+  /** @brief Write an exact number of uninterpreted bytes. */
+  void bytes(const void *data, size_t size) {
+    m_archive.saveBinary(data, static_cast<std::streamsize>(size));
+  }
+
+  /** @brief Archive one trivially copyable scalar value. */
+  template <typename T> void value(const T &item) {
+    static_assert(std::is_trivially_copyable_v<T>);
+    m_archive(item);
+  }
+
+  /** @brief Archive one value through its Ser20 serialization contract. */
+  template <typename T> void object(const T &item) { m_archive(item); }
+
+  /** @brief Archive an enumeration through its underlying integer type. */
+  template <typename Enum> void enumeration(Enum item) {
+    using Underlying = std::underlying_type_t<Enum>;
+    value(static_cast<Underlying>(item));
+  }
+
+  /** @brief Archive a bounded-length string and its byte count. */
+  void string(const std::string &text) {
+    value(static_cast<std::uint64_t>(text.size()));
+    bytes(text.data(), text.size());
+  }
+
+private:
+  ser20::BinaryOutputArchive m_archive;
+};
+
+/** Thin validating facade over one Ser20 checkpoint input archive. */
+class CheckpointReader {
+public:
+  /** @brief Start an archive on a caller-owned input stream. */
+  explicit CheckpointReader(std::istream &input) : m_archive(input) {}
+
+  /** @brief Read an exact number of uninterpreted bytes. */
+  void bytes(void *data, size_t size) {
+    m_archive.loadBinary(data, static_cast<std::streamsize>(size));
+  }
+
+  /** @brief Read and return one trivially copyable scalar value. */
+  template <typename T> T value() {
+    static_assert(std::is_trivially_copyable_v<T>);
+    T item{};
+    m_archive(item);
+    return item;
+  }
+
+  /** @brief Restore one value through its Ser20 serialization contract. */
+  template <typename T> void object(T &item) { m_archive(item); }
+
+  /** @brief Read an enumeration through its underlying integer type. */
+  template <typename Enum> Enum enumeration() {
+    using Underlying = std::underlying_type_t<Enum>;
+    return static_cast<Enum>(value<Underlying>());
+  }
+
+  /** @brief Read a collection count after applying the allocation guard. */
+  size_t count() {
+    const auto result = value<std::uint64_t>();
+    if (result > checkpoint_collection_limit ||
+        result > std::numeric_limits<size_t>::max()) {
+      throw std::runtime_error("simulation checkpoint collection is too large");
+    }
+    return static_cast<size_t>(result);
+  }
+
+  /** @brief Read a string after applying the allocation guard. */
+  std::string string() {
+    const auto size = value<std::uint64_t>();
+    if (size > checkpoint_string_limit ||
+        size > std::numeric_limits<size_t>::max()) {
+      throw std::runtime_error("simulation checkpoint string is too large");
+    }
+    std::string result(static_cast<size_t>(size), '\0');
+    bytes(result.data(), result.size());
+    return result;
+  }
+
+private:
+  ser20::BinaryInputArchive m_archive;
+};
+
+/** @brief Archive DR_EVT's whole-second plus fractional-second timestamp. */
+void write_epoch(CheckpointWriter &writer, const epoch_t &time) {
+  writer.value(time.first);
+  writer.value(time.second);
+}
+
+/** @brief Restore DR_EVT's whole-second plus fractional-second timestamp. */
+epoch_t read_epoch(CheckpointReader &reader) {
+  return {reader.value<time_t>(), reader.value<float>()};
+}
+
+/** @brief Reject a checkpoint created with incompatible configuration. */
+template <typename T>
+void require_checkpoint_match(const T &actual, const T &expected,
+                              const char *name) {
+  if (actual != expected) {
+    throw std::runtime_error(
+        std::string("checkpoint configuration mismatch: ") + name);
+  }
+}
+
+#endif
+
+} // namespace
 
 template <typename TraceType>
 BasicSimulation<TraceType>::BasicSimulation(const Sim_Params &params)
@@ -642,6 +774,595 @@ template <typename TraceType>
 void BasicSimulation<TraceType>::flush_completed_jobs() {
   m_trace.flush_completed_jobs(m_current_time);
 }
+
+#if defined(DR_EVT_HAS_SER20)
+template <typename TraceType>
+void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
+  if constexpr (!std::is_same_v<TraceType, Trace>) {
+    throw std::logic_error(
+        "checkpointing is not supported for the experimental Pcon trace");
+  } else {
+    if (m_custom_scheduler != nullptr &&
+        typeid(*m_custom_scheduler) != typeid(CustomFCFSScheduler)) {
+      throw std::logic_error(
+          "checkpointing is not supported for custom scheduler subclasses");
+    }
+    if (m_pre_start_jobs != 0) {
+      throw std::logic_error(
+          "checkpointing is not supported during warm-start replay");
+    }
+    if (m_trace.dcols().get_trace_mode() != TraceMode::SIMULATION) {
+      throw std::logic_error("checkpointing requires simulation-mode input");
+    }
+    if (!m_params.m_infile_list.empty()) {
+      throw std::logic_error(
+          "checkpointing is not supported during progressive file loading");
+    }
+
+    const bool simulated_output_open = m_trace.m_simulated_trace_ofs.is_open();
+    const bool resource_output_open = m_trace.m_resource_trace_ofs.is_open();
+    m_trace.flush_simulated_trace_buffer(true);
+    if (resource_output_open) {
+      m_trace.flush_resource_history();
+      m_trace.m_resource_trace_ofs.flush();
+    }
+
+    CheckpointWriter writer(output);
+    writer.bytes(checkpoint_magic.data(), checkpoint_magic.size());
+    writer.value(checkpoint_version);
+    writer.value(static_cast<std::uint32_t>(sizeof(Job_Record)));
+
+    // Configuration remains owned by Sim_Params. Persist the fields that
+    // determine scheduling or output identity so a mismatched destination is
+    // rejected before any state is replaced.
+    writer.value(m_params.m_total_nodes);
+    writer.enumeration(m_params.m_backfill_policy);
+    writer.enumeration(m_params.m_priority_policy);
+    writer.enumeration(m_params.m_queue_impl);
+    writer.value(m_params.m_block_size);
+    writer.value(m_params.m_num_max_candidates);
+    writer.value(m_params.m_wait_queue_capacity);
+    writer.enumeration(m_params.m_wait_queue_overflow);
+    writer.enumeration(m_params.m_run_time_mode);
+    writer.enumeration(m_params.m_run_time_distribution);
+    writer.value(m_params.m_run_time_scale);
+    writer.value(m_params.m_run_time_stddev);
+    writer.string(m_params.get_outfile());
+    writer.string(m_params.get_resource_trace());
+    writer.value(m_params.m_msec_output);
+    writer.value(m_custom_scheduler != nullptr);
+    writer.value(static_cast<std::uint64_t>(m_capacity_changes.size()));
+    for (const auto &change : m_capacity_changes) {
+      writer.value(change.time);
+      writer.value(change.total_nodes);
+    }
+
+    writer.value(m_current_time);
+    writer.value(m_job_rejection_capacity);
+    writer.value(m_next_capacity_change);
+    writer.value(m_current_capacity);
+    writer.value(m_capacity_area);
+    writer.value(m_capacity_area_time);
+    writer.value(m_jobs_completed);
+    writer.value(m_jobs_submitted);
+    writer.value(m_pre_start_jobs);
+    writer.value(m_warm_resource_area);
+    writer.value(m_warm_resource_end);
+    writer.value(m_queue_length_sum);
+    writer.value(m_queue_length_samples);
+    writer.value(m_queue_length_peak);
+    writer.value(m_scheduler->m_fcfs_reservation_time);
+    auto pending_job_ids = m_scheduler->pending_job_ids();
+    std::sort(pending_job_ids.begin(), pending_job_ids.end());
+    writer.value(static_cast<std::uint64_t>(pending_job_ids.size()));
+    for (const auto job_id : pending_job_ids) {
+      writer.value(job_id);
+    }
+    if (m_custom_scheduler != nullptr) {
+      writer.value(static_cast<std::uint64_t>(
+          m_custom_scheduler->m_wait_queue.capacity()));
+      writer.value(
+          static_cast<std::uint64_t>(m_custom_scheduler->m_wait_queue.size()));
+      for (const auto &job : m_custom_scheduler->m_wait_queue) {
+        writer.value(job.job_id);
+        writer.value(job.submit_time);
+        writer.value(job.run_time_estimate);
+        writer.value(job.nodes_requested);
+        writer.value(job.m_cost);
+        writer.value(job.removed);
+      }
+      writer.enumeration(m_custom_scheduler->m_overflow_policy);
+      writer.value(m_custom_scheduler->m_eligible_end_idx);
+      writer.value(m_custom_scheduler->m_current_tracked_time);
+      writer.value(m_custom_scheduler->m_removed_count);
+      writer.value(m_custom_scheduler->m_num_max_candidates);
+      writer.value(m_custom_scheduler->m_newly_eligible_begin_idx);
+      writer.value(m_custom_scheduler->m_arrival_update_pending);
+      writer.value(m_custom_scheduler->m_reevaluate_all_candidates);
+      writer.value(m_custom_scheduler->m_candidate_preparation_pending);
+      writer.value(m_custom_scheduler->m_resource_area);
+      writer.value(m_custom_scheduler->m_resource_area_time);
+      writer.value(m_custom_scheduler->m_resource_area_start);
+      writer.value(m_custom_scheduler->m_accounted_available_nodes);
+    }
+
+    writer.value(static_cast<std::uint64_t>(m_running_jobs.size()));
+    for (const auto &[job_id, running] : m_running_jobs) {
+      writer.value(job_id);
+      writer.value(running.start_time);
+      writer.value(running.run_time);
+      writer.value(running.nodes);
+    }
+    writer.value(static_cast<std::uint64_t>(m_pending_queue_arrivals.size()));
+    for (const auto &[time, count] : m_pending_queue_arrivals) {
+      writer.value(time);
+      writer.value(count);
+    }
+    writer.value(static_cast<std::uint64_t>(m_event_queue.size()));
+    for (const auto &event : m_event_queue) {
+      writer.value(event.get_job_idx());
+      write_epoch(writer, event.get_time());
+      writer.value(event.get_type());
+    }
+
+    writer.object(m_rng);
+
+    writer.value(m_trace.m_num_reclaimed);
+    writer.value(m_trace.m_job_store_capacity);
+    writer.value(m_trace.m_job_store_capacity_resolved);
+    writer.enumeration(m_trace.m_job_store_overflow);
+    writer.value(m_trace.m_job_flush_interval);
+    writer.value(m_trace.m_departures_since_job_flush);
+    writer.value(m_trace.m_replay_jobs_enqueued);
+    writer.value(m_trace.m_memory_pressure_fraction);
+    writer.value(m_trace.m_has_loaded_a_file);
+    write_epoch(writer, m_trace.m_last_loaded_submit_time);
+    writer.value(m_trace.m_completed_count);
+    writer.value(m_trace.m_wait_time_sum);
+    writer.value(m_trace.m_turnaround_time_sum);
+    writer.value(m_trace.m_makespan);
+    writer.value(m_trace.m_next_job_to_write);
+
+    writer.value(static_cast<std::uint64_t>(m_trace.m_data.capacity()));
+    writer.value(static_cast<std::uint64_t>(m_trace.m_data.size()));
+    for (const auto &job : m_trace.m_data) {
+      write_epoch(writer, job.m_t_begin);
+      write_epoch(writer, job.m_t_end);
+      write_epoch(writer, job.m_t_submit);
+      writer.value(job.m_t_limit);
+      writer.value(job.m_actual_run_time);
+      writer.value(job.m_num_nodes);
+      writer.enumeration(job.m_q);
+      writer.value(job.m_is_simulated);
+#if SHOW_ORG_NO
+      writer.value(job.m_org_no);
+#endif
+#if MARK_DAT_PERIOD
+      writer.value(job.m_dat);
+#endif
+      writer.value(job.m_busy_nodes);
+    }
+
+#if MARK_DAT_PERIOD
+    writer.value(m_trace.m_ctx.m_pAll_cnt);
+    write_epoch(writer, m_trace.m_ctx.m_dat_start);
+    write_epoch(writer, m_trace.m_ctx.m_dat_end);
+    writer.value(m_trace.m_ctx.m_dat_span);
+    writer.enumeration(m_trace.m_ctx.m_prev_job_q);
+    writer.value(static_cast<std::uint64_t>(m_trace.m_reserved.size()));
+    for (const auto &period : m_trace.m_reserved) {
+      write_epoch(writer, period.first);
+      write_epoch(writer, period.second);
+    }
+#endif
+    writer.value(m_trace.m_ctx.m_n_nodes_in_use);
+    writer.value(static_cast<std::uint64_t>(m_trace.m_ctx.m_evtq.size()));
+    for (const auto &event : m_trace.m_ctx.m_evtq) {
+      writer.value(event.get_job_idx());
+      write_epoch(writer, event.get_time());
+      writer.value(event.get_type());
+    }
+
+    writer.value(m_trace.m_resource_history_capacity);
+    writer.value(m_trace.m_resource_history_capacity_resolved);
+    writer.value(static_cast<std::uint64_t>(
+        m_trace.m_ctx.m_resource_history.capacity()));
+    writer.value(
+        static_cast<std::uint64_t>(m_trace.m_ctx.m_resource_history.size()));
+    for (const auto &sample : m_trace.m_ctx.m_resource_history) {
+      write_epoch(writer, sample.time);
+      writer.value(sample.allocated);
+      writer.value(sample.capacity);
+    }
+    writer.value(m_trace.m_resource_trace_total_nodes);
+    writer.value(m_trace.m_resource_trace_current_capacity);
+    writer.value(m_trace.m_resource_capacity_initialized);
+    writer.value(m_trace.m_resource_recording_start);
+    write_epoch(writer, m_trace.m_resource_recording_baseline.time);
+    writer.value(m_trace.m_resource_recording_baseline.allocated);
+    writer.value(m_trace.m_resource_recording_baseline.capacity);
+    writer.value(m_trace.m_has_resource_recording_baseline);
+    writer.value(m_trace.m_resource_trace_msec);
+    writer.value(m_trace.m_simulated_trace_msec);
+    writer.value(simulated_output_open);
+    writer.value(resource_output_open);
+  }
+}
+
+template <typename TraceType>
+void BasicSimulation<TraceType>::save_checkpoint(const std::string &filename) {
+  std::ostringstream buffer(std::ios::out | std::ios::binary);
+  save_checkpoint(buffer);
+  std::ofstream output(filename, std::ios::binary | std::ios::trunc);
+  if (!output) {
+    throw std::runtime_error("cannot open checkpoint for writing: " + filename);
+  }
+  const std::string state = buffer.str();
+  output.write(state.data(), static_cast<std::streamsize>(state.size()));
+  output.close();
+  if (!output) {
+    throw std::runtime_error("failed to finish checkpoint: " + filename);
+  }
+}
+
+template <typename TraceType>
+void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
+  if constexpr (!std::is_same_v<TraceType, Trace>) {
+    throw std::logic_error(
+        "checkpointing is not supported for the experimental Pcon trace");
+  } else {
+    if (m_custom_scheduler != nullptr &&
+        typeid(*m_custom_scheduler) != typeid(CustomFCFSScheduler)) {
+      throw std::logic_error(
+          "checkpointing is not supported for custom scheduler subclasses");
+    }
+
+    CheckpointReader reader(input);
+    std::array<char, checkpoint_magic.size()> magic{};
+    reader.bytes(magic.data(), magic.size());
+    if (magic != checkpoint_magic) {
+      throw std::runtime_error("not a DR_EVT simulation checkpoint");
+    }
+    require_checkpoint_match(reader.value<std::uint32_t>(), checkpoint_version,
+                             "format version");
+    require_checkpoint_match(reader.value<std::uint32_t>(),
+                             static_cast<std::uint32_t>(sizeof(Job_Record)),
+                             "Job_Record ABI");
+    require_checkpoint_match(reader.value<num_nodes_t>(),
+                             m_params.m_total_nodes, "total_nodes");
+    require_checkpoint_match(reader.enumeration<BackfillPolicy>(),
+                             m_params.m_backfill_policy, "backfill_policy");
+    require_checkpoint_match(reader.enumeration<PriorityPolicy>(),
+                             m_params.m_priority_policy, "priority_policy");
+    require_checkpoint_match(reader.enumeration<QueueImplementation>(),
+                             m_params.m_queue_impl, "queue_impl");
+    require_checkpoint_match(reader.value<size_t>(), m_params.m_block_size,
+                             "block_size");
+    require_checkpoint_match(reader.value<size_t>(),
+                             m_params.m_num_max_candidates,
+                             "num_max_candidates");
+    require_checkpoint_match(reader.value<size_t>(),
+                             m_params.m_wait_queue_capacity,
+                             "wait_queue_capacity");
+    require_checkpoint_match(reader.enumeration<CircularOverflowPolicy>(),
+                             m_params.m_wait_queue_overflow,
+                             "wait_queue_overflow");
+    require_checkpoint_match(reader.enumeration<RunTimeMode>(),
+                             m_params.m_run_time_mode, "run_time_mode");
+    require_checkpoint_match(reader.enumeration<DistributionType>(),
+                             m_params.m_run_time_distribution,
+                             "run_time_distribution");
+    require_checkpoint_match(reader.value<double>(), m_params.m_run_time_scale,
+                             "run_time_scale");
+    require_checkpoint_match(reader.value<double>(), m_params.m_run_time_stddev,
+                             "run_time_stddev");
+    require_checkpoint_match(reader.string(), m_params.get_outfile(),
+                             "simulated trace output");
+    require_checkpoint_match(reader.string(), m_params.get_resource_trace(),
+                             "resource trace output");
+    require_checkpoint_match(reader.value<bool>(), m_params.m_msec_output,
+                             "msec_output");
+    const bool checkpoint_uses_custom_scheduler = reader.value<bool>();
+    require_checkpoint_match(checkpoint_uses_custom_scheduler,
+                             m_custom_scheduler != nullptr,
+                             "custom scheduler kind");
+    const size_t capacity_change_count = reader.count();
+    require_checkpoint_match(capacity_change_count, m_capacity_changes.size(),
+                             "capacity schedule size");
+    for (const auto &expected : m_capacity_changes) {
+      require_checkpoint_match(reader.value<sim_time_t>(), expected.time,
+                               "capacity schedule time");
+      require_checkpoint_match(reader.value<num_nodes_t>(),
+                               expected.total_nodes, "capacity schedule nodes");
+    }
+
+    m_trace.m_simulated_trace_ofs.close();
+    m_trace.m_resource_trace_ofs.close();
+
+    m_current_time = reader.value<sim_time_t>();
+    m_job_rejection_capacity = reader.value<num_nodes_t>();
+    m_next_capacity_change = reader.value<size_t>();
+    m_current_capacity = reader.value<num_nodes_t>();
+    m_capacity_area = reader.value<tdiff_t>();
+    m_capacity_area_time = reader.value<sim_time_t>();
+    m_jobs_completed = reader.value<num_jobs_t>();
+    m_jobs_submitted = reader.value<num_jobs_t>();
+    m_pre_start_jobs = reader.value<size_t>();
+    m_warm_resource_area = reader.value<tdiff_t>();
+    m_warm_resource_end = reader.value<sim_time_t>();
+    m_queue_length_sum = reader.value<size_t>();
+    m_queue_length_samples = reader.value<size_t>();
+    m_queue_length_peak = reader.value<size_t>();
+    const sim_time_t reservation_time = reader.value<sim_time_t>();
+    std::vector<job_no_t> pending_job_ids;
+    const size_t pending_job_count = reader.count();
+    pending_job_ids.reserve(pending_job_count);
+    for (size_t i = 0; i < pending_job_count; ++i) {
+      pending_job_ids.push_back(reader.value<job_no_t>());
+    }
+    std::sort(pending_job_ids.begin(), pending_job_ids.end());
+    if (std::adjacent_find(pending_job_ids.begin(), pending_job_ids.end()) !=
+        pending_job_ids.end()) {
+      throw std::runtime_error(
+          "checkpoint scheduler contains a duplicate job identifier");
+    }
+    if (checkpoint_uses_custom_scheduler) {
+      const size_t queue_capacity = reader.count();
+      const size_t queue_size = reader.count();
+      if (queue_size > queue_capacity) {
+        throw std::runtime_error(
+            "checkpoint custom scheduler queue exceeds its capacity");
+      }
+      m_custom_scheduler->m_wait_queue.clear();
+      m_custom_scheduler->m_wait_queue.set_capacity(queue_capacity);
+      for (size_t i = 0; i < queue_size; ++i) {
+        const auto job_id = reader.value<job_no_t>();
+        const auto submit_time = reader.value<sim_time_t>();
+        const auto run_time = reader.value<tdiff_t>();
+        const auto nodes = reader.value<num_nodes_t>();
+        const auto cost = reader.value<job_cost_t>();
+        const auto removed = reader.value<bool>();
+        m_custom_scheduler->m_wait_queue.push_back(
+            CustomFCFSScheduler::JobEntry(job_id, submit_time, run_time, nodes,
+                                          cost));
+        m_custom_scheduler->m_wait_queue.back().removed = removed;
+      }
+      const auto overflow_policy = reader.enumeration<CircularOverflowPolicy>();
+      require_checkpoint_match(overflow_policy, m_params.m_wait_queue_overflow,
+                               "custom scheduler overflow policy");
+      m_custom_scheduler->m_overflow_policy = overflow_policy;
+      m_custom_scheduler->m_eligible_end_idx = reader.value<size_t>();
+      m_custom_scheduler->m_current_tracked_time = reader.value<sim_time_t>();
+      m_custom_scheduler->m_removed_count = reader.value<size_t>();
+      const size_t num_max_candidates = reader.value<size_t>();
+      require_checkpoint_match(num_max_candidates,
+                               m_params.m_num_max_candidates,
+                               "custom scheduler candidate limit");
+      m_custom_scheduler->m_num_max_candidates = num_max_candidates;
+      m_custom_scheduler->m_newly_eligible_begin_idx = reader.value<size_t>();
+      m_custom_scheduler->m_arrival_update_pending = reader.value<bool>();
+      m_custom_scheduler->m_reevaluate_all_candidates = reader.value<bool>();
+      m_custom_scheduler->m_candidate_preparation_pending =
+          reader.value<bool>();
+      m_custom_scheduler->m_resource_area = reader.value<tdiff_t>();
+      m_custom_scheduler->m_resource_area_time = reader.value<sim_time_t>();
+      m_custom_scheduler->m_resource_area_start = reader.value<sim_time_t>();
+      m_custom_scheduler->m_accounted_available_nodes =
+          reader.value<num_nodes_t>();
+      if (m_custom_scheduler->m_eligible_end_idx > queue_size ||
+          m_custom_scheduler->m_newly_eligible_begin_idx >
+              m_custom_scheduler->m_eligible_end_idx ||
+          m_custom_scheduler->m_removed_count >
+              m_custom_scheduler->m_eligible_end_idx ||
+          m_custom_scheduler->m_accounted_available_nodes >
+              m_params.m_total_nodes) {
+        throw std::runtime_error(
+            "checkpoint custom scheduler indices are inconsistent");
+      }
+    }
+
+    m_running_jobs.clear();
+    for (size_t i = 0, count = reader.count(); i < count; ++i) {
+      const auto job_id = reader.value<job_no_t>();
+      Running_Job running{reader.value<sim_time_t>(), reader.value<tdiff_t>(),
+                          reader.value<num_nodes_t>()};
+      m_running_jobs.emplace(job_id, running);
+    }
+    m_pending_queue_arrivals.clear();
+    for (size_t i = 0, count = reader.count(); i < count; ++i) {
+      const auto time = reader.value<sim_time_t>();
+      const auto count_at_time = reader.value<size_t>();
+      m_pending_queue_arrivals.emplace(time, count_at_time);
+    }
+    m_event_queue.clear();
+    for (size_t i = 0, count = reader.count(); i < count; ++i) {
+      const auto job_id = reader.value<job_no_t>();
+      const auto time = read_epoch(reader);
+      const auto type = reader.value<bool>();
+      m_event_queue.emplace(job_id, time, type);
+    }
+    reader.object(m_rng);
+
+    m_trace.m_num_reclaimed = reader.value<size_t>();
+    m_trace.m_job_store_capacity = reader.value<size_t>();
+    m_trace.m_job_store_capacity_resolved = reader.value<bool>();
+    m_trace.m_job_store_overflow = reader.enumeration<CircularOverflowPolicy>();
+    m_trace.m_job_flush_interval = reader.value<size_t>();
+    m_trace.m_departures_since_job_flush = reader.value<size_t>();
+    m_trace.m_replay_jobs_enqueued = reader.value<size_t>();
+    m_trace.m_memory_pressure_fraction = reader.value<double>();
+    m_trace.m_has_loaded_a_file = reader.value<bool>();
+    m_trace.m_last_loaded_submit_time = read_epoch(reader);
+    m_trace.m_completed_count = reader.value<num_jobs_t>();
+    m_trace.m_wait_time_sum = reader.value<tdiff_t>();
+    m_trace.m_turnaround_time_sum = reader.value<tdiff_t>();
+    m_trace.m_makespan = reader.value<sim_time_t>();
+    m_trace.m_next_job_to_write = reader.value<size_t>();
+
+    const size_t job_capacity = reader.count();
+    const size_t job_count = reader.count();
+    if (job_count > job_capacity) {
+      throw std::runtime_error("checkpoint job store exceeds its capacity");
+    }
+    m_trace.m_data.clear();
+    m_trace.m_data.set_capacity(job_capacity);
+    for (size_t i = 0; i < job_count; ++i) {
+      const auto begin = read_epoch(reader);
+      const auto end = read_epoch(reader);
+      const auto submit = read_epoch(reader);
+      const auto limit = reader.value<timeout_t>();
+      const auto actual = reader.value<tdiff_t>();
+      const auto nodes = reader.value<num_nodes_t>();
+      const auto queue = reader.enumeration<job_queue_t>();
+      const auto simulated = reader.value<bool>();
+      Job_Record job(submit, nodes, queue, limit);
+      job.m_t_begin = begin;
+      job.m_t_end = end;
+      job.m_actual_run_time = actual;
+      job.m_is_simulated = simulated;
+#if SHOW_ORG_NO
+      job.m_org_no = reader.value<job_no_t>();
+#endif
+#if MARK_DAT_PERIOD
+      job.m_dat = reader.value<bool>();
+#endif
+      job.m_busy_nodes = reader.value<num_nodes_t>();
+      m_trace.m_data.push_back(std::move(job));
+    }
+
+#if MARK_DAT_PERIOD
+    m_trace.m_ctx.m_pAll_cnt = reader.value<num_jobs_t>();
+    m_trace.m_ctx.m_dat_start = read_epoch(reader);
+    m_trace.m_ctx.m_dat_end = read_epoch(reader);
+    m_trace.m_ctx.m_dat_span = reader.value<tdiff_t>();
+    m_trace.m_ctx.m_prev_job_q = reader.enumeration<job_queue_t>();
+    m_trace.m_reserved.clear();
+    for (size_t i = 0, count = reader.count(); i < count; ++i) {
+      const auto begin = read_epoch(reader);
+      const auto end = read_epoch(reader);
+      m_trace.m_reserved.emplace_back(begin, end);
+    }
+#endif
+    m_trace.m_ctx.m_n_nodes_in_use = reader.value<num_nodes_t>();
+    m_trace.m_ctx.m_evtq.clear();
+    for (size_t i = 0, count = reader.count(); i < count; ++i) {
+      const auto job_id = reader.value<job_no_t>();
+      const auto time = read_epoch(reader);
+      const auto type = reader.value<bool>();
+      m_trace.m_ctx.m_evtq.emplace(job_id, time, type);
+    }
+
+    m_trace.m_resource_history_capacity = reader.value<size_t>();
+    m_trace.m_resource_history_capacity_resolved = reader.value<bool>();
+    const size_t resource_capacity = reader.count();
+    const size_t resource_count = reader.count();
+    if (resource_count > resource_capacity) {
+      throw std::runtime_error(
+          "checkpoint resource history exceeds its capacity");
+    }
+    m_trace.m_ctx.m_resource_history.clear();
+    m_trace.m_ctx.m_resource_history.set_capacity(resource_capacity);
+    for (size_t i = 0; i < resource_count; ++i) {
+      m_trace.m_ctx.m_resource_history.push_back(Standard_Resource_Sample{
+          read_epoch(reader), reader.value<num_nodes_t>(),
+          reader.value<num_nodes_t>()});
+    }
+    m_trace.m_resource_trace_total_nodes = reader.value<num_nodes_t>();
+    m_trace.m_resource_trace_current_capacity = reader.value<num_nodes_t>();
+    m_trace.m_resource_capacity_initialized = reader.value<bool>();
+    m_trace.m_resource_recording_start = reader.value<sim_time_t>();
+    m_trace.m_resource_recording_baseline.time = read_epoch(reader);
+    m_trace.m_resource_recording_baseline.allocated =
+        reader.value<num_nodes_t>();
+    m_trace.m_resource_recording_baseline.capacity =
+        reader.value<num_nodes_t>();
+    m_trace.m_has_resource_recording_baseline = reader.value<bool>();
+    m_trace.m_resource_trace_msec = reader.value<bool>();
+    m_trace.m_simulated_trace_msec = reader.value<bool>();
+    const bool simulated_output_open = reader.value<bool>();
+    const bool resource_output_open = reader.value<bool>();
+    m_trace.m_simulated_trace_buffer.clear();
+
+    const auto first_resident_job =
+        static_cast<job_no_t>(m_trace.m_num_reclaimed);
+    const auto resident_job_count =
+        static_cast<job_no_t>(m_trace.m_data.size());
+    for (const auto job_id : pending_job_ids) {
+      if (job_id < first_resident_job ||
+          job_id - first_resident_job >= resident_job_count) {
+        throw std::runtime_error(
+            "checkpoint scheduler references a non-resident job");
+      }
+      const auto &job = m_trace.m_data[job_id - first_resident_job];
+      if (job.is_scheduled() ||
+          job.get_submit_time() == Job_Record::unscheduled_sentinel()) {
+        throw std::runtime_error(
+            "checkpoint scheduler references a non-pending job");
+      }
+    }
+    if (checkpoint_uses_custom_scheduler) {
+      auto restored_pending_ids = m_custom_scheduler->pending_job_ids();
+      std::sort(restored_pending_ids.begin(), restored_pending_ids.end());
+      if (restored_pending_ids != pending_job_ids) {
+        throw std::runtime_error(
+            "checkpoint custom scheduler queue ownership is inconsistent");
+      }
+    } else {
+      m_scheduler = create_scheduler(
+          m_params.m_total_nodes, m_trace.m_data.size(),
+          m_params.m_backfill_policy, m_params.m_priority_policy,
+          m_params.m_queue_impl, m_params.m_block_size,
+          m_params.m_wait_queue_capacity, m_params.m_wait_queue_overflow);
+      for (const auto job_id : pending_job_ids) {
+        const auto &job = m_trace.m_data[job_id - first_resident_job];
+        m_scheduler->insert_job(
+            job_id, convert_epoch<sim_time_t>(job.get_submit_time()),
+            job.get_limit_time(), job.get_num_nodes());
+      }
+      m_scheduler->sync_to(m_current_time);
+    }
+    m_scheduler->m_fcfs_reservation_time = reservation_time;
+
+    if (simulated_output_open) {
+      const auto filename = m_params.get_outfile();
+      std::ifstream existing(filename, std::ios::binary);
+      if (!existing || existing.peek() == std::ifstream::traits_type::eof()) {
+        throw std::runtime_error(
+            "checkpoint simulated trace output is missing or empty: " +
+            filename);
+      }
+      m_trace.m_simulated_trace_ofs.open(filename, std::ios::app);
+      if (!m_trace.m_simulated_trace_ofs) {
+        throw std::runtime_error("cannot resume simulated trace output: " +
+                                 filename);
+      }
+    }
+    if (resource_output_open) {
+      const auto filename = m_params.get_resource_trace();
+      std::ifstream existing(filename, std::ios::binary);
+      if (!existing || existing.peek() == std::ifstream::traits_type::eof()) {
+        throw std::runtime_error(
+            "checkpoint resource trace output is missing or empty: " +
+            filename);
+      }
+      m_trace.m_resource_trace_ofs.open(filename, std::ios::app);
+      if (!m_trace.m_resource_trace_ofs) {
+        throw std::runtime_error("cannot resume resource trace output: " +
+                                 filename);
+      }
+    }
+  }
+}
+
+template <typename TraceType>
+void BasicSimulation<TraceType>::load_checkpoint(const std::string &filename) {
+  std::ifstream input(filename, std::ios::binary);
+  if (!input) {
+    throw std::runtime_error("cannot open checkpoint for reading: " + filename);
+  }
+  load_checkpoint(input);
+}
+#endif
 
 template <typename TraceType>
 void BasicSimulation<TraceType>::write_resource_trace(

@@ -229,6 +229,24 @@ PYBIND11_MODULE(dr_evt, m) {
            "Args:\n    target_time (float): Inclusive time bound.\n"
            "Returns:\n    None")
 
+#if defined(DR_EVT_HAS_SER20)
+      .def(
+          "save_checkpoint",
+          [](Simulation &simulation, const std::string &filename) {
+            simulation.save_checkpoint(filename);
+          },
+          py::arg("filename"),
+          "Save the complete simulation state to a binary checkpoint file.")
+
+      .def(
+          "load_checkpoint",
+          [](Simulation &simulation, const std::string &filename) {
+            simulation.load_checkpoint(filename);
+          },
+          py::arg("filename"),
+          "Replace current state from a compatible checkpoint file.")
+#endif
+
       // Monitoring - Basic state
       .def("get_current_time", &Simulation::get_current_time,
            "Return the current simulation time as float.")
