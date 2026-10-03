@@ -26,12 +26,13 @@ else()
     GIT_REPOSITORY https://github.com/catchorg/Catch2.git
     GIT_TAG v2.13.10
     GIT_SHALLOW TRUE
+    # DR_EVT consumes Catch2 v2 as a header-only dependency.  Pointing at a
+    # deliberately absent subdirectory lets MakeAvailable populate the source
+    # without adding Catch2's own build and install rules.
+    SOURCE_SUBDIR _dr_evt_header_only
   )
 
-  FetchContent_GetProperties(Catch2)
-  if (NOT catch2_POPULATED)
-    FetchContent_Populate(Catch2)
-  endif()
+  FetchContent_MakeAvailable(Catch2)
 
   set(CATCH2_INCLUDE_DIR
       "${catch2_SOURCE_DIR}/single_include"

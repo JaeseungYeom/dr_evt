@@ -13,7 +13,7 @@ rather than retaining a pointer to a separate, fixed-layout job vector.
 | Buffer | Contents | When entries can be released | What happens when full |
 | --- | --- | --- | --- |
 | `Trace::m_data` | Job records used for scheduling, statistics, and the simulated-job trace | After the departure event has been processed and the schedule row has been consumed, or immediately for a rejected job | Write and reclaim the eligible front prefix; grow or abort if insertion still lacks space |
-| `Trace::m_resource_history` | Finalized `(time, free_nodes, allocated_nodes)` resource samples for `--resource_trace` | Immediately after the sample is recorded | Flush samples to the resource-trace file and clear the buffer |
+| `Trace::m_resource_history` | Finalized `(time, free_nodes, allocated_nodes)` resource samples | Immediately after the sample is recorded | Flush samples to the resource-trace file or structured Redis output and clear the buffer |
 
 The buffers are independent of the scheduler's circular FCFS wait queue. The
 CSV output files are streamed; they are not circular buffers themselves. See
@@ -36,11 +36,21 @@ it remains stored until every preceding record is also reclaimable. Schedulers
 therefore hold a `Trace` reference and use `job_at()` rather than indexing the
 buffer directly.
 
-Before a record is discarded, `write_job_line()` consumes it for the simulated
-job trace and accumulates the summary statistics. A permanent job-number cursor
-tracks the next row to write across physical `pop_front()` operations. The same
-function is used by reclamation and final output, so each scheduled job is
-written and counted exactly once without adding a flag to every `Job_Record`.
+Before a record is discarded, `write_job_range()` consumes the eligible range
+for the simulated job trace and accumulates summary statistics through
+`write_job_line()`. A permanent job-number cursor tracks the next row to write
+across physical `pop_front()` operations. The same range path is used by
+reclamation and final output, so each scheduled job is written and counted
+exactly once without adding a flag to every `Job_Record`.
+
+For Redis output, the eligible const-iterator range is passed directly from
+`m_data` to `RedisOutput`. Redis serializes that range in one transaction before
+`pop_front()` invalidates it. No second job-record vector is retained. File
+output continues to accumulate serialized CSV bytes in
+`m_simulated_trace_buffer`.
+
+Resource Redis output likewise consumes `m_resource_history` through const
+iterators before clearing it; it does not copy samples into an output sidecar.
 
 ## Reclamation rules
 

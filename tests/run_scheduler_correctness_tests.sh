@@ -3,6 +3,8 @@
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
 
 cd "$REPO_ROOT"
 
@@ -12,7 +14,8 @@ source "$SCRIPT_DIR/set_simulator_path.sh"
 TRACE_DIR="tests/test_traces/scheduler_correctness"
 TOTAL_NODES=100
 TEST_WORK_DIR=$(mktemp -d "/tmp/dr-evt-scheduler-correctness.XXXXXXXX")
-trap 'rm -rf -- "$TEST_WORK_DIR"' EXIT INT TERM
+cleanup() { rm -rf -- "$TEST_WORK_DIR"; }
+test_report_set_cleanup cleanup
 
 # Test list - all 34 tests
 TESTS=(

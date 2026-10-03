@@ -207,13 +207,23 @@ def test_streaming_api(result):
         # Create simulation
         sim = dr_evt.Simulation(params)
         # append_job() is the public streaming entry point.
-        sim.append_job(0.0, 10, QUEUE_INPUT, 100)
+        first_id = sim.append_job(0.0, 10, QUEUE_INPUT, 100)
+        second_id = sim.append_job(50.0, 20, QUEUE_INPUT, 100)
+        pending = sim.get_job_statuses([second_id, first_id, second_id])
+        assert [item.job_idx for item in pending] == [second_id, first_id,
+                                                       second_id]
+        assert pending[0].state == dr_evt.JobState.PENDING
+        assert pending[0].expected_start_time == 50.0
+        assert pending[1].expected_start_time == 0.0
         sim.advance_to(0.0)
-        assert sim.get_nodes_in_use() == 10
-        result.record_pass("append_job and advance_to")
+        active = sim.get_job_statuses([first_id, second_id])
+        assert active[0].state == dr_evt.JobState.RUNNING
+        assert active[0].start_time == 0.0
+        assert active[0].end_time == 100.0
+        assert active[1].state == dr_evt.JobState.PENDING
+        result.record_pass("append_job, status query, and advance_to")
 
         # Test run_until_exclusive
-        sim.append_job(50.0, 20, QUEUE_INPUT, 100)
         sim.run_until_exclusive(50.0)
         # Job 1 must NOT have started yet - the event at exactly the
         # target time is excluded by run_until_exclusive.

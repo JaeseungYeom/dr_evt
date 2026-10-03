@@ -30,6 +30,9 @@
 
 namespace dr_evt {
 template <typename TraceType> class BasicSimulation;
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+class RedisOutput;
+#endif
 /** \addtogroup dr_evt_trace
  *  @{ */
 
@@ -198,10 +201,7 @@ protected:
   /// True after the resource-history capacity has been resolved.
   bool m_resource_history_capacity_resolved;
 
-  /// Set once start_resource_trace() opens a real output file - lets
-  /// reclaim-driven flushes incrementally during the run instead of only at
-  /// the very end.
-  /// Open incremental resource-trace output stream, when enabled.
+  /// Open incremental resource-trace file stream when Redis is not selected.
   std::ofstream m_resource_trace_ofs;
   /// Cluster size used to derive free nodes in resource-trace output.
   num_nodes_t m_resource_trace_total_nodes;
@@ -225,13 +225,17 @@ protected:
   /// write would ever see it.
   /// Open incremental simulated-job-trace output stream, when enabled.
   std::ofstream m_simulated_trace_ofs;
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+  /// Redis schedule sink, mutually exclusive with m_simulated_trace_ofs.
+  std::unique_ptr<RedisOutput> m_redis_output;
+#endif
   /// Whether simulated-job-trace timestamps are rendered in milliseconds.
   bool m_simulated_trace_msec;
   /// Permanent number of the next job whose schedule output/statistics have
   /// not yet been consumed. This is the output cursor across front reclamation,
   /// explicit flushes, and the final write.
   size_t m_next_job_to_write;
-  /// Accumulates complete schedule lines during one record-count flush.
+  /// Accumulates complete file-output lines during one record-count flush.
   std::string m_simulated_trace_buffer;
 
 public:
@@ -249,6 +253,7 @@ public:
    * @param[in] timezone Default timezone for timestamps without offsets. */
   BasicTrace(const std::string &fname, const std::string &format,
              const std::string &timestamp_format, const std::string &timezone);
+  ~BasicTrace();
 
   /// @brief Allow access to the header information and column filter.
   /// @return Read-only reference to the Data_Columns mapping.
@@ -586,14 +591,13 @@ public:
   }
 
   /**
-   * @brief Open filename early so resource-history samples reclaimed from
-   * the circular buffer during the run get flushed to it incrementally,
-   * instead of only being available at the very end via
-   * write_resource_trace() below. Call once, before any processing
-   * begins (e.g. before submit_job()/advance_to(), or run_job_trace()).
-   * @param[in] filename Output path; a no-op if empty - samples reclaimed
-   *        before write_resource_trace() is later called are then
-   *        simply discarded, which is fine since nobody asked for them.
+   * @brief Initialize incremental resource-history output.
+   *
+   * When Redis job output is active, resource CSV is written to
+   * `<prefix>:resources:csv` and filename is ignored. Otherwise filename is
+   * opened normally. Call once before processing begins.
+   * @param[in] filename File output path when Redis is not active. An empty
+   *        path disables file output.
    * @param[in] total_nodes Pool size, used to derive free_nodes at write time.
    * @param[in] msec Format timestamps with millisecond precision instead of
    *        truncating to whole seconds (matches Sim_Params::m_msec_output;
@@ -618,11 +622,9 @@ public:
   }
 
   /**
-   * @brief Write this Trace's recorded resource-occupancy history to a
-   * CSV file (same "time,free_nodes,allocated_nodes" format used by the
-   * simulator). Shared by the standalone tracer and the scheduling
-   * simulator, since both populate this history through the same
-   * process_events_until()/process_single_event() code path.
+   * @brief Write this Trace's recorded resource-occupancy history as CSV.
+   * Redis simulation output uses `<prefix>:resources:csv`; otherwise this
+   * writes a normal file. Both use the same schema and buffered data path.
    *
    * If start_resource_trace() was already called with the same filename,
    * this only flushes whatever's left buffered and closes the file -
@@ -669,8 +671,12 @@ public:
    *        m_data can actually reclaim.
    * @param[in] msec Format timestamps with millisecond precision instead of
    *        truncating to whole seconds (matches Sim_Params::m_msec_output)
+   * @param[in] redis_uri Redis connection URI; empty selects file output.
+   * @param[in] redis_key_prefix Namespace for Redis output keys.
    */
-  void start_simulated_trace(const std::string &filename, bool msec = false);
+  void start_simulated_trace(const std::string &filename, bool msec = false,
+                             const std::string &redis_uri = {},
+                             const std::string &redis_key_prefix = {});
 
   /**
    * @brief Write this Trace's job records to a CSV file (same format
@@ -750,8 +756,8 @@ protected:
   /// any sample is recorded. A no-op on every call after the first.
   void resolve_resource_history_capacity();
 
-  /// Write every entry currently in m_ctx.m_resource_history to
-  /// m_resource_trace_ofs (if open) in one batch, then clear the buffer.
+  /// Write every entry currently in m_ctx.m_resource_history to the active
+  /// file or Redis resource sink in one batch, then clear the buffer.
   /// Used both for incremental reclaim-driven flushes during a run and
   /// for the final flush in write_resource_trace().
   void flush_resource_history();
@@ -783,6 +789,8 @@ protected:
   /// @param[in] current_time Fully processed simulation time boundary.
   /// @return `true` when the front slot may be discarded.
   bool is_front_reclaimable(sim_time_t current_time) const;
+  bool is_job_reclaimable(job_no_t job_id, const Job_Record &job,
+                          sim_time_t current_time) const;
 
   /// Reclaim from the front while is_front_reclaimable() holds, advancing
   /// m_num_reclaimed, until at least min_free slots are free (capacity()
@@ -890,15 +898,22 @@ protected:
   /// projected peak.
   void check_memory_pressure(size_t batch_size) const;
 
-  /// Write one job's line to m_simulated_trace_ofs (if open and the
-  /// job is_scheduled() - unscheduled/rejected jobs were never written
-  /// by the original write_simulated_trace() either). The single
-  /// choke point both reclaim_front_jobs() and write_simulated_trace()
-  /// go through.
+  /// Add one scheduled job to the active file or Redis flush buffer.
+  /// Unscheduled/rejected jobs were never written by the original
+  /// write_simulated_trace() either. This is the single choke point both
+  /// reclaim_front_jobs() and write_simulated_trace() go through.
   /// @param[in] job Record to write and include in running statistics.
   void write_job_line(const Job_Record &job);
 
-  /// Write and clear the schedule lines accumulated by one reclaim/final-write
+  /// Send an existing trace-buffer range to the active output sink.
+  void write_job_range(typename trace_data_t::const_iterator first,
+                       typename trace_data_t::const_iterator last,
+                       job_no_t first_job_id, sim_time_t completed_through);
+
+  /// Return whether either the file or Redis simulated-trace sink is active.
+  bool simulated_trace_output_active() const;
+
+  /// Write and clear file lines accumulated by one reclaim/final-write
   /// operation. If sync is true, also flush the underlying ostream buffer.
   void flush_simulated_trace_buffer(bool sync);
 };

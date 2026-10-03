@@ -124,6 +124,9 @@ void test_exact_continuation_case(QueueImplementation queue_impl,
   populate_checkpoint_workload(uninterrupted);
   check_populated_checkpoint_state(uninterrupted);
   const auto checkpoint_stats = uninterrupted.get_statistics();
+  const std::vector<job_no_t> status_ids = {0, scheduler_workload_size - 1};
+  const auto checkpoint_job_statuses =
+      uninterrupted.get_job_statuses(status_ids);
 
   std::stringstream checkpoint(std::ios::in | std::ios::out | std::ios::binary);
   uninterrupted.save_checkpoint(checkpoint);
@@ -141,6 +144,19 @@ void test_exact_continuation_case(QueueImplementation queue_impl,
   assert(restored_stats.jobs_running == checkpoint_stats.jobs_running);
   assert(restored_stats.jobs_waiting == checkpoint_stats.jobs_waiting);
   assert(restored_stats.nodes_in_use == checkpoint_stats.nodes_in_use);
+  const auto restored_job_statuses = restarted.get_job_statuses(status_ids);
+  assert(restored_job_statuses.size() == checkpoint_job_statuses.size());
+  for (size_t i = 0; i < restored_job_statuses.size(); ++i) {
+    assert(restored_job_statuses[i].job_idx ==
+           checkpoint_job_statuses[i].job_idx);
+    assert(restored_job_statuses[i].state == checkpoint_job_statuses[i].state);
+    assert(restored_job_statuses[i].start_time ==
+           checkpoint_job_statuses[i].start_time);
+    assert(restored_job_statuses[i].end_time ==
+           checkpoint_job_statuses[i].end_time);
+    assert(restored_job_statuses[i].expected_start_time ==
+           checkpoint_job_statuses[i].expected_start_time);
+  }
 
   append_restarted_workload(restarted);
   restarted.advance_to(std::numeric_limits<sim_time_t>::max());

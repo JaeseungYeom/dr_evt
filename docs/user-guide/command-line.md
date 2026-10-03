@@ -10,6 +10,8 @@ Complete reference for all DR_EVT command-line options for the `simulator` binar
 | Input/output | `-L, --infile_list FILENAME` | Progressively read the trace files named in a list. |
 | Input/output | `-o, --outfile FILENAME` | Write the simulated job schedule. |
 | Input/output | `-R, --resource_trace FILENAME` | Write resource history. |
+| Input/output | `--redis_uri URI` | Send job and resource output to Redis. |
+| Input/output | `--redis_key_prefix PREFIX` | Select the Redis output namespace. |
 | System | `-n, --total_nodes COUNT` | Set simulated cluster capacity. |
 | System | `--capacity_schedule FILENAME` | Apply time-varying capacity change points. |
 | System | `--sim_start_time TIME` | Set the global simulation start time as a nonnegative epoch value or ISO timestamp; a positive value warm-starts replay input. |
@@ -97,8 +99,28 @@ Output file for simulated job trace.
 ${CMAKE_INSTALL_PREFIX}/bin/simulator traces/jobs.csv --outfile output/result.csv
 ```
 
+### `--redis_uri URI` and `--redis_key_prefix PREFIX`
+
+Write the simulated-job schedule and resource history to Redis instead of
+opening `--outfile` or `--resource_trace`. Both options must be specified, and
+DR_EVT must be built with
+`-DDR_EVT_WITH_REDIS=ON`.
+
+```bash
+${CMAKE_INSTALL_PREFIX}/bin/simulator traces/jobs.csv \
+    --redis_uri redis://127.0.0.1:6379 \
+    --redis_key_prefix dr_evt:run42
+```
+
+The key prefix identifies both complete CSV values, per-job hashes, and sorted
+search indexes. See [Redis Output](redis-output.md) for installation, server
+startup, key layout, and query commands.
+
 ### `-R, --resource_trace FILENAME`
 Write resource usage trace to file.
+
+When Redis output is enabled, the resource trace is stored at
+`<redis_key_prefix>:resources:csv` instead and `FILENAME` is not opened.
 
 The generated schemas are defined in [Output Trace Files](output-traces.md).
 
@@ -109,7 +131,9 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator traces/jobs.csv \
     --resource_trace results/resources.csv
 ```
 
-**Default:** If not specified, resource trace is written to `<outfile>_resources.csv`
+**Default:** If not specified, resource trace is written to
+`<outfile>_resources.csv`, or to `<redis_key_prefix>:resources:csv` when Redis
+output is enabled.
 
 ## System Configuration
 
@@ -319,6 +343,12 @@ and reset the interval.
 **Default:** `0`, meaning the current job-store circular-buffer capacity. Thus
 the default normally waits until space is needed; set a smaller record count to
 spread output I/O through a long streaming run.
+
+Setting the interval to `1` attempts a flush after every processed job
+departure. Rows remain in permanent job-ID order, so a later backfilled job
+that completes before an earlier job is held until the completed records form
+a contiguous prefix. The same rule applies to file and Redis output. See
+[Redis Output](redis-output.md) for Redis setup and query examples.
 
 ### `-m, --check_memory_pressure FRACTION`
 Before growing the job-record store for a progressive file or streaming
@@ -606,6 +636,7 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator --help
 - [User Guide Overview](overview.md) - User guide navigation
 - [Input Trace Files](trace-formats.md) - input schemas and mode selection
 - [Output Trace Files](output-traces.md) - output schemas and statistics
+- [Redis Output](redis-output.md) - installation, server startup, and queries
 - [Protobuf Configuration](protobuf-config.md) - Full `.textproto` schema and worked examples
 - [Streaming API](../api/STREAMING_API.md) - Programmatic C++ API for online simulation
 - [Backfilling Algorithms](../BACKFILLING_ALGORITHMS.md) - EASY and CONSERVATIVE algorithm details

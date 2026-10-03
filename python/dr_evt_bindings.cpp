@@ -58,12 +58,23 @@ PYBIND11_MODULE(dr_evt, m) {
       .value("LJF", PriorityPolicy::LJF)
       .export_values();
 
+  py::enum_<Simulation::Job_State>(m, "JobState",
+                                   "Lifecycle state of an appended job.")
+      .value("PENDING", Simulation::Job_State::PENDING)
+      .value("RUNNING", Simulation::Job_State::RUNNING)
+      .value("COMPLETED", Simulation::Job_State::COMPLETED)
+      .value("REJECTED", Simulation::Job_State::REJECTED);
+
   // Mutable configuration populated before constructing Simulation.
   py::class_<Sim_Params>(m, "SimParams")
       .def(py::init<>(), "Creates a configuration with DR_EVT default values.")
       .def_readwrite("infile", &Sim_Params::m_infile,
                      "str: Path to the input trace used by batch mode and "
                      "initialize_trace().")
+      .def_readwrite("redis_uri", &Sim_Params::m_redis_uri,
+                     "str: Redis connection URI; empty selects file output.")
+      .def_readwrite("redis_key_prefix", &Sim_Params::m_redis_key_prefix,
+                     "str: Redis namespace for output and search indexes.")
       .def_readwrite("total_nodes", &Sim_Params::m_total_nodes,
                      "int: Total scheduler-managed compute nodes.")
       .def_readwrite("capacity_schedule", &Sim_Params::m_capacity_schedule,
@@ -173,6 +184,19 @@ PYBIND11_MODULE(dr_evt, m) {
                     "list[ResourceRelease]: Future resource-release events in "
                     "time order.");
 
+  py::class_<Simulation::Job_Status>(m, "JobStatus")
+      .def_readonly("job_idx", &Simulation::Job_Status::job_idx,
+                    "int: Stable identifier returned by append_job(s).")
+      .def_readonly("state", &Simulation::Job_Status::state,
+                    "JobState: Current lifecycle state.")
+      .def_readonly("start_time", &Simulation::Job_Status::start_time,
+                    "Optional[float]: Scheduled start time.")
+      .def_readonly("end_time", &Simulation::Job_Status::end_time,
+                    "Optional[float]: Scheduled completion time.")
+      .def_readonly("expected_start_time",
+                    &Simulation::Job_Status::expected_start_time,
+                    "Optional[float]: Current projection while pending.");
+
   // Main Simulation class
   py::class_<Simulation>(m, "Simulation")
       .def(py::init<const Sim_Params &>(), py::arg("params"),
@@ -216,6 +240,12 @@ PYBIND11_MODULE(dr_evt, m) {
            "    RuntimeError: If validation or capacity handling rejects the "
            "batch; "
            "no request is appended.")
+
+      .def("get_job_statuses", &Simulation::get_job_statuses,
+           py::arg("job_idxs"),
+           "Return status snapshots for appended job IDs in request order. "
+           "Pending jobs have expected_start_time; scheduled jobs have "
+           "start_time and end_time.")
 
       // Streaming API - Time advancement
       .def("run_until_exclusive", &Simulation::run_until_exclusive,

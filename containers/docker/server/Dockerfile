@@ -15,6 +15,7 @@ RUN apt-get update \
         ninja-build \
         pkg-config \
         libboost-all-dev \
+        libhiredis-dev \
         libgrpc++-dev \
         libprotobuf-dev \
         protobuf-compiler \
@@ -32,6 +33,7 @@ RUN cmake -S . -B /build -G Ninja \
         -DDR_EVT_ENABLE_PROTOBUF=ON \
         -DDR_EVT_ENABLE_GRPC=ON \
         -DDR_EVT_WITH_SER20=ON \
+        -DDR_EVT_WITH_REDIS=ON \
     && cmake --build /build \
     && cmake --install /build
 
@@ -42,6 +44,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         libboost-all-dev \
+        libhiredis1.1 \
         libgrpc++-dev \
         libprotobuf-dev \
     && rm -rf /var/lib/apt/lists/*

@@ -51,6 +51,7 @@
 
 #include <algorithm>
 #include <arpa/inet.h>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -562,10 +563,15 @@ int run_client_rank(int my_rank, int paired_server_rank,
       expected_fixture_path(trace_file, ".expected_output.csv");
   const std::string expected_resources =
       expected_fixture_path(trace_file, ".expected_resources.csv");
-  if (!files_match(expected_schedule, finish.simulated_trace_file(),
-                   "Simulated schedule") ||
-      !files_match(expected_resources, finish.resource_trace_file(),
-                   "Resource trace")) {
+  const bool reports_match =
+      files_match(expected_schedule, finish.simulated_trace_file(),
+                  "Simulated schedule") &&
+      files_match(expected_resources, finish.resource_trace_file(),
+                  "Resource trace");
+  std::remove(finish.simulated_trace_file().c_str());
+  std::remove(finish.resource_trace_file().c_str());
+  std::remove(finish.statistics_file().c_str());
+  if (!reports_match) {
     completed_ok = 0;
   }
 

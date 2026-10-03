@@ -108,21 +108,64 @@ if (DR_EVT_GRPC_FETCHCONTENT)
   endif()
 
   include(FetchContent)
-  # Bundled gRPC and its dependencies are linked statically into DR_EVT and
-  # are not part of the DR_EVT install surface. Suppressing their install
-  # rules also prevents nested projects from writing to cached destinations
-  # such as /usr/local.
-  set(ABSL_ENABLE_INSTALL OFF CACHE BOOL
-      "Do not install bundled Abseil with DR_EVT" FORCE)
-  set(gRPC_INSTALL OFF CACHE BOOL
-      "Do not install bundled gRPC with DR_EVT" FORCE)
-  set(protobuf_INSTALL OFF CACHE BOOL
-      "Do not install bundled Protobuf with DR_EVT" FORCE)
-  # Protobuf forwards protobuf_INSTALL to this option without FORCE. An older
-  # configure can therefore leave the value ON in CMakeCache.txt and produce
-  # an invalid utf8_range export that refers to non-installed Abseil targets.
-  set(utf8_range_ENABLE_INSTALL OFF CACHE BOOL
-      "Do not install bundled utf8_range with DR_EVT" FORCE)
+  # Bundled gRPC and its dependencies are linked statically into DR_EVT, so
+  # they are not installed unless explicitly requested. Installing the whole
+  # compatible stack allows a later clean build to find it in this project's
+  # install prefix rather than configuring and rebuilding the fetched source.
+  if (DR_EVT_INSTALL_FETCHED_GRPC)
+    message(STATUS "Fetched gRPC dependency installation enabled")
+    set(ABSL_ENABLE_INSTALL ON CACHE BOOL
+        "Install bundled Abseil with DR_EVT" FORCE)
+    set(gRPC_INSTALL ON CACHE BOOL
+        "Install bundled gRPC with DR_EVT" FORCE)
+    set(protobuf_INSTALL ON CACHE BOOL
+        "Install bundled Protobuf with DR_EVT" FORCE)
+    set(utf8_range_ENABLE_INSTALL ON CACHE BOOL
+        "Install bundled utf8_range with DR_EVT" FORCE)
+
+    # gRPC defaults to lib even when the parent project uses lib64. Keep all
+    # installed packages in the parent's GNUInstallDirs locations so nested
+    # find_dependency() calls can resolve the complete stack from one prefix.
+    set(gRPC_INSTALL_BINDIR "${CMAKE_INSTALL_BINDIR}" CACHE STRING
+        "Installation directory for gRPC executables" FORCE)
+    set(gRPC_INSTALL_LIBDIR "${CMAKE_INSTALL_LIBDIR}" CACHE STRING
+        "Installation directory for gRPC libraries" FORCE)
+    set(gRPC_INSTALL_INCLUDEDIR "${CMAKE_INSTALL_INCLUDEDIR}" CACHE STRING
+        "Installation directory for gRPC headers" FORCE)
+    set(gRPC_INSTALL_CMAKEDIR
+        "${CMAKE_INSTALL_LIBDIR}/cmake/grpc" CACHE STRING
+        "Installation directory for gRPC CMake package files" FORCE)
+    set(gRPC_INSTALL_SHAREDIR "${CMAKE_INSTALL_DATADIR}/grpc" CACHE STRING
+        "Installation directory for gRPC data files" FORCE)
+
+    # Bundled zlib predates GNUInstallDirs and otherwise caches absolute
+    # ${CMAKE_INSTALL_PREFIX}/lib paths.  Normal variables override those
+    # cache defaults while zlib is configured and keep it aligned with the
+    # parent's selected lib/lib64 layout.
+    set(INSTALL_BIN_DIR "${CMAKE_INSTALL_FULL_BINDIR}" CACHE PATH
+        "Installation directory for bundled zlib executables" FORCE)
+    set(INSTALL_LIB_DIR "${CMAKE_INSTALL_FULL_LIBDIR}" CACHE PATH
+        "Installation directory for bundled zlib libraries" FORCE)
+    set(INSTALL_INC_DIR "${CMAKE_INSTALL_FULL_INCLUDEDIR}" CACHE PATH
+        "Installation directory for bundled zlib headers" FORCE)
+    set(INSTALL_MAN_DIR "${CMAKE_INSTALL_FULL_MANDIR}" CACHE PATH
+        "Installation directory for bundled zlib man pages" FORCE)
+    set(INSTALL_PKGCONFIG_DIR "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig"
+        CACHE PATH "Installation directory for bundled zlib pkg-config files"
+        FORCE)
+  else()
+    set(ABSL_ENABLE_INSTALL OFF CACHE BOOL
+        "Do not install bundled Abseil with DR_EVT" FORCE)
+    set(gRPC_INSTALL OFF CACHE BOOL
+        "Do not install bundled gRPC with DR_EVT" FORCE)
+    set(protobuf_INSTALL OFF CACHE BOOL
+        "Do not install bundled Protobuf with DR_EVT" FORCE)
+    # Protobuf forwards protobuf_INSTALL to this option without FORCE. An
+    # older configure can otherwise leave it ON and produce an invalid
+    # utf8_range export referring to non-installed Abseil targets.
+    set(utf8_range_ENABLE_INSTALL OFF CACHE BOOL
+        "Do not install bundled utf8_range with DR_EVT" FORCE)
+  endif()
 
   # Pinned version. Bumping this should come with re-verifying
   # dr_evt_server.cpp/dr_evt_client.cpp's gRPC C++ API usage against
@@ -134,10 +177,17 @@ if (DR_EVT_GRPC_FETCHCONTENT)
   # policies as if 3.5 had been requested for those subprojects.
   set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 
-  # Suppress policy warnings from gRPC's third-party dependencies (RE2, etc.)
-  if(POLICY CMP0077)
-    cmake_policy(SET CMP0077 NEW)
+  # A nested cmake_minimum_required() can reset the caller's CMP0077 setting.
+  # Supply the default explicitly so legacy gRPC dependencies honor the
+  # BUILD_TESTING and BUILD_SHARED_LIBS values set by this parent project.
+  if(DEFINED CMAKE_POLICY_DEFAULT_CMP0077)
+    set(DR_EVT_SAVED_POLICY_DEFAULT_CMP0077
+        "${CMAKE_POLICY_DEFAULT_CMP0077}")
+    set(DR_EVT_HAD_POLICY_DEFAULT_CMP0077 TRUE)
+  else()
+    set(DR_EVT_HAD_POLICY_DEFAULT_CMP0077 FALSE)
   endif()
+  set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 
   # gRPC's bundled Abseil emits both x86_64 and arm64 SIMD flags on
   # every Apple build via -Xarch_<arch> pairs, which a single-arch
@@ -163,6 +213,10 @@ if (DR_EVT_GRPC_FETCHCONTENT)
   set(DR_EVT_SAVED_BUILD_TESTING ${BUILD_TESTING})
   set(BUILD_TESTING OFF)
   set(gRPC_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  # These bundled projects otherwise put examples and test programs in the
+  # default ALL target when gRPC is included normally for installation.
+  set(RE2_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+  set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
   # dr_evt only compiles .proto files to C++, so skip gRPC's codegen
   # plugins for other languages. (Python client authors: use
@@ -180,20 +234,35 @@ if (DR_EVT_GRPC_FETCHCONTENT)
   # (`-DgRPC_SSL_PROVIDER=package`, requires libssl-dev) since it's
   # unverified end-to-end and BoringSSL/OpenSSL can drift apart.
 
-  # This project's own -Wall -Wextra (SetupCXX.cmake) would otherwise
-  # apply to gRPC's own source too. Trailing -w overrides them
-  # (compilers process flags left-to-right); restored right after.
-  set(DR_EVT_SAVED_CXX_FLAGS ${CMAKE_CXX_FLAGS})
+  # This project's own warning flags would otherwise apply to gRPC's source.
+  # Suppress both languages because upb, c-ares, and other bundled libraries
+  # contain C sources. Trailing -w overrides earlier warning flags.
+  set(DR_EVT_SAVED_C_FLAGS "${CMAKE_C_FLAGS}")
+  set(DR_EVT_SAVED_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w")
+
+  # BoringSSL hardcodes lib/cmake/OpenSSL. Patch it to honor GNUInstallDirs so
+  # installations selected as lib64 do not also create a lib directory.
+  set(DR_EVT_BORINGSSL_INSTALL_PATCH
+      ${CMAKE_SOURCE_DIR}/cmake/patches/fix_boringssl_install_libdir.cmake)
+  set(DR_EVT_GRPC_PATCH_COMMAND
+      ${CMAKE_COMMAND} -P ${DR_EVT_BORINGSSL_INSTALL_PATCH})
+  # PATCH_COMMAND does not rerun for an already-populated FetchContent source.
+  # Apply the idempotent patch now as well so reconfiguration is sufficient.
+  if(EXISTS "${CMAKE_BINARY_DIR}/_deps/grpc-src/third_party/boringssl-with-bazel/CMakeLists.txt")
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -P ${DR_EVT_BORINGSSL_INSTALL_PATCH}
+      WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/_deps/grpc-src"
+      COMMAND_ERROR_IS_FATAL ANY)
+  endif()
   if (APPLE)
-    set(DR_EVT_GRPC_PATCH_COMMAND
-        ${CMAKE_COMMAND} -DCMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}
+    list(APPEND DR_EVT_GRPC_PATCH_COMMAND
+        COMMAND ${CMAKE_COMMAND} -DCMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}
                          -DCMAKE_SYSTEM_PROCESSOR=${CMAKE_SYSTEM_PROCESSOR}
                          -P ${CMAKE_SOURCE_DIR}/cmake/patches/fix_abseil_randen_copts.cmake
         COMMAND ${CMAKE_COMMAND}
                 -P ${CMAKE_SOURCE_DIR}/cmake/patches/fix_zlib_fdopen.cmake)
-  else()
-    set(DR_EVT_GRPC_PATCH_COMMAND "")
   endif()
 
   # Without this, FetchContent re-contacts the git remote on every
@@ -202,7 +271,8 @@ if (DR_EVT_GRPC_FETCHCONTENT)
   set(FETCHCONTENT_UPDATES_DISCONNECTED_GRPC ON)
 
   set(DR_EVT_GRPC_FETCHCONTENT_OPTIONS)
-  if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.28)
+  if (NOT DR_EVT_INSTALL_FETCHED_GRPC AND
+      CMAKE_VERSION VERSION_GREATER_EQUAL 3.28)
     list(APPEND DR_EVT_GRPC_FETCHCONTENT_OPTIONS EXCLUDE_FROM_ALL)
   endif()
   FetchContent_Declare(
@@ -222,14 +292,29 @@ if (DR_EVT_GRPC_FETCHCONTENT)
     FetchContent_GetProperties(grpc)
     if (NOT grpc_POPULATED)
       FetchContent_Populate(grpc)
-      add_subdirectory("${grpc_SOURCE_DIR}" "${grpc_BINARY_DIR}"
-                       EXCLUDE_FROM_ALL)
+      if (DR_EVT_INSTALL_FETCHED_GRPC)
+        add_subdirectory("${grpc_SOURCE_DIR}" "${grpc_BINARY_DIR}")
+      else()
+        add_subdirectory("${grpc_SOURCE_DIR}" "${grpc_BINARY_DIR}"
+                         EXCLUDE_FROM_ALL)
+      endif()
     endif()
   endif()
   unset(DR_EVT_GRPC_FETCHCONTENT_OPTIONS)
   unset(DR_EVT_GRPC_PATCH_COMMAND)
-  set(CMAKE_CXX_FLAGS ${DR_EVT_SAVED_CXX_FLAGS})
+  unset(DR_EVT_BORINGSSL_INSTALL_PATCH)
+  set(CMAKE_C_FLAGS "${DR_EVT_SAVED_C_FLAGS}")
+  set(CMAKE_CXX_FLAGS "${DR_EVT_SAVED_CXX_FLAGS}")
+  unset(DR_EVT_SAVED_C_FLAGS)
   unset(DR_EVT_SAVED_CXX_FLAGS)
+  if(DR_EVT_HAD_POLICY_DEFAULT_CMP0077)
+    set(CMAKE_POLICY_DEFAULT_CMP0077
+        "${DR_EVT_SAVED_POLICY_DEFAULT_CMP0077}")
+  else()
+    unset(CMAKE_POLICY_DEFAULT_CMP0077)
+  endif()
+  unset(DR_EVT_SAVED_POLICY_DEFAULT_CMP0077)
+  unset(DR_EVT_HAD_POLICY_DEFAULT_CMP0077)
   set(BUILD_SHARED_LIBS ${DR_EVT_SAVED_BUILD_SHARED_LIBS})
   unset(DR_EVT_SAVED_BUILD_SHARED_LIBS)
   set(BUILD_TESTING ${DR_EVT_SAVED_BUILD_TESTING})

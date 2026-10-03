@@ -32,6 +32,8 @@ static constexpr int OPT_JOB_FLUSH_INTERVAL = 1001;
 static constexpr int OPT_NUM_MAX_CANDIDATES = 1002;
 static constexpr int OPT_CAPACITY_SCHEDULE = 1003;
 static constexpr int OPT_SIM_START_TIME = 1004;
+static constexpr int OPT_REDIS_URI = 1005;
+static constexpr int OPT_REDIS_KEY_PREFIX = 1006;
 
 /** @brief getopt short-option specification for the simulator CLI. */
 #define OPTIONS "hi:j:n:o:s:t:b:p:q:Q:A:G:r:f:T:z:D:S:V:vc:R:MK:W:H:L:m:"
@@ -71,6 +73,8 @@ static const struct option sim_longopts[] = {
     {"msec_output", no_argument, 0, 'M'},
     {"config", required_argument, 0, 'c'},
     {"resource_trace", required_argument, 0, 'R'},
+    {"redis_uri", required_argument, 0, OPT_REDIS_URI},
+    {"redis_key_prefix", required_argument, 0, OPT_REDIS_KEY_PREFIX},
     {0, 0, 0, 0},
 };
 
@@ -437,6 +441,12 @@ void Sim_Params::getopt(int &argc, char **&argv) {
     case 'R': /* --resource_trace */
       m_resource_trace = std::string(optarg);
       break;
+    case OPT_REDIS_URI: /* --redis_uri */
+      m_redis_uri = optarg;
+      break;
+    case OPT_REDIS_KEY_PREFIX: /* --redis_key_prefix */
+      m_redis_key_prefix = optarg;
+      break;
     default:
       print_usage(argv[0], 1);
       break;
@@ -465,6 +475,21 @@ void Sim_Params::getopt(int &argc, char **&argv) {
     }
   }
   set_outfile(m_outfile);
+
+  if (m_redis_uri.empty() != m_redis_key_prefix.empty()) {
+    std::cerr << "Error: --redis_uri and --redis_key_prefix must be specified "
+                 "together"
+              << std::endl;
+    print_usage(argv[0], 1);
+  }
+#if !defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+  if (!m_redis_uri.empty()) {
+    std::cerr << "Error: Redis output requires a build configured with "
+                 "-DDR_EVT_WITH_REDIS=ON"
+              << std::endl;
+    print_usage(argv[0], 1);
+  }
+#endif
 
   if (m_is_time_set && (!std::isfinite(m_max_time) || m_max_time < 0.0)) {
     std::cerr << "Error: --max_time must be finite and nonnegative"
@@ -533,6 +558,16 @@ void Sim_Params::print_usage(const std::string exec, int code) {
          "\n"
          "    -o, --outfile\n"
          "        Specify the output file name for simulation.\n"
+         "\n"
+         "    --redis_uri URI\n"
+         "        Write simulated-job and resource-history output to Redis\n"
+         "        instead of --outfile and --resource_trace. Requires\n"
+         "        --redis_key_prefix and a build\n"
+         "        configured with -DDR_EVT_WITH_REDIS=ON.\n"
+         "\n"
+         "    --redis_key_prefix PREFIX\n"
+         "        Redis namespace for job/resource CSV values, per-job\n"
+         "        hashes, and sorted indexes. Requires --redis_uri.\n"
          "\n"
          "    -s, --seed\n"
          "        Specify the seed for random number generator. Without this,\n"
@@ -746,6 +781,8 @@ void Sim_Params::print() const {
   msg += " - sim_start_time: " + to_string(m_sim_start_time) + "\n";
   msg += " - infile: " + m_infile + "\n";
   msg += " - outfile: " + m_outfile + "\n";
+  msg += " - redis_uri: " + m_redis_uri + "\n";
+  msg += " - redis_key_prefix: " + m_redis_key_prefix + "\n";
   msg += " - total_nodes: " + to_string(m_total_nodes) + "\n";
   msg += " - capacity_schedule: " + m_capacity_schedule + "\n";
   msg += " - num_max_candidates: " + to_string(m_num_max_candidates) + "\n";

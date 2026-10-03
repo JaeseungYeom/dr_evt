@@ -21,6 +21,7 @@
 #include <limits>
 #include <map>
 #include <memory> // unique_ptr
+#include <optional>
 #include <random>
 #include <span>
 #include <string>
@@ -109,6 +110,22 @@ protected:
 
   /// Accepted arrivals not yet observed at their simulation timestamps.
   std::map<sim_time_t, size_t> m_pending_queue_arrivals;
+
+  // Compact, permanent query records for jobs created by append_job(s).
+  // Trace records may be reclaimed after completion, so their scheduling
+  // timestamps cannot by themselves satisfy the public status API.
+  struct Appended_Job_Query_Record {
+    sim_time_t submit_time = 0.0;
+    tdiff_t limit_time = 0.0;
+    num_nodes_t num_nodes = 0;
+    sim_time_t start_time = 0.0;
+    sim_time_t end_time = 0.0;
+    bool tracked = false;
+    bool scheduled = false;
+    bool rejected = false;
+  };
+  job_no_t m_first_appended_job_idx = std::numeric_limits<job_no_t>::max();
+  std::vector<Appended_Job_Query_Record> m_appended_job_query_records;
 
 public:
   /**
@@ -259,6 +276,29 @@ public:
   std::vector<job_no_t>
   append_jobs(const std::vector<Job_Append_Request> &requests);
 
+  /** Lifecycle state returned by get_job_statuses(). */
+  enum class Job_State { PENDING, RUNNING, COMPLETED, REJECTED };
+
+  /** Point-in-time status of one job created by append_job(s). */
+  struct Job_Status {
+    job_no_t job_idx;
+    Job_State state;
+    std::optional<sim_time_t> start_time;
+    std::optional<sim_time_t> end_time;
+    std::optional<sim_time_t> expected_start_time;
+  };
+
+  /**
+   * @brief Query appended jobs by their stable identifiers.
+   * @details Pending jobs receive an on-demand projected start based on the
+   * scheduler's current queue order, running-job limit-time releases, and
+   * current capacity. Scheduled jobs return their actual simulated start and
+   * end timestamps. Results preserve request order and duplicate IDs.
+   * @throws std::out_of_range if an ID was not returned by append_job(s).
+   */
+  std::vector<Job_Status>
+  get_job_statuses(const std::vector<job_no_t> &job_idxs) const;
+
 protected:
   /**
    * @brief Validate an existing job and enqueue it in the scheduler.
@@ -283,6 +323,10 @@ protected:
    * @see Trace::insert_job()
    */
   void submit_job(job_no_t job_idx, sim_time_t submit_time);
+
+  void record_appended_job(job_no_t job_idx, sim_time_t submit_time,
+                           num_nodes_t num_nodes, tdiff_t limit_time);
+  void record_appended_job_start(job_no_t job_idx);
 
 public:
   /**

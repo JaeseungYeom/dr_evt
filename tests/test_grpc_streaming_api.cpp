@@ -236,6 +236,21 @@ bool test_batch_append(const std::string &server_address,
       return false;
     }
 
+    ClientMessage pending_query;
+    pending_query.mutable_get_job_statuses()->add_job_idx(job_idxs[0]);
+    pending_query.mutable_get_job_statuses()->add_job_idx(job_idxs[2]);
+    const auto pending_response = client.call(pending_query);
+    if (pending_response.get_job_statuses().jobs_size() != 2 ||
+        pending_response.get_job_statuses().jobs(0).state() !=
+            dr_evt_grpc::JOB_STATE_PENDING ||
+        !pending_response.get_job_statuses()
+             .jobs(0)
+             .has_expected_start_time()) {
+      std::cerr << "  FAIL: pending status response is incomplete\n";
+      client.finish();
+      return false;
+    }
+
     ClientMessage advance_req;
     advance_req.mutable_advance_to()->set_target_time(1e9);
     client.call(advance_req);
@@ -257,6 +272,21 @@ bool test_batch_append(const std::string &server_address,
                    "resource_area=7250\n";
       client.finish();
       return false;
+    }
+
+    ClientMessage completed_query;
+    for (const auto idx : job_idxs) {
+      completed_query.mutable_get_job_statuses()->add_job_idx(idx);
+    }
+    const auto completed_response = client.call(completed_query);
+    for (const auto &job : completed_response.get_job_statuses().jobs()) {
+      if (job.state() != dr_evt_grpc::JOB_STATE_COMPLETED ||
+          !job.has_scheduled() ||
+          job.scheduled().end_time() < job.scheduled().start_time()) {
+        std::cerr << "  FAIL: completed status response is incomplete\n";
+        client.finish();
+        return false;
+      }
     }
   } catch (const std::exception &e) {
     std::cerr << "  FAIL: " << e.what() << "\n";

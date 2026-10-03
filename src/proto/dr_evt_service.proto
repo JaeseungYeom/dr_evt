@@ -49,6 +49,7 @@ message ClientMessage {
         GetPredictionHorizonRequest get_prediction_horizon = 19;
         SaveCheckpointRequest save_checkpoint = 20;
         LoadCheckpointRequest load_checkpoint = 21;
+        GetJobStatusesRequest get_job_statuses = 22;
     }
 }
 
@@ -93,6 +94,10 @@ message InitRequest {
     // Global simulation start time. A positive value selects native replay
     // warm-start execution for RunRequest; zero preserves ordinary execution.
     double sim_start_time = 15;
+    // When set together, job and resource-history output is written to Redis.
+    string redis_uri = 16;
+    string redis_key_prefix = 17;
+    uint64 job_flush_interval = 18; // 0 follows job-store capacity
 }
 
 // Runs the configured input trace to completion. Unlike AdvanceToRequest,
@@ -205,6 +210,7 @@ message ServerMessage {
         GetPredictionHorizonResponse get_prediction_horizon = 20;
         SaveCheckpointResponse save_checkpoint = 21;
         LoadCheckpointResponse load_checkpoint = 22;
+        GetJobStatusesResponse get_job_statuses = 23;
     }
 }
 
@@ -220,8 +226,10 @@ message InitResponse {
     bool ok = 1;
     string session_id = 2;
     string simulated_trace_file = 3;
+    // Empty with Redis output; use <redis_key_prefix>:resources:csv instead.
     string resource_trace_file = 4;
     string statistics_file = 5;
+    string redis_key_prefix = 6;
 }
 
 message SaveCheckpointResponse {
@@ -242,6 +250,42 @@ message AppendJobsResponse {
     // Each new job's job_idx, in the same order as the request's requests
     // field. All returned jobs have already been enqueued for scheduling.
     repeated uint32 job_idx = 1;
+}
+
+// Queries jobs previously created by AppendJob or AppendJobs. Results use the
+// same order as job_idx, including duplicates. An unknown ID fails the whole
+// request with ErrorResponse.
+message GetJobStatusesRequest {
+    repeated uint32 job_idx = 1;
+}
+
+enum JobState {
+    JOB_STATE_UNSPECIFIED = 0;
+    JOB_STATE_PENDING = 1;
+    JOB_STATE_RUNNING = 2;
+    JOB_STATE_COMPLETED = 3;
+    JOB_STATE_REJECTED = 4;
+}
+
+message ScheduledJobTimes {
+    double start_time = 1;
+    double end_time = 2;
+}
+
+message JobStatus {
+    uint32 job_idx = 1;
+    JobState state = 2;
+    oneof timing {
+        // Present once the scheduler has started the job. end_time is the
+        // simulated completion time and may still be in the future.
+        ScheduledJobTimes scheduled = 3;
+        // Present while pending when a capacity projection is available.
+        double expected_start_time = 4;
+    }
+}
+
+message GetJobStatusesResponse {
+    repeated JobStatus jobs = 1;
 }
 
 message AdvanceToResponse {}
@@ -322,6 +366,8 @@ message FinishSimulationResponse {
     GetStatisticsResponse statistics = 1;
     string session_id = 2;
     string simulated_trace_file = 3;
+    // Empty with Redis output; use <redis_key_prefix>:resources:csv instead.
     string resource_trace_file = 4;
     string statistics_file = 5;
+    string redis_key_prefix = 6;
 }

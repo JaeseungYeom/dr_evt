@@ -28,6 +28,8 @@ set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
 
 cd "$REPO_ROOT"
 
@@ -46,7 +48,8 @@ echo ""
 PASS=0
 FAIL=0
 TEST_WORK_DIR=$(mktemp -d "/tmp/dr-evt-resource-history.XXXXXXXX")
-trap 'rm -rf -- "$TEST_WORK_DIR"' EXIT INT TERM
+cleanup() { rm -rf -- "$TEST_WORK_DIR"; }
+test_report_set_cleanup cleanup
 
 # Forces reclaiming on nearly every insert - the most thorough test of the
 # reclaiming/flush path's correctness.

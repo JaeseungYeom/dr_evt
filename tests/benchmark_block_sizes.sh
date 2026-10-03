@@ -7,12 +7,14 @@
 # the same input trace and node count.
 # - Verifies every C++ queue implementation matches deque output
 # - Measures end-to-end wall-clock time, including parsing and trace output
-# - Does not byte-compare Python output because its CSV schema differs
+# - Compares the Python and deque schedules after normalizing their schemas
 
 set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
 
 cd "$REPO_ROOT"
 
@@ -41,6 +43,7 @@ fi
 
 # Locate the installed simulator. This is shared with the other test scripts.
 source "$SCRIPT_DIR/set_simulator_path.sh"
+source "$SCRIPT_DIR/select_python.sh"
 
 # Check trace file exists
 if [[ ! -f "$TRACE_FILE" ]]; then
@@ -331,35 +334,57 @@ fi
 
 echo ""
 
-# Run the Python reference with the same trace and node count. It deliberately
-# writes its own CSV schema, so this is an end-to-end performance reference,
-# not a byte-for-byte correctness comparison with the C++ output.
+# Run the Python reference with the same trace and node count, then compare its
+# schedule with the deque baseline after normalizing the two CSV schemas.
 PYTHON_TIME=""
 PYTHON_STATUS="unavailable"
-if command -v python3 > /dev/null 2>&1 && [[ -f "scripts/python_reference_scheduler.py" ]]; then
-    echo "=========================================="
-    echo "5. PYTHON REFERENCE: EASY backfilling"
-    echo "=========================================="
-
-    PYTHON_OUT_DIR="/tmp/python_reference_benchmark"
-    mkdir -p "$PYTHON_OUT_DIR"
+echo "=========================================="
+echo "5. PYTHON REFERENCE: EASY backfilling"
+echo "=========================================="
+if ! select_python_interpreter 3 6; then
+    PYTHON_STATUS="FAIL"
+    echo "FAILED (no Python 3.6+ interpreter found)"
+elif [[ ! -f "scripts/python_reference_scheduler.py" ]]; then
+    PYTHON_STATUS="FAIL"
+    echo "FAILED (scripts/python_reference_scheduler.py not found)"
+else
+    if ! PYTHON_OUT_DIR=$(mktemp -d \
+        "${TMPDIR:-/tmp}/dr-evt-python-reference.XXXXXXXX" 2>/dev/null); then
+        PYTHON_OUT_DIR=$(mktemp -d "/tmp/dr-evt-python-reference.XXXXXXXX")
+    fi
+    PYTHON_LOG="$PYTHON_OUT_DIR/python_reference.log"
     echo -n "Running... "
     START_TIME=$(date +%s%N)
-    if python3 scripts/python_reference_scheduler.py "$TRACE_FILE" \
+    if "$PYTHON_BIN" scripts/python_reference_scheduler.py "$TRACE_FILE" \
         --nodes "$TOTAL_NODES" \
         --outdir "$PYTHON_OUT_DIR" \
-        > /tmp/python_reference_log.txt 2>&1; then
+        > "$PYTHON_LOG" 2>&1; then
         END_TIME=$(date +%s%N)
         PYTHON_TIME=$(echo "scale=3; ($END_TIME - $START_TIME) / 1000000000" | bc)
-        PYTHON_STATUS="reference only"
-        echo "done (${PYTHON_TIME}s)"
+        PYTHON_OUT="$PYTHON_OUT_DIR/${TRACE_NAME}_reference.csv"
+        if [[ ! -f "$PYTHON_OUT" ]]; then
+            PYTHON_STATUS="FAIL"
+            echo "FAILED (reference output not found: $PYTHON_OUT)"
+        elif "$PYTHON_BIN" tests/compare_scheduler_outputs.py \
+            "$PYTHON_OUT" "$BASELINE_OUT" --tolerance 0.001 \
+            > "$PYTHON_OUT_DIR/comparison.log" 2>&1; then
+            PYTHON_STATUS="PASS"
+            echo "done (${PYTHON_TIME}s)"
+            echo "  Correctness: PASS (schedule matches deque within 0.001)"
+        else
+            PYTHON_STATUS="FAIL"
+            echo "done (${PYTHON_TIME}s)"
+            echo "  Correctness: FAIL"
+            sed 's/^/  /' "$PYTHON_OUT_DIR/comparison.log"
+        fi
     else
-        PYTHON_STATUS="FAILED"
-        echo "FAILED (see /tmp/python_reference_log.txt)"
+        PYTHON_STATUS="FAIL"
+        echo "FAILED"
+        sed 's/^/  /' "$PYTHON_LOG"
+        echo "  Full log: $PYTHON_LOG"
     fi
-    echo "  Correctness: not byte-compared (different CSV schema)"
-    echo ""
 fi
+echo ""
 
 # Summary table
 echo "=========================================="
@@ -501,11 +526,14 @@ fi
 if [[ "$CORRECTNESS_MULTIMAP" != "PASS" ]]; then
     ALL_PASSED=false
 fi
+if [[ "$PYTHON_STATUS" != "PASS" ]]; then
+    ALL_PASSED=false
+fi
 
 if $ALL_PASSED; then
-    echo "✓ All C++ queue implementations produce identical output (correctness verified)"
+    echo "✓ All queue implementations and the Python reference agree"
 else
-    echo "✗ Some implementation produced different output (INVESTIGATION NEEDED)"
+    echo "✗ A required run failed or produced different output (INVESTIGATION NEEDED)"
 fi
 
 echo ""
@@ -547,7 +575,16 @@ echo ""
 
 # Cleanup option
 echo "Temporary files in /tmp/:"
-echo "  baseline_*, block*_*.{csv,txt}, circular_*.{csv,txt}, multimap_*.{csv,txt}, python_reference_benchmark/"
+echo "  baseline_*, block*_*.{csv,txt}, circular_*.{csv,txt}, multimap_*.{csv,txt}"
+if [[ -n "${PYTHON_OUT_DIR:-}" ]]; then
+    echo "  $PYTHON_OUT_DIR/"
+fi
 echo ""
 echo "To clean up: rm /tmp/baseline_* /tmp/block* /tmp/circular_* /tmp/multimap_*"
-echo "             rm -rf /tmp/python_reference_benchmark"
+if [[ -n "${PYTHON_OUT_DIR:-}" ]]; then
+    echo "             rm -rf $PYTHON_OUT_DIR"
+fi
+
+if ! $ALL_PASSED; then
+    exit 1
+fi

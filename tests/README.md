@@ -40,22 +40,44 @@ all registered with CTest:
 ./tests/run_replay_tests.sh
 ./tests/run_resource_history_tests.sh
 ./tests/run_job_store_tests.sh
+./tests/run_redis_tests.sh
+./tests/run_redis_grpc_client_test.sh
 ./tests/run_append_job_tests.sh
 ./tests/run_progressive_load_tests.sh
 ./tests/run_configs_tests.sh
 ./tests/run_python_tests.sh
-./tests/run_warm_start_validation_tests.sh \
-  "${CMAKE_INSTALL_PREFIX}/bin/simulator"
-./tests/run_max_time_tests.sh "${CMAKE_INSTALL_PREFIX}/bin/simulator"
+./tests/run_warm_start_validation_tests.sh
+./tests/run_max_time_tests.sh
 ./tests/run_grpc_tests.sh
 ./tests/run_backfill_window_grpc_test.sh
 python3 tests/test_grpc_single_coordinator.py \
   "${CMAKE_INSTALL_PREFIX}/bin/dr_evt_server"
 ```
 
+Every shell runner ends with one machine-readable, ANSI-free status line:
+
+```text
+<<<<<<<<<<<<<<<< TEST RESULT: PASS | run_unit_tests >>>>>>>>>>>>>>>>
+<<<<<<<<<<<<<<<< TEST RESULT: FAIL | run_unit_tests | exit=1 >>>>>>>>>>>>>>>>
+<<<<<<<<<<<<<<<< TEST RESULT: SKIP | run_configs_tests | simulator was built without Protobuf support >>>>>>>>>>>>>>>>
+```
+
+Detailed per-case output remains above that line. The shared reporter also
+covers early failures and runs each suite's temporary-file cleanup first.
+
+Python-driven shell runners source `select_python.sh`. Unless
+`PYTHON_EXECUTABLE` is set explicitly, it probes both `python` and `python3`
+(plus available versioned commands) and selects the newest compatible
+interpreter by its reported version. Binding runners search the configured
+install library directory and both `lib/python` and `lib64/python`.
+
 Some runners require build options or external packages for Python bindings,
 Protobuf, gRPC, or MPI. Tests for unavailable optional features are not built
 or are reported as skipped.
+
+The Redis runner requires `redis-server`, `redis-cli`, and a simulator built
+with `-DDR_EVT_WITH_REDIS=ON`. It starts and stops its own loopback-only Redis
+server; no pre-existing Redis service is used.
 
 ## Inventory
 
@@ -73,9 +95,11 @@ or are reported as skipped.
 | Replay | 5 | `run_replay_tests.sh` | Resource equivalence and reclamation safety |
 | Resource history | 5 | `run_resource_history_tests.sh` | Circular-buffer output and capacity handling |
 | Job store | 6 | `run_job_store_tests.sh` | Capacity, growth/abort, reclamation, and statistics |
+| Redis output | 1 integration runner | `run_redis_tests.sh` | Isolated server startup, CSV/hash output, time/resource indexes, namespace replacement, finalized-versus-unfinished visibility, pipelined bulk lookup, and byte-identical job and resource outputs for Redis/file runs of 200 jobs |
+| Redis gRPC example | 1 integration runner | `run_redis_grpc_client_test.sh` | Batch append, advance, pipelined finalized-job lookup, one server fallback query, and original-order merged reporting |
 | Append-job | 25 | `run_append_job_tests.sh` | 20 in-process C++ checks plus 5 optional gRPC checks, including capacity-aware instantaneous/aggregate utilization, warm start, and validation |
 | Checkpoint/restart | 5 groups | CTest (`test_checkpoint_restart`) | Uninterrupted-versus-restarted comparison of 256-job populated queues plus 256 post-restart arrivals for every standard scheduler and callback-based Custom FCFS, loaded-versus-submitted lifecycle preservation, byte-identical job/resource CSV output after reclamation, and configuration mismatch rejection |
-| Progressive loading | 15 | `run_progressive_load_tests.sh` | 11 C++ checks plus 4 CLI checks for multi-file loading, bounded storage, and memory checks |
+| Progressive loading | 16 | `run_progressive_load_tests.sh` | 11 C++ checks plus 5 CLI checks for multi-file loading, bounded storage, block-queue integration, and memory checks |
 | Protobuf configuration | 12 | `run_configs_tests.sh` | Configuration/CLI parity, capacity/simulation-start-time validation, and documented examples |
 | Python API | 19 | `run_python_tests.sh` | Bindings, callbacks, streaming, checkpoint/restart, monitoring, policy APIs, and warm-start execution |
 | gRPC client/server | 2 | `run_grpc_tests.sh` | Single-pair and optional MPI multi-server behavior |
@@ -156,7 +180,9 @@ directly exercises the block queue at every supported block size.
 runs the end-to-end performance and output-equivalence benchmark documented in
 [Wait Queues](../docs/dev/WAIT_QUEUES.md#benchmark-record). Its workload is
 [`test_traces/scale/huge_10000jobs.csv`](test_traces/scale/huge_10000jobs.csv);
-the differential runner uses the
+it byte-compares every C++ queue output with `deque` and compares the normalized
+Python EASY schedule with `deque` using a `0.001` time tolerance. The
+differential runner uses the
 [`scheduler_correctness`](test_traces/scheduler_correctness/) fixtures.
 
 ### Streaming API tests

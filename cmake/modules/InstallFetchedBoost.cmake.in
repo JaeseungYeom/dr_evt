@@ -1,0 +1,39 @@
+# Install fetched Boost headers only when an equivalent Boost payload is not
+# already present at the effective install prefix. CMAKE_INSTALL_PREFIX is
+# deliberately evaluated at install time so `cmake --install --prefix` works.
+
+set(_dr_evt_boost_version "@DR_EVT_FETCHED_BOOST_VERSION@")
+set(_dr_evt_boost_version_header
+    "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_INCLUDEDIR@/boost/version.hpp")
+set(_dr_evt_installed_boost_version "")
+
+if(EXISTS "${_dr_evt_boost_version_header}")
+  file(STRINGS "${_dr_evt_boost_version_header}"
+       _dr_evt_boost_version_line
+       REGEX "^#define BOOST_VERSION [0-9]+$"
+       LIMIT_COUNT 1)
+  string(REGEX MATCH "[0-9]+$" _dr_evt_installed_boost_version
+         "${_dr_evt_boost_version_line}")
+endif()
+
+if(_dr_evt_installed_boost_version STREQUAL _dr_evt_boost_version)
+  message(STATUS
+    "Compatible Boost headers already installed; skipping fetched Boost headers")
+else()
+  set(_dr_evt_boost_header_trees "@DR_EVT_BOOST_HEADER_TREES@")
+  foreach(_dr_evt_boost_header_tree IN LISTS _dr_evt_boost_header_trees)
+    if(EXISTS "${_dr_evt_boost_header_tree}")
+      file(INSTALL
+           DESTINATION "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_INCLUDEDIR@/boost"
+           TYPE DIRECTORY
+           FILES "${_dr_evt_boost_header_tree}/")
+    endif()
+  endforeach()
+endif()
+
+unset(_dr_evt_boost_header_tree)
+unset(_dr_evt_boost_header_trees)
+unset(_dr_evt_boost_version)
+unset(_dr_evt_boost_version_header)
+unset(_dr_evt_boost_version_line)
+unset(_dr_evt_installed_boost_version)

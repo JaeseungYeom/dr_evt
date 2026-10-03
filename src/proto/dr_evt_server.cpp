@@ -202,6 +202,19 @@ public:
                 "sim_start_time must be finite and nonnegative");
           }
           sp.m_sim_start_time = r.sim_start_time();
+          sp.m_redis_uri = r.redis_uri();
+          sp.m_redis_key_prefix = r.redis_key_prefix();
+          sp.m_job_flush_interval = r.job_flush_interval();
+          if (sp.m_redis_uri.empty() != sp.m_redis_key_prefix.empty()) {
+            throw std::runtime_error(
+                "redis_uri and redis_key_prefix must be specified together");
+          }
+#if !defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+          if (!sp.m_redis_uri.empty()) {
+            throw std::runtime_error(
+                "Redis output requires DR_EVT_WITH_REDIS=ON");
+          }
+#endif
 
           if (r.backfill_policy().empty())
             sp.m_backfill_policy = dr_evt::BackfillPolicy::EASY;
@@ -280,6 +293,10 @@ public:
           }
 
           sp.set_outfile(simulated_trace_file);
+          if (!sp.m_redis_uri.empty()) {
+            simulated_trace_file.clear();
+            resource_trace_file.clear();
+          }
           sp.set_resource_trace(resource_trace_file);
 
           sim = std::make_unique<dr_evt::Simulation>(sp);
@@ -289,6 +306,7 @@ public:
           init_response->set_simulated_trace_file(simulated_trace_file);
           init_response->set_resource_trace_file(resource_trace_file);
           init_response->set_statistics_file(statistics_file);
+          init_response->set_redis_key_prefix(sp.m_redis_key_prefix);
           break;
         }
         case ClientMessage::kInitializeTrace: {
@@ -320,6 +338,42 @@ public:
           auto *out = resp.mutable_append_jobs();
           for (dr_evt::job_no_t idx : job_idxs) {
             out->add_job_idx(idx);
+          }
+          break;
+        }
+        case ClientMessage::kGetJobStatuses: {
+          require_init(sim);
+          std::vector<dr_evt::job_no_t> job_idxs;
+          job_idxs.reserve(req.get_job_statuses().job_idx_size());
+          for (const auto idx : req.get_job_statuses().job_idx()) {
+            job_idxs.push_back(static_cast<dr_evt::job_no_t>(idx));
+          }
+          auto *out = resp.mutable_get_job_statuses();
+          for (const auto &status : sim->get_job_statuses(job_idxs)) {
+            auto *job = out->add_jobs();
+            job->set_job_idx(status.job_idx);
+            using State = dr_evt::Simulation::Job_State;
+            switch (status.state) {
+            case State::PENDING:
+              job->set_state(JOB_STATE_PENDING);
+              break;
+            case State::RUNNING:
+              job->set_state(JOB_STATE_RUNNING);
+              break;
+            case State::COMPLETED:
+              job->set_state(JOB_STATE_COMPLETED);
+              break;
+            case State::REJECTED:
+              job->set_state(JOB_STATE_REJECTED);
+              break;
+            }
+            if (status.start_time && status.end_time) {
+              auto *times = job->mutable_scheduled();
+              times->set_start_time(*status.start_time);
+              times->set_end_time(*status.end_time);
+            } else if (status.expected_start_time) {
+              job->set_expected_start_time(*status.expected_start_time);
+            }
           }
           break;
         }
@@ -449,6 +503,7 @@ public:
           out->set_simulated_trace_file(simulated_trace_file);
           out->set_resource_trace_file(resource_trace_file);
           out->set_statistics_file(statistics_file);
+          out->set_redis_key_prefix(sim_params.m_redis_key_prefix);
 
           // The process and stream stay alive. A later Init on
           // this stream creates a fresh, isolated simulation.

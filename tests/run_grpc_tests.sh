@@ -21,6 +21,8 @@ set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
 if ! RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dr-evt-grpc-tests.XXXXXXXX" 2>/dev/null)"; then
     RUN_DIR="$(mktemp -d "/tmp/dr-evt-grpc-tests.XXXXXXXX")"
 fi
@@ -33,7 +35,7 @@ cleanup() {
     fi
     rm -rf -- "$RUN_DIR"
 }
-trap cleanup EXIT INT TERM
+test_report_set_cleanup cleanup
 
 cd "$REPO_ROOT"
 
