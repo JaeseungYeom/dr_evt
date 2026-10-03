@@ -1103,6 +1103,10 @@ install(
         "${PROJECT_SOURCE_DIR}/src/boost.hpp"
   DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 
+install(PROGRAMS "${PROJECT_SOURCE_DIR}/scripts/stitch_checkpoint_output.py"
+  DESTINATION "${CMAKE_INSTALL_BINDIR}"
+  RENAME dr_evt_stitch_checkpoint_output)
+
 if (DR_EVT_HAS_EXPRTK)
   install(
     FILES ${EXPRTK_DIR}/${EXPRTK_HEADER}

@@ -34,6 +34,8 @@ static constexpr int OPT_CAPACITY_SCHEDULE = 1003;
 static constexpr int OPT_SIM_START_TIME = 1004;
 static constexpr int OPT_REDIS_URI = 1005;
 static constexpr int OPT_REDIS_KEY_PREFIX = 1006;
+static constexpr int OPT_CHECKPOINT_FILE = 1007;
+static constexpr int OPT_CHECKPOINT_INTERVAL_JOBS = 1008;
 
 /** @brief getopt short-option specification for the simulator CLI. */
 #define OPTIONS "hi:j:n:o:s:t:b:p:q:Q:A:G:r:f:T:z:D:S:V:vc:R:MK:W:H:L:m:"
@@ -75,6 +77,9 @@ static const struct option sim_longopts[] = {
     {"resource_trace", required_argument, 0, 'R'},
     {"redis_uri", required_argument, 0, OPT_REDIS_URI},
     {"redis_key_prefix", required_argument, 0, OPT_REDIS_KEY_PREFIX},
+    {"checkpoint_file", required_argument, 0, OPT_CHECKPOINT_FILE},
+    {"checkpoint_interval_jobs", required_argument, 0,
+     OPT_CHECKPOINT_INTERVAL_JOBS},
     {0, 0, 0, 0},
 };
 
@@ -88,7 +93,8 @@ Sim_Params::Sim_Params()
       m_wait_queue_overflow(CircularOverflowPolicy::GROW),
       m_job_store_capacity(0), // 0 = size of job trace (never overflows)
       m_job_store_overflow(CircularOverflowPolicy::GROW),
-      m_job_flush_interval(0), m_memory_pressure_fraction(0.0),
+      m_job_flush_interval(0), m_checkpoint_interval_jobs(0),
+      m_memory_pressure_fraction(0.0),
       m_resource_history_capacity(0), m_total_nodes(dr_evt::total_nodes),
       m_trace_type(TraceType::STANDARD),
       m_trace_format("simple"),    // Default to simple format
@@ -185,6 +191,17 @@ void Sim_Params::getopt(int &argc, char **&argv) {
       break;
     case 'o': /* --outfile */
       m_outfile = std::string(optarg);
+      break;
+    case OPT_CHECKPOINT_FILE:
+      m_checkpoint_file = optarg;
+      break;
+    case OPT_CHECKPOINT_INTERVAL_JOBS:
+      m_checkpoint_interval_jobs = std::stoull(optarg);
+      if (m_checkpoint_interval_jobs == 0) {
+        std::cerr
+            << "Error: --checkpoint_interval_jobs must be greater than zero\n";
+        print_usage(argv[0], 1);
+      }
       break;
     case 's': /* --seed */
       m_seed = static_cast<unsigned>(atoi(optarg));
@@ -482,6 +499,11 @@ void Sim_Params::getopt(int &argc, char **&argv) {
               << std::endl;
     print_usage(argv[0], 1);
   }
+  if (m_checkpoint_file.empty() && m_checkpoint_interval_jobs != 0) {
+    std::cerr << "Error: --checkpoint_interval_jobs requires --checkpoint_file"
+              << std::endl;
+    print_usage(argv[0], 1);
+  }
 #if !defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
   if (!m_redis_uri.empty()) {
     std::cerr << "Error: Redis output requires a build configured with "
@@ -558,6 +580,16 @@ void Sim_Params::print_usage(const std::string exec, int code) {
          "\n"
          "    -o, --outfile\n"
          "        Specify the output file name for simulation.\n"
+         "\n"
+         "    --checkpoint_file FILENAME\n"
+         "        Write automatic restart checkpoints to FILENAME.\n"
+         "        Progressive loading checkpoints at every completed input\n"
+         "        file boundary; --checkpoint_interval_jobs adds periodic\n"
+         "        checkpoints after settled event timestamps.\n"
+         "\n"
+         "    --checkpoint_interval_jobs COUNT\n"
+         "        Checkpoint after each COUNT additional completed jobs.\n"
+         "        Requires --checkpoint_file.\n"
          "\n"
          "    --redis_uri URI\n"
          "        Write simulated-job and resource-history output to Redis\n"

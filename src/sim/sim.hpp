@@ -86,6 +86,16 @@ protected:
   /// Counters
   num_jobs_t m_jobs_completed;
   num_jobs_t m_jobs_submitted; ///< Jobs submitted during the current run.
+  /// Next progressive input file; advanced once its jobs are fully admitted.
+  size_t m_next_progressive_file;
+  /// True after load_checkpoint() restores runnable state.
+  bool m_checkpoint_loaded;
+  /// Completion count written by the last automatic checkpoint.
+  num_jobs_t m_last_automatic_checkpoint_jobs;
+  /// Whether this run has written an automatic checkpoint.
+  bool m_has_automatic_checkpoint;
+  /// Simulation time written by the last automatic checkpoint.
+  sim_time_t m_last_automatic_checkpoint_time;
   /// Historical jobs still running during the temporary warm-start stage.
   size_t m_pre_start_jobs;
   /// Post-boundary node-seconds contributed by suppressed historical jobs.
@@ -185,7 +195,8 @@ public:
    * is supported when restart constructs the destination with equivalent
    * callbacks; callback objects themselves are not serialized. The checkpoint
    * is intended for the same DR_EVT build and matching Sim_Params. Buffered
-   * output is flushed before the snapshot is written.
+   * output is flushed before the snapshot is written. Output files are not
+   * included in the checkpoint; their committed byte boundaries are.
    * @param[in,out] output Binary destination stream.
    */
   void save_checkpoint(std::ostream &output);
@@ -200,7 +211,9 @@ public:
    * @brief Restore a checkpoint into this simulation.
    * @details This replaces any current state. Configuration, scheduler kind,
    * and output paths must match those used to create the checkpoint. A Custom
-   * FCFS destination must be constructed with equivalent callbacks.
+   * FCFS destination must be constructed with equivalent callbacks. Existing
+   * file outputs are archived as pre-restart segments, and fresh output
+   * segments are opened at the configured paths.
    * @param[in,out] input Binary checkpoint source stream.
    */
   void load_checkpoint(std::istream &input);
@@ -703,6 +716,12 @@ protected:
    * advance drains outstanding work. REPLAY input is not supported.
    */
   void run_progressive();
+
+  /**
+   * @brief Write a configured automatic checkpoint when it is due.
+   * @param[in] file_boundary Whether a progressive file was fully processed.
+   */
+  void maybe_save_automatic_checkpoint(bool file_boundary);
 
   /**
    * @brief Record what each job arriving now sees ahead of it in the queue.

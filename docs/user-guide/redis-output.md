@@ -189,15 +189,22 @@ redis-cli -u redis://127.0.0.1:6379 \
 Sorted-set queries return job IDs. Use `HGETALL` with a returned ID to retrieve
 the full record.
 
-## Query unfinished jobs
+## Query job status (Redis optional)
+
+Job-status queries do not require Redis. The in-process, Python, and gRPC
+`get_job_statuses()` APIs query DR_EVT's in-memory status metadata and work in
+ordinary builds as well as Redis-enabled builds. They report pending, running,
+completed, and rejected appended jobs; pending jobs can include an estimated
+start time.
 
 Redis contains only finalized jobs that have reached an output flush. Pending,
 running, and completed-but-not-yet-flushed jobs are deliberately absent so
 Redis operations never enter the scheduler's append, start, or completion
 paths.
 
-The installed `dr_evt_client` demonstrates the complete Redis-first lookup.
-Build the client and server with both gRPC and Redis enabled:
+The installed `dr_evt_client` demonstrates an optional Redis-first lookup that
+avoids asking the live server about jobs already finalized in Redis. Build the
+client and server with both gRPC and Redis enabled to run this example:
 
 ```bash
 cmake -S . -B build \
@@ -243,25 +250,40 @@ A hash found in Redis is the authoritative finalized record. An absent hash
 means the job may still be pending, running, completed but waiting for an
 ordered flush, or rejected, so only missing IDs are sent back to the server.
 
-`get_job_statuses()` accepts multiple IDs and returns results in the order of
-the supplied `missing_job_ids`. Each result is `pending`, `running`,
-`completed`, or `rejected`; pending jobs can include an estimated start time.
+`get_job_statuses()` accepts multiple IDs and returns results in request order.
 The same bulk status operation is exposed by the Python binding and the gRPC
 `GetJobStatusesRequest` API. The no-option client invocation remains available;
 it batch-appends the CSV and finishes the simulation without an intermediate
-status query. `--advance-to` without Redis queries every appended ID from the
-server and reports those statuses before finishing.
+status query. `--advance-to` without Redis queries every appended ID directly
+from the server and reports those statuses before finishing.
 
 The query is read-only. Its compact retained status metadata is included in
-checkpoint version 3, so status queries continue to work after restoring a
+the checkpoint state, so status queries continue to work after restoring a
 checkpoint even when the corresponding trace record has been reclaimed.
 
-## Checkpoint limitation
+## Checkpoint/restart and output rollback
 
-Checkpointing is currently rejected when Redis output is active. This avoids
-duplicating or losing Redis writes when a restarted simulation reconnects to
-an existing key prefix. This restriction belongs to the Redis output sink;
-`get_job_statuses()` itself is checkpoint-safe.
+Checkpoint output remains external to the binary snapshot. File-backed restart
+renames the existing file as an immutable
+`.pre-restart.N` segment, writes resumed output to a fresh file, and provides
+`dr_evt_stitch_checkpoint_output` to join the segments at their saved byte
+boundaries. Redis restart similarly renames the canonical namespace to
+`PREFIX:pre-restart:N` and starts a fresh canonical namespace. Rebuild its CSV
+values, hashes, sets, and sorted indexes after the resumed run with:
+
+```bash
+dr_evt_stitch_checkpoint_output --redis-uri URI --redis-prefix PREFIX
+```
+
+The Redis operation rebuilds the canonical namespace in place and removes the
+consumed archived namespaces after it succeeds.
+
+In both modes, rows written after the saved checkpoint remain in the archive
+for auditability but are excluded by the recorded boundary during stitching.
+
+These output limitations are unrelated to job-status queries.
+`get_job_statuses()` works with Redis off or on, and its retained status
+metadata is checkpoint-safe whenever checkpointing itself is available.
 
 ## Connection URIs
 

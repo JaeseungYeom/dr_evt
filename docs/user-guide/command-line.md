@@ -12,6 +12,8 @@ Complete reference for all DR_EVT command-line options for the `simulator` binar
 | Input/output | `-R, --resource_trace FILENAME` | Write resource history. |
 | Input/output | `--redis_uri URI` | Send job and resource output to Redis. |
 | Input/output | `--redis_key_prefix PREFIX` | Select the Redis output namespace. |
+| Checkpoint | `--checkpoint_file FILENAME` | Write automatic checkpoints to this path. |
+| Checkpoint | `--checkpoint_interval_jobs COUNT` | Checkpoint after each count of completed jobs. |
 | System | `-n, --total_nodes COUNT` | Set simulated cluster capacity. |
 | System | `--capacity_schedule FILENAME` | Apply time-varying capacity change points. |
 | System | `--sim_start_time TIME` | Set the global simulation start time as a nonnegative epoch value or ISO timestamp; a positive value warm-starts replay input. |

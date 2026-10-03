@@ -75,6 +75,11 @@ PYBIND11_MODULE(dr_evt, m) {
                      "str: Redis connection URI; empty selects file output.")
       .def_readwrite("redis_key_prefix", &Sim_Params::m_redis_key_prefix,
                      "str: Redis namespace for output and search indexes.")
+      .def_readwrite("checkpoint_file", &Sim_Params::m_checkpoint_file,
+                     "str: Automatic binary checkpoint destination.")
+      .def_readwrite("checkpoint_interval_jobs",
+                     &Sim_Params::m_checkpoint_interval_jobs,
+                     "int: Completed-job cadence for automatic checkpoints.")
       .def_readwrite("total_nodes", &Sim_Params::m_total_nodes,
                      "int: Total scheduler-managed compute nodes.")
       .def_readwrite("capacity_schedule", &Sim_Params::m_capacity_schedule,

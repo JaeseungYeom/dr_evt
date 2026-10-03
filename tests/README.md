@@ -95,10 +95,10 @@ server; no pre-existing Redis service is used.
 | Replay | 5 | `run_replay_tests.sh` | Resource equivalence and reclamation safety |
 | Resource history | 5 | `run_resource_history_tests.sh` | Circular-buffer output and capacity handling |
 | Job store | 6 | `run_job_store_tests.sh` | Capacity, growth/abort, reclamation, and statistics |
-| Redis output | 1 integration runner | `run_redis_tests.sh` | Isolated server startup, CSV/hash output, time/resource indexes, namespace replacement, finalized-versus-unfinished visibility, pipelined bulk lookup, and byte-identical job and resource outputs for Redis/file runs of 200 jobs |
+| Redis output | 1 integration runner | `run_redis_tests.sh` | Isolated server startup, CSV/hash output, time/resource indexes, namespace replacement, finalized-versus-unfinished visibility, pipelined bulk lookup, and byte-identical job and resource outputs for Redis/file runs of 200 jobs. Redis coverage runs with and without Ser20; the checkpoint portion runs only in the Ser20-enabled configuration. |
 | Redis gRPC example | 1 integration runner | `run_redis_grpc_client_test.sh` | Batch append, advance, pipelined finalized-job lookup, one server fallback query, and original-order merged reporting |
 | Append-job | 25 | `run_append_job_tests.sh` | 20 in-process C++ checks plus 5 optional gRPC checks, including capacity-aware instantaneous/aggregate utilization, warm start, and validation |
-| Checkpoint/restart | 5 groups | CTest (`test_checkpoint_restart`) | Uninterrupted-versus-restarted comparison of 256-job populated queues plus 256 post-restart arrivals for every standard scheduler and callback-based Custom FCFS, loaded-versus-submitted lifecycle preservation, byte-identical job/resource CSV output after reclamation, and configuration mismatch rejection |
+| Checkpoint/restart | 7 groups | CTest (`test_checkpoint_restart`) and `run_redis_tests.sh` | Exact scheduler continuation plus byte-identical file, progressive-loading, and Redis job/resource output after archive-and-stitch recovery. |
 | Progressive loading | 16 | `run_progressive_load_tests.sh` | 11 C++ checks plus 5 CLI checks for multi-file loading, bounded storage, block-queue integration, and memory checks |
 | Protobuf configuration | 12 | `run_configs_tests.sh` | Configuration/CLI parity, capacity/simulation-start-time validation, and documented examples |
 | Python API | 19 | `run_python_tests.sh` | Bindings, callbacks, streaming, checkpoint/restart, monitoring, policy APIs, and warm-start execution |

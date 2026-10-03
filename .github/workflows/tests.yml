@@ -409,9 +409,13 @@ jobs:
           ./build-no-ser20/t_state 10 42 4 2
 
   redis-integration:
-    name: Redis Integration
+    name: Redis Integration (Ser20 ${{ matrix.ser20 }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        ser20: ['OFF', 'ON']
 
     steps:
       - name: Checkout repository
@@ -441,7 +445,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/install" \
             -DDR_EVT_WITH_REDIS=ON \
-            -DDR_EVT_WITH_SER20=OFF \
+            -DDR_EVT_WITH_SER20=${{ matrix.ser20 }} \
             -DDR_EVT_WITH_UNIT_TESTING=OFF \
             -DDR_EVT_ENABLE_PROTOBUF=ON \
             -DDR_EVT_ENABLE_GRPC=ON
@@ -454,6 +458,7 @@ jobs:
       - name: Run Redis integration test
         env:
           CMAKE_INSTALL_PREFIX: ${{ github.workspace }}/install
+          REQUIRE_CHECKPOINT_RESTART: ${{ matrix.ser20 == 'ON' && '1' || '0' }}
         run: ./tests/run_redis_tests.sh
 
       - name: Run Redis gRPC client example test

@@ -127,8 +127,14 @@ Checkpoint methods are present when DR_EVT is built with
 supported when the destination `Simulation` is constructed with equivalent
 cost and selection callbacks; callback objects and external state are not
 stored in the checkpoint. Standard and Pcon trace state are preserved. Custom
-scheduler subclasses, replay/warm-start, and progressive file loading are
-rejected rather than restored inexactly.
+scheduler subclasses and replay/warm-start are rejected rather than restored
+inexactly. Progressive file loading resumes at the next fully admitted input
+file. Output files remain external to the
+checkpoint; loading archives them into numbered pre-restart segments and opens
+fresh segments at the configured paths. Use `dr_evt_stitch_checkpoint_output`
+after the resumed run to reconstruct each logical output. Redis output uses
+numbered archived namespaces and the tool's `--redis-uri`/`--redis-prefix`
+mode.
 
 ## Supporting types
 

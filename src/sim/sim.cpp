@@ -19,9 +19,13 @@
 #if defined(DR_EVT_HAS_SER20)
 #include "utils/state_io_ser20.hpp"
 #endif
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+#include "utils/redis_output.hpp"
+#endif
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <queue>
@@ -37,9 +41,18 @@ namespace {
 
 constexpr std::array<char, 8> checkpoint_magic{'D', 'R', 'E', 'V',
                                                'T', 'C', 'K', 'P'};
-constexpr std::uint32_t checkpoint_version = 4;
+constexpr std::uint32_t checkpoint_version = 6;
 constexpr std::uint64_t checkpoint_collection_limit = 100000000;
 constexpr std::uint64_t checkpoint_string_limit = 64 * 1024 * 1024;
+
+/** Output-only Redis state sampled when a checkpoint is explicitly written. */
+struct CheckpointRedisBoundary {
+  std::uint64_t job_csv_bytes = 0;
+  std::uint64_t resource_csv_bytes = 0;
+  std::uint64_t resource_count = 0;
+  std::vector<std::string> job_ids;
+  bool resource_trace_active = false;
+};
 
 /** Thin typed facade over one Ser20 checkpoint output archive. */
 class CheckpointWriter {
@@ -152,6 +165,72 @@ void require_checkpoint_match(const T &actual, const T &expected,
   }
 }
 
+/** Return the byte boundary of a flushed checkpoint output stream. */
+std::uint64_t checkpoint_output_bytes(std::ofstream &output,
+                                      const char *description) {
+  const auto position = output.tellp();
+  if (position < 0) {
+    throw std::runtime_error(std::string("cannot determine ") + description +
+                             " checkpoint boundary");
+  }
+  return static_cast<std::uint64_t>(position);
+}
+
+/** Preserve pre-restart output and open a header-only resumed segment. */
+void start_restart_output_segment(const std::string &filename,
+                                  std::uint64_t checkpoint_bytes,
+                                  std::ofstream &output) {
+  namespace fs = std::filesystem;
+  const fs::path active(filename);
+  std::ifstream existing(active, std::ios::binary);
+  if (!existing) {
+    throw std::runtime_error("checkpoint output is missing: " + filename);
+  }
+  std::string header;
+  std::getline(existing, header);
+  header += '\n';
+  existing.close();
+  if (header.size() > checkpoint_bytes ||
+      fs::file_size(active) < checkpoint_bytes) {
+    throw std::runtime_error(
+        "checkpoint output is shorter than its saved boundary: " + filename);
+  }
+
+  fs::path archived;
+  for (std::uint64_t generation = 1;; ++generation) {
+    archived = filename + ".pre-restart." + std::to_string(generation);
+    if (!fs::exists(archived) &&
+        !fs::exists(archived.string() + ".checkpoint-bytes")) {
+      break;
+    }
+  }
+
+  fs::rename(active, archived);
+  try {
+    std::ofstream boundary(archived.string() + ".checkpoint-bytes");
+    boundary << checkpoint_bytes << '\n';
+    boundary.close();
+    if (!boundary) {
+      throw std::runtime_error("cannot record checkpoint boundary for: " +
+                               archived.string());
+    }
+    output.open(active, std::ios::binary | std::ios::trunc);
+    output << header;
+    output.flush();
+    if (!output) {
+      throw std::runtime_error("cannot create post-restart output: " +
+                               filename);
+    }
+  } catch (...) {
+    output.close();
+    std::error_code ignored;
+    fs::remove(active, ignored);
+    fs::remove(archived.string() + ".checkpoint-bytes", ignored);
+    fs::rename(archived, active, ignored);
+    throw;
+  }
+}
+
 #endif
 
 } // namespace
@@ -170,7 +249,11 @@ BasicSimulation<TraceType>::BasicSimulation(const Sim_Params &params)
                                                 params.m_total_nodes)),
       m_next_capacity_change(0), m_current_capacity(params.m_total_nodes),
       m_capacity_area(0.0), m_capacity_area_time(0.0), m_jobs_completed(0),
-      m_jobs_submitted(0), m_pre_start_jobs(0), m_warm_resource_area(0.0),
+      m_jobs_submitted(0), m_next_progressive_file(0),
+      m_checkpoint_loaded(false), m_last_automatic_checkpoint_jobs(0),
+      m_has_automatic_checkpoint(false),
+      m_last_automatic_checkpoint_time(0.0),
+      m_pre_start_jobs(0), m_warm_resource_area(0.0),
       m_warm_resource_end(0.0), m_rng(params.m_seed), m_queue_length_sum(0),
       m_queue_length_samples(0), m_queue_length_peak(0) {
   reset_capacity_schedule();
@@ -193,7 +276,11 @@ BasicSimulation<TraceType>::BasicSimulation(const Sim_Params &params,
                                                 params.m_total_nodes)),
       m_next_capacity_change(0), m_current_capacity(params.m_total_nodes),
       m_capacity_area(0.0), m_capacity_area_time(0.0), m_jobs_completed(0),
-      m_jobs_submitted(0), m_pre_start_jobs(0), m_warm_resource_area(0.0),
+      m_jobs_submitted(0), m_next_progressive_file(0),
+      m_checkpoint_loaded(false), m_last_automatic_checkpoint_jobs(0),
+      m_has_automatic_checkpoint(false),
+      m_last_automatic_checkpoint_time(0.0),
+      m_pre_start_jobs(0), m_warm_resource_area(0.0),
       m_warm_resource_end(0.0), m_rng(params.m_seed), m_queue_length_sum(0),
       m_queue_length_samples(0), m_queue_length_peak(0) {
   reset_capacity_schedule();
@@ -211,7 +298,11 @@ BasicSimulation<TraceType>::BasicSimulation(
                                                 params.m_total_nodes)),
       m_next_capacity_change(0), m_current_capacity(params.m_total_nodes),
       m_capacity_area(0.0), m_capacity_area_time(0.0), m_jobs_completed(0),
-      m_jobs_submitted(0), m_pre_start_jobs(0), m_warm_resource_area(0.0),
+      m_jobs_submitted(0), m_next_progressive_file(0),
+      m_checkpoint_loaded(false), m_last_automatic_checkpoint_jobs(0),
+      m_has_automatic_checkpoint(false),
+      m_last_automatic_checkpoint_time(0.0),
+      m_pre_start_jobs(0), m_warm_resource_area(0.0),
       m_warm_resource_end(0.0), m_rng(params.m_seed), m_queue_length_sum(0),
       m_queue_length_samples(0), m_queue_length_peak(0) {
   if (!m_scheduler) {
@@ -221,6 +312,11 @@ BasicSimulation<TraceType>::BasicSimulation(
 }
 
 template <typename TraceType> void BasicSimulation<TraceType>::run() {
+  if (m_params.m_checkpoint_file.empty() &&
+      m_params.m_checkpoint_interval_jobs != 0) {
+    throw std::invalid_argument(
+        "checkpoint_interval_jobs requires checkpoint_file");
+  }
   if (m_params.m_verbose) {
     std::cout << "Starting simulation..." << std::endl;
   }
@@ -629,16 +725,22 @@ void BasicSimulation<TraceType>::run_progressive() {
   // Minimal reset, equivalent to initialize_trace()'s own tail - no
   // load_data() call here, since there's no single file to load
   // upfront; each file gets loaded as the driving loop below reaches it.
-  m_trace.data().clear();
-  m_current_time = 0.0;
-  reset_capacity_schedule();
-  m_jobs_submitted = 0;
-  m_jobs_completed = 0;
-  m_pre_start_jobs = 0;
-  m_warm_resource_area = 0.0;
-  m_warm_resource_end = 0.0;
-  if (m_custom_scheduler != nullptr) {
-    m_custom_scheduler->reset_resource_accounting();
+  if (!m_checkpoint_loaded) {
+    m_trace.data().clear();
+    m_current_time = 0.0;
+    reset_capacity_schedule();
+    m_jobs_submitted = 0;
+    m_jobs_completed = 0;
+    m_next_progressive_file = 0;
+    m_last_automatic_checkpoint_jobs = 0;
+    m_has_automatic_checkpoint = false;
+    m_last_automatic_checkpoint_time = 0.0;
+    m_pre_start_jobs = 0;
+    m_warm_resource_area = 0.0;
+    m_warm_resource_end = 0.0;
+    if (m_custom_scheduler != nullptr) {
+      m_custom_scheduler->reset_resource_accounting();
+    }
   }
 
   // Same reasoning as run()'s single-file path: open output files
@@ -652,7 +754,9 @@ void BasicSimulation<TraceType>::run_progressive() {
   m_trace.start_resource_trace(m_params.get_resource_trace(),
                                m_params.m_total_nodes, m_params.m_msec_output);
 
-  for (const std::string &fname : m_params.m_infile_list_parsed) {
+  for (size_t file_index = m_next_progressive_file;
+       file_index < m_params.m_infile_list_parsed.size(); ++file_index) {
+    const std::string &fname = m_params.m_infile_list_parsed[file_index];
     if (m_params.m_verbose) {
       std::cout << "Loading " + fname + "...\n";
     }
@@ -665,6 +769,8 @@ void BasicSimulation<TraceType>::run_progressive() {
     // comment.
     auto job_nos = m_trace.load_next_file(m_current_time, fname);
     if (job_nos.empty()) {
+      m_next_progressive_file = file_index + 1;
+      maybe_save_automatic_checkpoint(true);
       continue; // an empty file contributes nothing to submit
     }
 
@@ -689,6 +795,11 @@ void BasicSimulation<TraceType>::run_progressive() {
       submit_job(job_no, submit_time);
     }
 
+    // The file is now fully admitted. A periodic checkpoint taken while the
+    // following advance processes completions can therefore resume directly
+    // with the next file.
+    m_next_progressive_file = file_index + 1;
+
     // This file's last job was just added to the wait queue -
     // nothing more from it to submit, so this is the point to let
     // time (and reclaiming) actually progress before the next file
@@ -700,6 +811,7 @@ void BasicSimulation<TraceType>::run_progressive() {
     const sim_time_t run_limit =
         m_params.m_is_time_set ? m_params.m_max_time : last_submit_time;
     advance_to(std::min(last_submit_time, run_limit));
+    maybe_save_automatic_checkpoint(true);
     if (m_params.m_is_time_set && last_submit_time >= m_params.m_max_time) {
       break;
     }
@@ -713,6 +825,37 @@ void BasicSimulation<TraceType>::run_progressive() {
   if (m_current_time < run_limit) {
     advance_to(run_limit);
   }
+  m_checkpoint_loaded = false;
+}
+
+template <typename TraceType>
+void BasicSimulation<TraceType>::maybe_save_automatic_checkpoint(
+    bool file_boundary) {
+  if (m_params.m_checkpoint_file.empty()) {
+    return;
+  }
+#if defined(DR_EVT_HAS_SER20)
+  const bool interval_due =
+      m_params.m_checkpoint_interval_jobs != 0 &&
+      m_jobs_completed - m_last_automatic_checkpoint_jobs >=
+          m_params.m_checkpoint_interval_jobs;
+  if (!file_boundary && !interval_due) {
+    return;
+  }
+  if (file_boundary && m_has_automatic_checkpoint &&
+      m_jobs_completed == m_last_automatic_checkpoint_jobs &&
+      m_current_time == m_last_automatic_checkpoint_time) {
+    return;
+  }
+  m_last_automatic_checkpoint_jobs = m_jobs_completed;
+  m_has_automatic_checkpoint = true;
+  m_last_automatic_checkpoint_time = m_current_time;
+  save_checkpoint(m_params.m_checkpoint_file);
+#else
+  (void)file_boundary;
+  throw std::logic_error(
+      "automatic checkpoints require DR_EVT_WITH_SER20=ON");
+#endif
 }
 
 template <typename TraceType>
@@ -793,9 +936,6 @@ void BasicSimulation<TraceType>::flush_completed_jobs() {
 #if defined(DR_EVT_HAS_SER20)
 template <typename TraceType>
 void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
-  if (!m_params.m_redis_uri.empty()) {
-    throw std::logic_error("checkpointing is not supported with Redis output");
-  }
   if constexpr (std::is_same_v<TraceType, Trace> ||
                 std::is_same_v<TraceType, PconTrace>) {
     if (m_custom_scheduler != nullptr &&
@@ -810,18 +950,47 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
     if (m_trace.dcols().get_trace_mode() != TraceMode::SIMULATION) {
       throw std::logic_error("checkpointing requires simulation-mode input");
     }
-    if (!m_params.m_infile_list.empty()) {
-      throw std::logic_error(
-          "checkpointing is not supported during progressive file loading");
-    }
-
-    const bool simulated_output_open = m_trace.m_simulated_trace_ofs.is_open();
-    const bool resource_output_open = m_trace.m_resource_trace_ofs.is_open();
+    const bool redis_output = !m_params.m_redis_uri.empty();
+    bool simulated_output_open = m_trace.m_simulated_trace_ofs.is_open();
+    bool resource_output_open = m_trace.m_resource_trace_ofs.is_open();
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+    simulated_output_open =
+        simulated_output_open || m_trace.m_redis_output != nullptr;
+    resource_output_open =
+        resource_output_open ||
+        (m_trace.m_redis_output != nullptr &&
+         m_trace.m_redis_output->resource_trace_active());
+#endif
     m_trace.flush_simulated_trace_buffer(true);
     if (resource_output_open) {
       m_trace.flush_resource_history();
       m_trace.m_resource_trace_ofs.flush();
     }
+    const std::uint64_t simulated_output_bytes =
+        simulated_output_open && !redis_output
+            ? checkpoint_output_bytes(m_trace.m_simulated_trace_ofs,
+                                      "simulated trace output")
+            : 0;
+    const std::uint64_t resource_output_bytes =
+        resource_output_open && !redis_output
+            ? checkpoint_output_bytes(m_trace.m_resource_trace_ofs,
+                                      "resource trace output")
+            : 0;
+    CheckpointRedisBoundary redis_boundary;
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+    if (redis_output && m_trace.m_redis_output != nullptr) {
+      auto captured = m_trace.m_redis_output->checkpoint_boundary();
+      redis_boundary.job_csv_bytes = captured.job_csv_bytes;
+      redis_boundary.resource_csv_bytes = captured.resource_csv_bytes;
+      redis_boundary.resource_count = captured.resource_count;
+      redis_boundary.job_ids = std::move(captured.job_ids);
+      redis_boundary.resource_trace_active = captured.resource_trace_active;
+    }
+#else
+    if (redis_output) {
+      throw std::logic_error("Redis checkpoint requires Redis support");
+    }
+#endif
 
     CheckpointWriter writer(output);
     writer.bytes(checkpoint_magic.data(), checkpoint_magic.size());
@@ -847,7 +1016,15 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
     writer.value(m_params.m_run_time_stddev);
     writer.string(m_params.get_outfile());
     writer.string(m_params.get_resource_trace());
+    writer.string(m_params.m_redis_uri);
+    writer.string(m_params.m_redis_key_prefix);
     writer.value(m_params.m_msec_output);
+    writer.value(m_params.m_checkpoint_interval_jobs);
+    writer.value(static_cast<std::uint64_t>(
+        m_params.m_infile_list_parsed.size()));
+    for (const auto &filename : m_params.m_infile_list_parsed) {
+      writer.string(filename);
+    }
     writer.value(m_custom_scheduler != nullptr);
     writer.value(static_cast<std::uint64_t>(m_capacity_changes.size()));
     for (const auto &change : m_capacity_changes) {
@@ -863,6 +1040,10 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
     writer.value(m_capacity_area_time);
     writer.value(m_jobs_completed);
     writer.value(m_jobs_submitted);
+    writer.value(static_cast<std::uint64_t>(m_next_progressive_file));
+    writer.value(m_last_automatic_checkpoint_jobs);
+    writer.value(m_has_automatic_checkpoint);
+    writer.value(m_last_automatic_checkpoint_time);
     writer.value(m_pre_start_jobs);
     writer.value(m_warm_resource_area);
     writer.value(m_warm_resource_end);
@@ -1032,6 +1213,17 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
     writer.value(m_trace.m_simulated_trace_msec);
     writer.value(simulated_output_open);
     writer.value(resource_output_open);
+    writer.value(simulated_output_bytes);
+    writer.value(resource_output_bytes);
+    writer.value(redis_output);
+    writer.value(redis_boundary.job_csv_bytes);
+    writer.value(redis_boundary.resource_csv_bytes);
+    writer.value(redis_boundary.resource_count);
+    writer.value(redis_boundary.resource_trace_active);
+    writer.value(static_cast<std::uint64_t>(redis_boundary.job_ids.size()));
+    for (const auto &id : redis_boundary.job_ids) {
+      writer.string(id);
+    }
   } else {
     static_assert(std::is_same_v<TraceType, Trace> ||
                       std::is_same_v<TraceType, PconTrace>,
@@ -1057,9 +1249,6 @@ void BasicSimulation<TraceType>::save_checkpoint(const std::string &filename) {
 
 template <typename TraceType>
 void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
-  if (!m_params.m_redis_uri.empty()) {
-    throw std::logic_error("checkpointing is not supported with Redis output");
-  }
   if constexpr (std::is_same_v<TraceType, Trace> ||
                 std::is_same_v<TraceType, PconTrace>) {
     if (m_custom_scheduler != nullptr &&
@@ -1115,8 +1304,23 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
                              "simulated trace output");
     require_checkpoint_match(reader.string(), m_params.get_resource_trace(),
                              "resource trace output");
+    require_checkpoint_match(reader.string(), m_params.m_redis_uri,
+                             "redis_uri");
+    require_checkpoint_match(reader.string(), m_params.m_redis_key_prefix,
+                             "redis_key_prefix");
     require_checkpoint_match(reader.value<bool>(), m_params.m_msec_output,
                              "msec_output");
+    require_checkpoint_match(reader.value<num_jobs_t>(),
+                             m_params.m_checkpoint_interval_jobs,
+                             "checkpoint_interval_jobs");
+    const size_t progressive_file_count = reader.count();
+    require_checkpoint_match(progressive_file_count,
+                             m_params.m_infile_list_parsed.size(),
+                             "progressive input file count");
+    for (const auto &expected : m_params.m_infile_list_parsed) {
+      require_checkpoint_match(reader.string(), expected,
+                               "progressive input file");
+    }
     const bool checkpoint_uses_custom_scheduler = reader.value<bool>();
     require_checkpoint_match(checkpoint_uses_custom_scheduler,
                              m_custom_scheduler != nullptr,
@@ -1142,6 +1346,15 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
     m_capacity_area_time = reader.value<sim_time_t>();
     m_jobs_completed = reader.value<num_jobs_t>();
     m_jobs_submitted = reader.value<num_jobs_t>();
+    m_next_progressive_file = reader.count();
+    if (m_next_progressive_file > m_params.m_infile_list_parsed.size()) {
+      throw std::runtime_error(
+          "checkpoint progressive input cursor is out of range");
+    }
+    m_last_automatic_checkpoint_jobs = reader.value<num_jobs_t>();
+    m_has_automatic_checkpoint = reader.value<bool>();
+    m_last_automatic_checkpoint_time = reader.value<sim_time_t>();
+    m_checkpoint_loaded = true;
     m_pre_start_jobs = reader.value<size_t>();
     m_warm_resource_area = reader.value<tdiff_t>();
     m_warm_resource_end = reader.value<sim_time_t>();
@@ -1385,6 +1598,18 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
     m_trace.m_simulated_trace_msec = reader.value<bool>();
     const bool simulated_output_open = reader.value<bool>();
     const bool resource_output_open = reader.value<bool>();
+    const auto simulated_output_bytes = reader.value<std::uint64_t>();
+    const auto resource_output_bytes = reader.value<std::uint64_t>();
+    const bool redis_output = reader.value<bool>();
+    CheckpointRedisBoundary redis_boundary;
+    redis_boundary.job_csv_bytes = reader.value<std::uint64_t>();
+    redis_boundary.resource_csv_bytes = reader.value<std::uint64_t>();
+    redis_boundary.resource_count = reader.value<std::uint64_t>();
+    redis_boundary.resource_trace_active = reader.value<bool>();
+    redis_boundary.job_ids.resize(reader.count());
+    for (auto &id : redis_boundary.job_ids) {
+      id = reader.string();
+    }
     m_trace.m_simulated_trace_buffer.clear();
 
     for (const auto job_id : pending_job_ids) {
@@ -1423,33 +1648,42 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
     }
     m_scheduler->m_fcfs_reservation_time = reservation_time;
 
-    if (simulated_output_open) {
+    if (redis_output) {
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+      m_trace.m_redis_output.reset();
+      RedisCheckpointBoundary native_boundary;
+      native_boundary.job_csv_bytes = redis_boundary.job_csv_bytes;
+      native_boundary.resource_csv_bytes = redis_boundary.resource_csv_bytes;
+      native_boundary.resource_count = redis_boundary.resource_count;
+      native_boundary.job_ids = std::move(redis_boundary.job_ids);
+      native_boundary.resource_trace_active =
+          redis_boundary.resource_trace_active;
+      RedisOutput::archive_checkpoint_namespace(
+          m_params.m_redis_uri, m_params.m_redis_key_prefix, native_boundary);
+      if (simulated_output_open) {
+        m_trace.start_simulated_trace(
+            m_params.get_outfile(), m_params.m_msec_output,
+            m_params.m_redis_uri, m_params.m_redis_key_prefix);
+      }
+      if (resource_output_open) {
+        std::string header = "time,free_nodes,allocated_nodes";
+        header += TraceType::policy_type::resource_columns();
+        header += '\n';
+        m_trace.m_redis_output->start_resource_trace(
+            header, m_params.m_msec_output);
+      }
+#else
+      throw std::logic_error("Redis checkpoint requires Redis support");
+#endif
+    } else if (simulated_output_open) {
       const auto filename = m_params.get_outfile();
-      std::ifstream existing(filename, std::ios::binary);
-      if (!existing || existing.peek() == std::ifstream::traits_type::eof()) {
-        throw std::runtime_error(
-            "checkpoint simulated trace output is missing or empty: " +
-            filename);
-      }
-      m_trace.m_simulated_trace_ofs.open(filename, std::ios::app);
-      if (!m_trace.m_simulated_trace_ofs) {
-        throw std::runtime_error("cannot resume simulated trace output: " +
-                                 filename);
-      }
+      start_restart_output_segment(filename, simulated_output_bytes,
+                                   m_trace.m_simulated_trace_ofs);
     }
-    if (resource_output_open) {
+    if (!redis_output && resource_output_open) {
       const auto filename = m_params.get_resource_trace();
-      std::ifstream existing(filename, std::ios::binary);
-      if (!existing || existing.peek() == std::ifstream::traits_type::eof()) {
-        throw std::runtime_error(
-            "checkpoint resource trace output is missing or empty: " +
-            filename);
-      }
-      m_trace.m_resource_trace_ofs.open(filename, std::ios::app);
-      if (!m_trace.m_resource_trace_ofs) {
-        throw std::runtime_error("cannot resume resource trace output: " +
-                                 filename);
-      }
+      start_restart_output_segment(filename, resource_output_bytes,
+                                   m_trace.m_resource_trace_ofs);
     }
   } else {
     static_assert(std::is_same_v<TraceType, Trace> ||
@@ -2165,6 +2399,9 @@ void BasicSimulation<TraceType>::advance_to_impl(
 
     // Peak queue length after all events and scheduling at this timestamp.
     m_queue_length_peak = std::max(m_queue_length_peak, active_count);
+
+    // All peer events and scheduling decisions at this timestamp are settled.
+    maybe_save_automatic_checkpoint(false);
 
     if constexpr (WarmStage) {
       // Transition only after every peer event and scheduling decision at the
