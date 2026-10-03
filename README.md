@@ -231,6 +231,9 @@ for the optional analysis reports.
   control.
 - Enable the network service with `-DDR_EVT_ENABLE_GRPC=ON`; this also enables
   Protobuf. The server gives each client session an isolated simulation.
+- Enable searchable job and resource-history Redis output with
+  `-DDR_EVT_WITH_REDIS=ON`; see the
+  [Redis output guide](docs/user-guide/redis-output.md).
 - MPI is used only by the optional multi-client/multi-server test harness.
 
 For example, an all-interface build uses:

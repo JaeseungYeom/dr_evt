@@ -105,6 +105,12 @@ message DR_EVT_Params {
         // Global simulation start time. A positive value enables replay-based
         // warm start; replay jobs already running at the boundary seed resources.
         double sim_start_time = 31;
+
+        // When both are nonempty, write simulated-job and resource-history
+        // output to Redis instead of outfile/resource_trace. Requires
+        // DR_EVT_WITH_REDIS=ON.
+        string redis_uri = 32;
+        string redis_key_prefix = 33;
     }
 
     message Tracing_Params {

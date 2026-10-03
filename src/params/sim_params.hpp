@@ -175,6 +175,11 @@ public:
   /// precision.
   bool m_msec_output;
 
+  /// Redis connection URI; empty selects ordinary file output.
+  std::string m_redis_uri;
+  /// Namespace used for the Redis CSV value, job hashes, and sorted indexes.
+  std::string m_redis_key_prefix;
+
 private:
   /// Simulated-trace output filename.
   std::string m_outfile;

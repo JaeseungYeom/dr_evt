@@ -37,10 +37,12 @@ This directory contains GitHub Actions workflows for automated testing.
 - Synchronized single-coordinator gRPC test
 - Progressive-loading tests (C++ + CLI)
 - Queue-input schema test
+- Redis-enabled build, isolated Redis server integration test, and real gRPC
+  client Redis-first/status-fallback test
 - Scale tests (7)
 
 **Matrix:**
-- GCC 13
+- GCC 14
 - Clang 18
 - Python 3.12
 
@@ -59,7 +61,7 @@ This directory contains GitHub Actions workflows for automated testing.
 - Queue-input schema test - installed `test_queue_input`
 
 **Compiler:**
-- GCC 13 only
+- GCC 14 only
 
 **Duration:** ~2-3 minutes
 
@@ -91,8 +93,10 @@ Total tests referenced by the full suite:
 | Append-job | 25: 20 C++ + 5 optional gRPC checks | CI runner |
 | FCFS/EASY backfill-window gRPC | 5 repeated checks; 1 targeted | CI runner |
 | Single-coordinator gRPC | 1 | CI runner; synchronized independent systems |
-| Progressive loading | 11 C++ + 4 CLI | CI runner |
+| Progressive loading | 11 C++ + 5 CLI | CI runner |
 | Queue input schema | 1 binary | CI runner; queue variants and replay/simulation runtime validation |
+| Redis output | 1 integration runner | Dedicated Redis-enabled GCC build; server startup, typed batched job/resource serialization, structured resource and Pcon hashes, indexes, namespace replacement, finalized-versus-unfinished visibility, pipelined bulk lookup, and byte-identical job and resource outputs for Redis/file runs of 200 jobs |
+| Redis gRPC example | 1 integration runner | Real client/server batch append, advance, pipelined Redis lookup, missing-ID server fallback, and ordered merge |
 | Scale | 7 | CI runner |
 
 The workflow summary in `tests.yml` is the authoritative CI-oriented list.
@@ -211,8 +215,8 @@ When you add a new test:
 
 ### Workflow fails but tests pass locally
 
-- Check compiler version (the full CI matrix uses GCC 13 and Clang 18; the
-  quick workflow uses GCC 13)
+- Check compiler version (the full CI matrix uses GCC 14 and Clang 18; the
+  quick workflow uses GCC 14)
 - Check Boost version
 - Run with same flags as CI: `-DCMAKE_BUILD_TYPE=Release`
 

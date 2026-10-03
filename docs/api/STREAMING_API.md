@@ -113,6 +113,16 @@ std::vector<Simulation::Job_Append_Request> batch = {
 auto job_nos = sim.append_jobs(batch);
 ```
 
+### `get_job_statuses(job_nos)`
+
+Returns a status snapshot for each ID returned by `append_job()` or
+`append_jobs()`, preserving request order and duplicate IDs. Pending jobs
+include an on-demand `expected_start_time` projection. Once scheduled, a job
+instead includes its simulated `start_time` and `end_time` and is reported as
+running or completed according to the current simulation time. Rejected jobs
+have no timing. Status remains queryable after completed trace records are
+flushed; an ID not created by the append APIs raises `std::out_of_range`.
+
 ### `advance_to(target_time)`
 
 Advances simulation to `target_time` and processes all events at that time.
@@ -156,6 +166,11 @@ sim.advance_to(checkpoint_time);
 sim.flush_completed_jobs();
 ```
 
+The `job_flush_interval` setting invokes the same operation periodically after
+processed departures. Setting it to `1` attempts a flush after every completed
+job. A later job that completes through backfill remains buffered behind any
+earlier unfinished job so permanent job-ID order is preserved.
+
 This output flush is not a restart checkpoint. Use `save_checkpoint()` when
 the simulation itself must resume later.
 
@@ -173,10 +188,11 @@ resumed.load_checkpoint("simulation.ckpt");
 resumed.advance_to(1000.0);
 ```
 
-The checkpoint includes resident job records, scheduler queue state, running
-jobs, pending events, capacity and statistics accounting, resource history,
-and the random-number generator. If incremental output files were open, they
-are flushed when saved and reopened in append mode when loaded.
+The checkpoint includes resident job records, appended-job status history,
+scheduler queue state, running jobs, pending events, capacity and statistics
+accounting, resource history, and the random-number generator. If incremental
+output files were open, they are flushed when saved and reopened in append mode
+when loaded.
 
 Checkpoint/restart is compiled when `DR_EVT_WITH_SER20=ON`. Checkpoints are
 Ser20 binary, same-build artifacts rather than a portable exchange format. The

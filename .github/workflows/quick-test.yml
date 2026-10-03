@@ -31,13 +31,13 @@ jobs:
             python3 \
             libopenmpi-dev \
             openmpi-bin \
-            gcc-13 \
-            g++-13
+            gcc-14 \
+            g++-14
 
       - name: Configure and Build
         env:
-          CC: gcc-13
-          CXX: g++-13
+          CC: gcc-14
+          CXX: g++-14
         run: |
           mkdir -p build
           cd build

@@ -35,6 +35,7 @@ in-process via the streaming API:
 | `InitializeTraceRequest` | `Simulation::initialize_trace()` |
 | `AppendJobRequest` | `Simulation::append_job()` - a genuinely new job the server has never seen before |
 | `AppendJobsRequest` | `Simulation::append_jobs()` - the batch counterpart, several new jobs in one call |
+| `GetJobStatusesRequest` | Query lifecycle and timing for IDs returned by the append APIs |
 | `AdvanceToRequest` | `Simulation::advance_to()` |
 | `RunUntilExclusiveRequest` | `Simulation::run_until_exclusive()` |
 | `GetFCFSHeadShadowTimeRequest` | FCFS-head shadow time only: the earliest reserved start time, or `-1` with no waiting head |
@@ -43,6 +44,12 @@ in-process via the streaming API:
 | `SaveCheckpointRequest` | Return the current simulation state as binary checkpoint bytes |
 | `LoadCheckpointRequest` | Replace the current simulation state from compatible checkpoint bytes |
 | `GetStatisticsRequest`, `GetCurrentTimeRequest`, etc. | The monitoring/statistics methods |
+
+`GetJobStatusesRequest.job_idx` accepts multiple appended-job IDs and returns
+one `JobStatus` per ID in the same order. A pending job carries
+`expected_start_time`; a running or completed job carries `scheduled` with
+`start_time` and `end_time`; and a rejected job carries no timing value.
+Unknown or non-appended IDs produce `ErrorResponse`.
 
 Checkpoint requests use Ser20 and require a server built with
 `DR_EVT_WITH_SER20=ON`; otherwise the server returns an error response.
@@ -57,9 +64,9 @@ negative and non-finite values are rejected.
 
 Every `ClientMessage` carries a `request_id`, echoed back on the matching
 `ServerMessage`, so a client can correlate responses even if it pipelines
-multiple in-flight requests (the provided `dr_evt_client` sends one at a
-time and waits for each response, but the protocol itself doesn't require
-that).
+multiple in-flight requests. The provided `dr_evt_client` batch-appends jobs
+but sends one protocol request at a time and waits for each response; the
+protocol itself does not require that.
 
 ### FCFS/EASY shadow-time and resource-change queries
 
@@ -106,6 +113,9 @@ Session initialization, completion, reuse, and shutdown are documented in
 - The [example C++ client](https://github.com/LLNL/dr_evt/blob/main/src/proto/dr_evt_client.cpp)
   demonstrates the complete request sequence described in
   [Connecting the example client](user-guide/grpc-setup.md#connecting-the-example-client).
+  Its optional Redis mode advances to a requested time, pipelines finalized
+  job lookups, queries the server only for missing IDs, and reports the merged
+  statuses in append order.
 - [Client/Server Use Cases](user-guide/client-server-use-cases.md) links the
   Python multi-server, MPI-launcher, and synchronized-system examples.
 - The [distributed client/server tests](https://github.com/LLNL/dr_evt/blob/main/tests/README.md#distributed-clientserver-tests)

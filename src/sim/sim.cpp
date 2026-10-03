@@ -37,7 +37,7 @@ namespace {
 
 constexpr std::array<char, 8> checkpoint_magic{'D', 'R', 'E', 'V',
                                                'T', 'C', 'K', 'P'};
-constexpr std::uint32_t checkpoint_version = 2;
+constexpr std::uint32_t checkpoint_version = 3;
 constexpr std::uint64_t checkpoint_collection_limit = 100000000;
 constexpr std::uint64_t checkpoint_string_limit = 64 * 1024 * 1024;
 
@@ -291,11 +291,12 @@ template <typename TraceType> void BasicSimulation<TraceType>::run() {
     // Open outputs before processing so bounded buffers can flush
     // incrementally. Warm-start opens them later, after discarding pre-boundary
     // samples and installing its nonzero baseline.
+    m_trace.start_simulated_trace(m_params.get_outfile(),
+                                  m_params.m_msec_output, m_params.m_redis_uri,
+                                  m_params.m_redis_key_prefix);
     m_trace.start_resource_trace(m_params.get_resource_trace(),
                                  m_params.m_total_nodes,
                                  m_params.m_msec_output);
-    m_trace.start_simulated_trace(m_params.get_outfile(),
-                                  m_params.m_msec_output);
 
     if (m_trace.dcols().get_trace_mode() == TraceMode::REPLAY) {
       // Replay-format input (begin_time/end_time present): don't consult
@@ -455,6 +456,8 @@ num_jobs_t BasicSimulation<TraceType>::initialize_trace(num_jobs_t max_jobs) {
   m_pre_start_jobs = 0;
   m_warm_resource_area = 0.0;
   m_warm_resource_end = 0.0;
+  m_first_appended_job_idx = std::numeric_limits<job_no_t>::max();
+  m_appended_job_query_records.clear();
   if (m_custom_scheduler != nullptr) {
     m_custom_scheduler->reset_resource_accounting();
   }
@@ -539,9 +542,11 @@ void BasicSimulation<TraceType>::run_warm_start() {
   // This is the accounting/output boundary: retain occupancy and Pcon state,
   // discard every pre-t sample, and establish a baseline at t.
   m_trace.reset_resource_recording(sim_start_time);
+  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output,
+                                m_params.m_redis_uri,
+                                m_params.m_redis_key_prefix);
   m_trace.start_resource_trace(m_params.get_resource_trace(),
                                m_params.m_total_nodes, m_params.m_msec_output);
-  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output);
   if (m_custom_scheduler != nullptr) {
     m_custom_scheduler->reset_resource_accounting(sim_start_time,
                                                   get_available_nodes());
@@ -641,9 +646,11 @@ void BasicSimulation<TraceType>::run_progressive() {
   // between files here, unlike single-file batch mode) can flush to
   // them incrementally, not only at the very end.
   m_trace.set_resource_history_capacity(m_params.m_resource_history_capacity);
+  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output,
+                                m_params.m_redis_uri,
+                                m_params.m_redis_key_prefix);
   m_trace.start_resource_trace(m_params.get_resource_trace(),
                                m_params.m_total_nodes, m_params.m_msec_output);
-  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output);
 
   for (const std::string &fname : m_params.m_infile_list_parsed) {
     if (m_params.m_verbose) {
@@ -762,11 +769,19 @@ void BasicSimulation<TraceType>::write_simulated_trace() {
   const sim_time_t completed_through =
       m_params.m_is_time_set ? m_params.m_max_time
                              : std::numeric_limits<sim_time_t>::max();
+  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output,
+                                m_params.m_redis_uri,
+                                m_params.m_redis_key_prefix);
   m_trace.write_simulated_trace(m_params.get_outfile(), m_params.m_msec_output,
                                 completed_through);
   if (m_params.m_verbose && !m_params.get_outfile().empty()) {
-    std::cout << "Simulated trace written to: " << m_params.get_outfile()
-              << std::endl;
+    if (m_params.m_redis_uri.empty()) {
+      std::cout << "Simulated trace written to: " << m_params.get_outfile()
+                << std::endl;
+    } else {
+      std::cout << "Simulated trace written to Redis prefix: "
+                << m_params.m_redis_key_prefix << std::endl;
+    }
   }
 }
 
@@ -778,6 +793,9 @@ void BasicSimulation<TraceType>::flush_completed_jobs() {
 #if defined(DR_EVT_HAS_SER20)
 template <typename TraceType>
 void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
+  if (!m_params.m_redis_uri.empty()) {
+    throw std::logic_error("checkpointing is not supported with Redis output");
+  }
   if constexpr (!std::is_same_v<TraceType, Trace>) {
     throw std::logic_error(
         "checkpointing is not supported for the experimental Pcon trace");
@@ -851,6 +869,19 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
     writer.value(m_queue_length_sum);
     writer.value(m_queue_length_samples);
     writer.value(m_queue_length_peak);
+    writer.value(m_first_appended_job_idx);
+    writer.value(
+        static_cast<std::uint64_t>(m_appended_job_query_records.size()));
+    for (const auto &record : m_appended_job_query_records) {
+      writer.value(record.submit_time);
+      writer.value(record.limit_time);
+      writer.value(record.num_nodes);
+      writer.value(record.start_time);
+      writer.value(record.end_time);
+      writer.value(record.tracked);
+      writer.value(record.scheduled);
+      writer.value(record.rejected);
+    }
     writer.value(m_scheduler->m_fcfs_reservation_time);
     auto pending_job_ids = m_scheduler->pending_job_ids();
     std::sort(pending_job_ids.begin(), pending_job_ids.end());
@@ -1007,6 +1038,9 @@ void BasicSimulation<TraceType>::save_checkpoint(const std::string &filename) {
 
 template <typename TraceType>
 void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
+  if (!m_params.m_redis_uri.empty()) {
+    throw std::logic_error("checkpointing is not supported with Redis output");
+  }
   if constexpr (!std::is_same_v<TraceType, Trace>) {
     throw std::logic_error(
         "checkpointing is not supported for the experimental Pcon trace");
@@ -1093,6 +1127,19 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
     m_queue_length_sum = reader.value<size_t>();
     m_queue_length_samples = reader.value<size_t>();
     m_queue_length_peak = reader.value<size_t>();
+    m_first_appended_job_idx = reader.value<job_no_t>();
+    m_appended_job_query_records.clear();
+    m_appended_job_query_records.resize(reader.count());
+    for (auto &record : m_appended_job_query_records) {
+      record.submit_time = reader.value<sim_time_t>();
+      record.limit_time = reader.value<tdiff_t>();
+      record.num_nodes = reader.value<num_nodes_t>();
+      record.start_time = reader.value<sim_time_t>();
+      record.end_time = reader.value<sim_time_t>();
+      record.tracked = reader.value<bool>();
+      record.scheduled = reader.value<bool>();
+      record.rejected = reader.value<bool>();
+    }
     const sim_time_t reservation_time = reader.value<sim_time_t>();
     std::vector<job_no_t> pending_job_ids;
     const size_t pending_job_count = reader.count();
@@ -1367,9 +1414,20 @@ void BasicSimulation<TraceType>::load_checkpoint(const std::string &filename) {
 template <typename TraceType>
 void BasicSimulation<TraceType>::write_resource_trace(
     const std::string &filename) {
-  if (filename.empty()) {
+  if (filename.empty() && m_params.m_redis_uri.empty()) {
     return;
   }
+
+  // A direct API caller may finalize Redis resource output without first
+  // calling run() or append_job(s), so initialize the shared Redis sink here
+  // too. Never reopen the ordinary job file after it has been finalized.
+  if (!m_params.m_redis_uri.empty()) {
+    m_trace.start_simulated_trace(m_params.get_outfile(),
+                                  m_params.m_msec_output, m_params.m_redis_uri,
+                                  m_params.m_redis_key_prefix);
+  }
+  m_trace.start_resource_trace(filename, m_params.m_total_nodes,
+                               m_params.m_msec_output);
 
   // Trace's own context is populated identically regardless of trace
   // mode (both go through the same process_single_event()/
@@ -1378,7 +1436,12 @@ void BasicSimulation<TraceType>::write_resource_trace(
   m_trace.write_resource_trace(filename, m_params.m_total_nodes,
                                m_params.m_msec_output);
   if (m_params.m_verbose) {
-    std::cout << "Resource trace written to: " << filename << std::endl;
+    if (m_params.m_redis_uri.empty()) {
+      std::cout << "Resource trace written to: " << filename << std::endl;
+    } else {
+      std::cout << "Resource trace written to Redis key: "
+                << m_params.m_redis_key_prefix << ":resources:csv" << std::endl;
+    }
   }
 }
 
@@ -1402,9 +1465,11 @@ job_no_t BasicSimulation<TraceType>::append_job(sim_time_t submit_time,
   // this insertion can reclaim a completed record from a full job store.
   m_trace.set_job_flush_interval(m_params.m_job_flush_interval);
   m_trace.set_resource_history_capacity(m_params.m_resource_history_capacity);
+  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output,
+                                m_params.m_redis_uri,
+                                m_params.m_redis_key_prefix);
   m_trace.start_resource_trace(m_params.get_resource_trace(),
                                m_params.m_total_nodes, m_params.m_msec_output);
-  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output);
 
   time_t sec = static_cast<time_t>(submit_time);
   float frac = submit_time - sec;
@@ -1420,6 +1485,7 @@ job_no_t BasicSimulation<TraceType>::append_job(sim_time_t submit_time,
   job_no_t job_idx = m_trace.append_job(m_current_time, submit_epoch, num_nodes,
                                         q, static_cast<timeout_t>(limit_time));
   submit_job(job_idx, submit_time);
+  record_appended_job(job_idx, submit_time, num_nodes, limit_time);
   return job_idx;
 }
 
@@ -1429,9 +1495,11 @@ std::vector<job_no_t> BasicSimulation<TraceType>::append_jobs(
   // Same one-time, idempotent setup as append_job(), once for this batch.
   m_trace.set_job_flush_interval(m_params.m_job_flush_interval);
   m_trace.set_resource_history_capacity(m_params.m_resource_history_capacity);
+  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output,
+                                m_params.m_redis_uri,
+                                m_params.m_redis_key_prefix);
   m_trace.start_resource_trace(m_params.get_resource_trace(),
                                m_params.m_total_nodes, m_params.m_msec_output);
-  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output);
 
   // Validate every request's submit_time before appending any of them
   // - same precondition append_job() enforces per-job, checked here
@@ -1468,8 +1536,130 @@ std::vector<job_no_t> BasicSimulation<TraceType>::append_jobs(
       m_trace.append_jobs(m_current_time, trace_reqs);
   for (size_t i = 0; i < job_idxs.size(); ++i) {
     submit_job(job_idxs[i], requests[i].submit_time);
+    record_appended_job(job_idxs[i], requests[i].submit_time,
+                        requests[i].num_nodes, requests[i].limit_time);
   }
   return job_idxs;
+}
+
+template <typename TraceType>
+void BasicSimulation<TraceType>::record_appended_job(job_no_t job_idx,
+                                                     sim_time_t submit_time,
+                                                     num_nodes_t num_nodes,
+                                                     tdiff_t limit_time) {
+  if (m_appended_job_query_records.empty()) {
+    m_first_appended_job_idx = job_idx;
+  }
+  if (job_idx < m_first_appended_job_idx) {
+    throw std::logic_error("Appended job identifiers must be monotonic");
+  }
+  const size_t offset = job_idx - m_first_appended_job_idx;
+  if (offset >= m_appended_job_query_records.size()) {
+    m_appended_job_query_records.resize(offset + 1);
+  }
+  auto &query = m_appended_job_query_records[offset];
+  query.submit_time = submit_time;
+  query.limit_time = limit_time;
+  query.num_nodes = num_nodes;
+  query.tracked = true;
+  query.rejected = m_trace.job_at(job_idx).get_submit_time() ==
+                   Job_Record::unscheduled_sentinel();
+}
+
+template <typename TraceType>
+void BasicSimulation<TraceType>::record_appended_job_start(job_no_t job_idx) {
+  if (job_idx < m_first_appended_job_idx) {
+    return;
+  }
+  const size_t offset = job_idx - m_first_appended_job_idx;
+  if (offset >= m_appended_job_query_records.size() ||
+      !m_appended_job_query_records[offset].tracked) {
+    return;
+  }
+  const auto &job = m_trace.job_at(job_idx);
+  auto &query = m_appended_job_query_records[offset];
+  query.start_time = convert_epoch<sim_time_t>(job.get_begin_time());
+  query.end_time = convert_epoch<sim_time_t>(job.get_end_time());
+  query.scheduled = true;
+}
+
+template <typename TraceType>
+std::vector<typename BasicSimulation<TraceType>::Job_Status>
+BasicSimulation<TraceType>::get_job_statuses(
+    const std::vector<job_no_t> &job_idxs) const {
+  std::map<job_no_t, sim_time_t> expected_starts;
+  std::map<sim_time_t, num_nodes_t> releases;
+  num_nodes_t available = get_available_nodes();
+  for (const auto &[job_idx, running] : m_running_jobs) {
+    (void)job_idx;
+    const sim_time_t end = running.start_time + running.run_time;
+    if (end > m_current_time) {
+      releases[end] += running.nodes;
+    }
+  }
+
+  sim_time_t projection_time = m_current_time;
+  for (const job_no_t pending_id : m_scheduler->pending_job_ids()) {
+    const auto &record = m_trace.job_at(pending_id);
+    const sim_time_t submit_time =
+        convert_epoch<sim_time_t>(record.get_submit_time());
+    projection_time = std::max(projection_time, submit_time);
+    auto release = releases.begin();
+    while (release != releases.end() && release->first <= projection_time) {
+      available += release->second;
+      release = releases.erase(release);
+    }
+    while (available < record.get_num_nodes() && !releases.empty()) {
+      projection_time = releases.begin()->first;
+      available += releases.begin()->second;
+      releases.erase(releases.begin());
+    }
+    if (available < record.get_num_nodes()) {
+      continue;
+    }
+    const bool is_appended =
+        pending_id >= m_first_appended_job_idx &&
+        pending_id - m_first_appended_job_idx <
+            m_appended_job_query_records.size() &&
+        m_appended_job_query_records[pending_id - m_first_appended_job_idx]
+            .tracked;
+    if (is_appended) {
+      expected_starts[pending_id] = projection_time;
+    }
+    available -= record.get_num_nodes();
+    releases[projection_time + record.get_limit_time()] +=
+        record.get_num_nodes();
+  }
+
+  std::vector<Job_Status> result;
+  result.reserve(job_idxs.size());
+  for (const job_no_t job_idx : job_idxs) {
+    if (job_idx < m_first_appended_job_idx ||
+        job_idx - m_first_appended_job_idx >=
+            m_appended_job_query_records.size() ||
+        !m_appended_job_query_records[job_idx - m_first_appended_job_idx]
+             .tracked) {
+      throw std::out_of_range("No appended job with job_idx=" +
+                              std::to_string(job_idx));
+    }
+    const auto &job =
+        m_appended_job_query_records[job_idx - m_first_appended_job_idx];
+    Job_Status status{job_idx, Job_State::PENDING, std::nullopt, std::nullopt,
+                      std::nullopt};
+    if (job.rejected) {
+      status.state = Job_State::REJECTED;
+    } else if (job.scheduled) {
+      status.state = job.end_time <= m_current_time ? Job_State::COMPLETED
+                                                    : Job_State::RUNNING;
+      status.start_time = job.start_time;
+      status.end_time = job.end_time;
+    } else if (const auto it = expected_starts.find(job_idx);
+               it != expected_starts.end()) {
+      status.expected_start_time = it->second;
+    }
+    result.push_back(status);
+  }
+  return result;
 }
 
 template <typename TraceType>
@@ -1672,6 +1862,7 @@ void BasicSimulation<TraceType>::advance_to_impl(
       // multiple)
       for (job_no_t job : jobs_to_run) {
         m_trace.insert_job(job, m_current_time);
+        record_appended_job_start(job);
         const auto &record = m_trace.job_at(job);
         m_running_jobs[job] = {m_current_time,
                                static_cast<tdiff_t>(record.get_limit_time()),
@@ -1879,6 +2070,7 @@ void BasicSimulation<TraceType>::advance_to_impl(
         // multiple)
         for (job_no_t job : jobs_to_run) {
           m_trace.insert_job(job, m_current_time);
+          record_appended_job_start(job);
           const auto &record = m_trace.job_at(job);
           m_running_jobs[job] = {m_current_time,
                                  static_cast<tdiff_t>(record.get_limit_time()),

@@ -50,6 +50,8 @@ or `None`.
 | Attribute | Type |
 |---|---|
 | `infile` | `str` |
+| `redis_uri` | `str` |
+| `redis_key_prefix` | `str` |
 | `total_nodes` | `int` |
 | `capacity_schedule` | `str` |
 | `sim_start_time` | `float` |
@@ -64,6 +66,11 @@ or `None`.
 `sim_start_time` is the global simulation boundary; it is distinct from each
 job's historical `begin_time`. A positive value enables replay-based warm start
 for replay input, while zero preserves ordinary full replay.
+
+Set both Redis fields to direct the simulated-job schedule to the searchable
+Redis schema and the resource history to `<redis_key_prefix>:resources:csv`, as
+documented in [Redis Output](../user-guide/redis-output.md). The extension must
+be built with `DR_EVT_WITH_REDIS=ON`.
 
 Other C++/CLI configuration fields are not exposed by the binding. Use the
 `simulator` executable when one of those settings is required; its options
@@ -93,6 +100,7 @@ Their scheduling semantics are documented in
 | `initialize_trace(max_jobs=0)` | Load the configured trace and return the number loaded. |
 | `append_job(submit_time, num_nodes, queue, limit_time)` | Append and enqueue one live job; return its ID. |
 | `append_jobs(requests)` | Atomically append and enqueue ordered `JobAppendRequest` values; return their IDs. |
+| `get_job_statuses(job_idxs)` | Return lifecycle and timing snapshots for appended job IDs. |
 | `advance_to(target_time)` | Process events at or before the target. |
 | `run_until_exclusive(target_time)` | Process events strictly before the target. |
 | `save_checkpoint(filename)` | Save complete simulation state to a same-build binary checkpoint. |
@@ -125,6 +133,13 @@ and progressive file loading are rejected rather than restored inexactly.
 
 `JobAppendRequest(submit_time, num_nodes, queue, limit_time)` represents one
 entry passed to `append_jobs()`.
+
+`get_job_statuses()` preserves the requested ID order (including duplicates).
+A pending `JobStatus` has `state == JobState.PENDING` and an
+`expected_start_time` projected from current capacity, running-job limit-time
+releases, and the scheduler's current queue order. Running and completed jobs
+have `start_time` and `end_time`; rejected jobs have no timing. The compact
+timing record remains available after completed trace rows are flushed.
 
 `BackfillWindow` exposes `current_time`, `available_nodes`,
 `shadow_time`, and an ordered list of `ResourceRelease` values. Each release
