@@ -52,7 +52,7 @@ num_jobs_t num_jobs = sim.initialize_trace();
 std::cout << "Loaded " << num_jobs << " jobs\n";
 ```
 
-### `append_job(submit_time, num_nodes, queue, limit_time)`
+### `append_job(submit_time, num_nodes, queue, limit_time, actual_run_time)`
 
 Adds a genuinely new job - one the trace has never seen before - to the
 job store and immediately enqueues it for scheduling. This is how a job the
@@ -61,7 +61,8 @@ streaming simulation.
 
 ```cpp
 job_no_t append_job(sim_time_t submit_time, num_nodes_t num_nodes,
-                     const std::string& queue, tdiff_t limit_time);
+                     const std::string& queue, tdiff_t limit_time,
+                     std::optional<tdiff_t> actual_run_time = std::nullopt);
 ```
 
 **Parameters:**
@@ -70,6 +71,9 @@ job_no_t append_job(sim_time_t submit_time, num_nodes_t num_nodes,
 - `queue`: Numeric queue ID (for example, `"1"`) in the default build, or a
   queue name (for example, `"pbatch"`) with `DR_EVT_LEGACY_QUEUE_INPUT`
 - `limit_time`: User-estimated time limit, in seconds
+- `actual_run_time`: Optional known execution duration. It must be positive
+  and no greater than `limit_time`. When omitted, streaming jobs retain the
+  existing behavior of running for `limit_time`.
 
 **Returns:** the new job's `job_no`
 
@@ -82,7 +86,7 @@ sim.advance_to(10.0);
 ### `append_jobs(requests)`
 
 The batch counterpart to `append_job()` - several new jobs in one call,
-each as a `Job_Append_Request` (the same four fields `append_job()`
+each as a `Job_Append_Request` (the same fields `append_job()`
 takes, grouped). Resolves job-store capacity once for the whole batch
 rather than once per job, so it's the more efficient choice when several
 jobs are already known together (e.g. several arrivals collected in one

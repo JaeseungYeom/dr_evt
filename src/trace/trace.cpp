@@ -337,7 +337,8 @@ job_no_t BasicTrace<Policy>::append_job(sim_time_t current_time,
                                         const epoch_t &submit_time,
                                         num_nodes_t num_nodes,
                                         job_queue_t queue,
-                                        timeout_t limit_time) {
+                                        timeout_t limit_time,
+                                        std::optional<tdiff_t> actual_run_time) {
   // In case this is called before load_data() ever runs (genuine
   // streaming, no batch preload at all) - resolve_job_store_capacity()
   // is idempotent (guarded by m_job_store_capacity_resolved), so this
@@ -362,6 +363,8 @@ job_no_t BasicTrace<Policy>::append_job(sim_time_t current_time,
 
   m_data.push_back(
       Policy::make_record(submit_time, num_nodes, queue, limit_time));
+  if (actual_run_time)
+    m_data.back().set_actual_run_time(*actual_run_time);
   return static_cast<job_no_t>(m_num_reclaimed + m_data.size() - 1);
 }
 
@@ -504,6 +507,8 @@ std::vector<job_no_t> BasicTrace<Policy>::append_jobs(
   for (const auto &req : requests) {
     m_data.push_back(Policy::make_record(req.submit_time, req.num_nodes,
                                          req.queue, req.limit_time));
+    if (req.actual_run_time)
+      m_data.back().set_actual_run_time(*req.actual_run_time);
     job_nos.push_back(
         static_cast<job_no_t>(m_num_reclaimed + m_data.size() - 1));
   }

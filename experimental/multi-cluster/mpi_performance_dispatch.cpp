@@ -31,10 +31,13 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <random>
+#include <set>
 #include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -57,10 +60,11 @@ struct JobMessage {
   double submit_time = 0.0;
   std::uint32_t num_nodes = 0;
   std::string queue;
+  double duration = 0.0;
   double limit_time = 0.0;
 
   template <class Archive> void serialize(Archive &archive) {
-    archive(submit_time, num_nodes, queue, limit_time);
+    archive(submit_time, num_nodes, queue, duration, limit_time);
   }
 };
 
@@ -149,26 +153,25 @@ template <typename T> T receive_serialized(int rank) {
 
 struct Options {
   std::string jobs;
-  std::string performance_table;
+  std::string workload_table;
+  std::string applications;
+  std::string systems_table;
   std::optional<std::string> output;
-  std::vector<std::string> system_ids;
-  std::vector<std::uint32_t> system_nodes;
-  std::uint32_t total_nodes = 100;
+  std::uint64_t seed = 0;
   double prediction_utilization = 1.0;
 };
 
 [[noreturn]] void usage(const char *program, const std::string &error = {}) {
   if (!error.empty())
     std::cerr << "error: " << error << "\n\n";
-  std::cerr
-      << "Usage: mpirun -np <systems+1> " << program << " OPTIONS\n"
-      << "  --jobs PATH\n"
-      << "  --performance-table PATH\n"
-      << "  --system-id NAME          repeat once per worker rank\n"
-      << "  --system-nodes COUNT      optional; repeat once per worker rank\n"
-      << "  --total-nodes COUNT       default capacity (default: 100)\n"
-      << "  --prediction-utilization U  value in [0,1] (default: 1)\n"
-      << "  --output PATH             decision CSV (default: stdout)\n";
+  std::cerr << "Usage: mpirun -np <systems+1> " << program << " OPTIONS\n"
+            << "  --jobs PATH\n"
+            << "  --workload-table PATH\n"
+            << "  --applications PATH       app-to-requirement CSV\n"
+            << "  --systems PATH\n"
+            << "  --seed INTEGER            sampling seed (default: 0)\n"
+            << "  --prediction-utilization U  value in [0,1] (default: 1)\n"
+            << "  --output PATH             decision CSV (default: stdout)\n";
   throw std::invalid_argument(error.empty() ? "help requested" : error);
 }
 
@@ -185,16 +188,14 @@ Options parse_options(int argc, char **argv) {
     const std::string arg = argv[i];
     if (arg == "--jobs")
       options.jobs = option_value(i, argc, argv, arg);
-    else if (arg == "--performance-table")
-      options.performance_table = option_value(i, argc, argv, arg);
-    else if (arg == "--system-id")
-      options.system_ids.push_back(option_value(i, argc, argv, arg));
-    else if (arg == "--system-nodes")
-      options.system_nodes.push_back(static_cast<std::uint32_t>(
-          std::stoul(option_value(i, argc, argv, arg))));
-    else if (arg == "--total-nodes")
-      options.total_nodes = static_cast<std::uint32_t>(
-          std::stoul(option_value(i, argc, argv, arg)));
+    else if (arg == "--workload-table" || arg == "--performance-table")
+      options.workload_table = option_value(i, argc, argv, arg);
+    else if (arg == "--applications")
+      options.applications = option_value(i, argc, argv, arg);
+    else if (arg == "--systems")
+      options.systems_table = option_value(i, argc, argv, arg);
+    else if (arg == "--seed")
+      options.seed = std::stoull(option_value(i, argc, argv, arg));
     else if (arg == "--prediction-utilization")
       options.prediction_utilization =
           std::stod(option_value(i, argc, argv, arg));
@@ -205,10 +206,10 @@ Options parse_options(int argc, char **argv) {
     else
       usage(argv[0], "unknown option: " + arg);
   }
-  if (options.jobs.empty() || options.performance_table.empty())
-    usage(argv[0], "--jobs and --performance-table are required");
-  if (options.total_nodes == 0)
-    usage(argv[0], "--total-nodes must be positive");
+  if (options.jobs.empty() || options.workload_table.empty() ||
+      options.applications.empty() || options.systems_table.empty())
+    usage(argv[0], "--jobs, --workload-table, --applications, and --systems "
+                   "are required");
   if (!std::isfinite(options.prediction_utilization) ||
       options.prediction_utilization < 0.0 ||
       options.prediction_utilization > 1.0)
@@ -238,6 +239,8 @@ std::vector<std::string> split_csv(const std::string &line) {
   }
   if (quoted)
     throw std::runtime_error("unterminated quoted CSV field");
+  if (!field.empty() && field.back() == '\r')
+    field.pop_back();
   fields.push_back(field);
   return fields;
 }
@@ -246,8 +249,12 @@ using Header = std::map<std::string, std::size_t>;
 
 Header make_header(const std::vector<std::string> &fields) {
   Header header;
-  for (std::size_t i = 0; i < fields.size(); ++i)
-    header.emplace(fields[i], i);
+  for (std::size_t i = 0; i < fields.size(); ++i) {
+    std::string name = fields[i];
+    if (i == 0 && !name.empty() && name.front() == '#')
+      name.erase(name.begin());
+    header.emplace(std::move(name), i);
+  }
   return header;
 }
 
@@ -274,6 +281,7 @@ struct Job {
   double submit_time;
   std::uint32_t num_nodes;
   std::string queue;
+  double duration;
   double limit_time;
 };
 
@@ -285,9 +293,14 @@ std::vector<Job> read_jobs(const std::string &path) {
   if (!std::getline(stream, line))
     throw std::runtime_error("jobs file is empty: " + path);
   const Header header = make_header(split_csv(line));
-  for (const auto *name : {"job_submit_time", "num_nodes", "time_limit"})
+  for (const auto *name : {"job_submit_time", "time_limit", "num_nodes"})
     if (!header.contains(name))
       throw std::runtime_error(path + " must contain " + name);
+  const std::string duration_field =
+      header.contains("actual_run_time") ? "actual_run_time" : "duration";
+  if (!header.contains(duration_field))
+    throw std::runtime_error(path +
+                             " must contain actual_run_time or duration");
 
   std::vector<Job> jobs;
   while (std::getline(stream, line)) {
@@ -299,10 +312,14 @@ std::vector<Job> read_jobs(const std::string &path) {
         std::stod(field(row, header, "job_submit_time")),
         static_cast<std::uint32_t>(std::stoul(field(row, header, "num_nodes"))),
         optional_field(row, header, kQueueField, kDefaultQueue),
+        std::stod(field(row, header, duration_field)),
         std::stod(field(row, header, "time_limit"))};
-    if (job.num_nodes == 0 || job.limit_time <= 0.0)
+    if (job.num_nodes == 0 || !std::isfinite(job.submit_time) ||
+        !std::isfinite(job.duration) || !std::isfinite(job.limit_time) ||
+        job.duration <= 0.0 || job.limit_time <= 0.0 ||
+        job.duration > job.limit_time)
       throw std::runtime_error(path + ": job " + job.id +
-                               " has non-positive size");
+                               " has invalid size or duration");
     if (!jobs.empty() && jobs.back().submit_time > job.submit_time)
       throw std::runtime_error(path +
                                ": jobs must be sorted by job_submit_time");
@@ -311,75 +328,286 @@ std::vector<Job> read_jobs(const std::string &path) {
   return jobs;
 }
 
-struct Profile {
-  std::string id;
-  double num_nodes;
-  double time_limit;
-  std::vector<double> performance;
-};
+enum class SystemRequirement { CpuOnly, GpuOnly, GpuPortable };
 
-std::vector<Profile> read_profiles(const std::string &path,
-                                   const std::vector<std::string> &systems) {
+std::string to_string(SystemRequirement requirement) {
+  switch (requirement) {
+  case SystemRequirement::CpuOnly:
+    return "CPU-only";
+  case SystemRequirement::GpuOnly:
+    return "GPU-only";
+  case SystemRequirement::GpuPortable:
+    return "GPU-portable";
+  }
+  throw std::logic_error("unknown system requirement");
+}
+
+SystemRequirement parse_requirement(const std::string &value) {
+  if (value == "CPU-only")
+    return SystemRequirement::CpuOnly;
+  if (value == "GPU-only")
+    return SystemRequirement::GpuOnly;
+  if (value == "GPU-portable")
+    return SystemRequirement::GpuPortable;
+  throw std::runtime_error("invalid sys_requirement '" + value +
+                           "'; expected CPU-only, GPU-only, or GPU-portable");
+}
+
+std::map<std::string, SystemRequirement>
+read_application_requirements(const std::string &path) {
   std::ifstream stream(path);
   if (!stream)
-    throw std::runtime_error("cannot open performance table: " + path);
+    throw std::runtime_error("cannot open applications file: " + path);
   std::string line;
   if (!std::getline(stream, line))
-    throw std::runtime_error("performance table is empty: " + path);
+    throw std::runtime_error("applications file is empty: " + path);
   const Header header = make_header(split_csv(line));
-  for (const auto &name : systems)
-    if (!header.contains(name))
-      throw std::runtime_error(path + " must contain system column " + name);
-
-  std::vector<Profile> profiles;
+  if (!header.contains("app") || !header.contains("sys_requirement"))
+    throw std::runtime_error(path + " must contain app and sys_requirement");
+  std::map<std::string, SystemRequirement> requirements;
   while (std::getline(stream, line)) {
     if (line.empty())
       continue;
     const auto row = split_csv(line);
-    Profile profile{field(row, header, "profile_id"),
-                    std::stod(field(row, header, "num_nodes")),
-                    std::stod(field(row, header, "time_limit")),
-                    {}};
-    for (const auto &system : systems) {
-      const double value = std::stod(field(row, header, system));
-      if (!std::isfinite(value) || value <= 0.0)
-        throw std::runtime_error(path + ": profile " + profile.id +
-                                 " has invalid performance");
-      profile.performance.push_back(value);
-    }
-    if (profile.id.empty() || profile.num_nodes <= 0.0 ||
-        profile.time_limit <= 0.0)
-      throw std::runtime_error(path + " has an invalid profile");
-    profiles.push_back(std::move(profile));
+    const std::string app = field(row, header, "app");
+    if (app.empty())
+      throw std::runtime_error(path + ": app must not be empty");
+    if (!requirements
+             .emplace(app,
+                      parse_requirement(field(row, header, "sys_requirement")))
+             .second)
+      throw std::runtime_error(path + ": duplicate app " + app);
   }
-  if (profiles.empty())
-    throw std::runtime_error("performance table is empty: " + path);
-  return profiles;
+  if (requirements.empty())
+    throw std::runtime_error("applications file is empty: " + path);
+  return requirements;
 }
 
-const Profile &nearest_profile(const Job &job,
-                               const std::vector<Profile> &profiles) {
-  const auto node_bounds = std::minmax_element(
-      profiles.begin(), profiles.end(),
-      [](const auto &a, const auto &b) { return a.num_nodes < b.num_nodes; });
-  const auto time_bounds = std::minmax_element(
-      profiles.begin(), profiles.end(),
-      [](const auto &a, const auto &b) { return a.time_limit < b.time_limit; });
-  const double node_range =
-      node_bounds.second->num_nodes - node_bounds.first->num_nodes;
-  const double time_range =
-      time_bounds.second->time_limit - time_bounds.first->time_limit;
-  const double node_scale = node_range == 0.0 ? 1.0 : node_range;
-  const double time_scale = time_range == 0.0 ? 1.0 : time_range;
-  return *std::min_element(
-      profiles.begin(), profiles.end(), [&](const auto &a, const auto &b) {
-        const auto distance = [&](const Profile &profile) {
-          const double dn = (job.num_nodes - profile.num_nodes) / node_scale;
-          const double dt = (job.limit_time - profile.time_limit) / time_scale;
-          return dn * dn + dt * dt;
-        };
-        return distance(a) < distance(b);
-      });
+struct System {
+  std::string id;
+  std::uint32_t physical_nodes;
+  bool gpu_enabled;
+  std::string cpu_performance_column;
+  std::string gpu_performance_column;
+};
+
+std::vector<System> read_systems(const std::string &path) {
+  std::ifstream stream(path);
+  if (!stream)
+    throw std::runtime_error("cannot open systems file: " + path);
+  std::string line;
+  if (!std::getline(stream, line))
+    throw std::runtime_error("systems file is empty: " + path);
+
+  const Header header = make_header(split_csv(line));
+  for (const auto *name : {"machine", "size", "GPU"})
+    if (!header.contains(name))
+      throw std::runtime_error(path + " must contain " + name);
+
+  std::vector<System> systems;
+  std::set<std::string> ids;
+  while (std::getline(stream, line)) {
+    if (line.empty())
+      continue;
+    const auto row = split_csv(line);
+    const std::string id = field(row, header, "machine");
+    const std::string gpu = field(row, header, "GPU");
+    const bool gpu_enabled = gpu == "GPU-enabled";
+    if (!gpu_enabled && gpu != "CPU-only")
+      throw std::runtime_error(path + ": invalid GPU value " + gpu);
+    System system{
+        id, static_cast<std::uint32_t>(std::stoul(field(row, header, "size"))),
+        gpu_enabled, gpu_enabled ? id + "-cpu" : id,
+        gpu_enabled ? id + "-gpu" : ""};
+    if (system.id.empty() || system.physical_nodes == 0)
+      throw std::runtime_error(path + ": invalid system row");
+    if (!ids.insert(system.id).second)
+      throw std::runtime_error(path + ": duplicate system_id " + system.id);
+    systems.push_back(std::move(system));
+  }
+  if (systems.empty())
+    throw std::runtime_error("systems file is empty: " + path);
+  return systems;
+}
+
+struct SystemPerformance {
+  std::optional<double> cpu;
+  std::optional<double> gpu;
+};
+
+struct Workload {
+  std::string app;
+  std::string args;
+  std::uint32_t ranks;
+  std::string baseline_system;
+  SystemRequirement requirement;
+  std::vector<SystemPerformance> performance;
+};
+
+struct WorkloadCatalog {
+  std::vector<std::string> apps;
+  std::vector<std::vector<Workload>> samples_by_app;
+};
+
+std::optional<double> read_performance(const std::vector<std::string> &row,
+                                       const Header &header,
+                                       const std::string &column,
+                                       const std::string &context) {
+  if (column.empty())
+    return std::nullopt;
+  const std::string &text = field(row, header, column);
+  if (text.empty())
+    return std::nullopt;
+  const double value = std::stod(text);
+  if (!std::isfinite(value) || value <= 0.0)
+    throw std::runtime_error(context + ": " + column +
+                             " must be empty or positive");
+  return value;
+}
+
+std::string detect_baseline_system(const std::vector<std::string> &row,
+                                   const Header &header,
+                                   const std::string &context) {
+  const auto explicit_baseline = header.find("baseline_system");
+  if (explicit_baseline != header.end() &&
+      explicit_baseline->second < row.size() &&
+      !row[explicit_baseline->second].empty())
+    return row[explicit_baseline->second];
+  const auto quartz = header.find("quartz");
+  if (quartz != header.end() && quartz->second < row.size() &&
+      row[quartz->second] == "1.0")
+    return "quartz";
+  std::optional<std::string> baseline;
+  for (const auto &[name, index] : header) {
+    if (name == "app" || name == "args" || name == "ranks" ||
+        index >= row.size() || row[index].empty())
+      continue;
+    try {
+      if (std::stod(row[index]) == 1.0) {
+        if (baseline)
+          throw std::runtime_error(context +
+                                   ": ambiguous relative-performance baseline");
+        baseline = name;
+      }
+    } catch (const std::invalid_argument &) {
+      continue;
+    }
+  }
+  if (!baseline)
+    throw std::runtime_error(context +
+                             ": cannot identify a baseline value of 1.0");
+  return *baseline;
+}
+
+WorkloadCatalog
+read_workloads(const std::string &path, const std::vector<System> &systems,
+               const std::map<std::string, SystemRequirement> &requirements) {
+  std::ifstream stream(path);
+  if (!stream)
+    throw std::runtime_error("cannot open workload table: " + path);
+  std::string line;
+  if (!std::getline(stream, line))
+    throw std::runtime_error("workload table is empty: " + path);
+  const Header header = make_header(split_csv(line));
+  for (const auto *name : {"app", "args", "ranks"})
+    if (!header.contains(name))
+      throw std::runtime_error(path + " must contain " + name);
+  for (const auto &system : systems) {
+    if (!header.contains(system.cpu_performance_column))
+      throw std::runtime_error(path + " must contain " +
+                               system.cpu_performance_column);
+    if (system.gpu_enabled && !header.contains(system.gpu_performance_column))
+      throw std::runtime_error(path + " must contain " +
+                               system.gpu_performance_column);
+  }
+
+  WorkloadCatalog catalog;
+  std::map<std::string, std::size_t> app_indices;
+  using Identity = std::tuple<std::string, std::string, std::uint32_t>;
+  std::map<Identity, std::pair<std::size_t, std::size_t>> identities;
+  std::size_t row_number = 1;
+  std::size_t unavailable_rows = 0;
+  while (std::getline(stream, line)) {
+    ++row_number;
+    if (line.empty())
+      continue;
+    const auto row = split_csv(line);
+    const std::string app = field(row, header, "app");
+    const auto requirement = requirements.find(app);
+    if (requirement == requirements.end())
+      throw std::runtime_error(path + ": no sys_requirement for App " + app);
+    Workload workload{
+        app,
+        field(row, header, "args"),
+        static_cast<std::uint32_t>(std::stoul(field(row, header, "ranks"))),
+        detect_baseline_system(row, header,
+                               path + ": row " + std::to_string(row_number)),
+        requirement->second,
+        {}};
+    if (workload.app.empty() || workload.ranks == 0)
+      throw std::runtime_error(path + ": invalid workload at row " +
+                               std::to_string(row_number));
+    bool runnable = false;
+    for (const auto &system : systems) {
+      SystemPerformance performance{
+          read_performance(row, header, system.cpu_performance_column,
+                           path + ": row " + std::to_string(row_number)),
+          system.gpu_enabled
+              ? read_performance(row, header, system.gpu_performance_column,
+                                 path + ": row " + std::to_string(row_number))
+              : std::nullopt};
+      if (workload.requirement == SystemRequirement::CpuOnly)
+        runnable = runnable || performance.cpu.has_value();
+      else if (workload.requirement == SystemRequirement::GpuOnly)
+        runnable = runnable || performance.gpu.has_value();
+      else
+        runnable = runnable || performance.cpu.has_value() ||
+                   performance.gpu.has_value();
+      workload.performance.push_back(performance);
+    }
+    if (!runnable) {
+      ++unavailable_rows;
+      continue;
+    }
+    auto [app_it, new_app] =
+        app_indices.emplace(workload.app, catalog.apps.size());
+    if (new_app) {
+      catalog.apps.push_back(workload.app);
+      catalog.samples_by_app.emplace_back();
+    }
+    const Identity identity{workload.app, workload.args, workload.ranks};
+    const auto existing = identities.find(identity);
+    if (existing == identities.end()) {
+      const auto sample_index = catalog.samples_by_app[app_it->second].size();
+      identities.emplace(identity, std::pair{app_it->second, sample_index});
+      catalog.samples_by_app[app_it->second].push_back(std::move(workload));
+    } else {
+      auto &selected =
+          catalog
+              .samples_by_app[existing->second.first][existing->second.second];
+      if (selected.baseline_system != "quartz" &&
+          workload.baseline_system == "quartz")
+        selected = std::move(workload);
+    }
+  }
+  if (catalog.apps.empty())
+    throw std::runtime_error("workload table has no runnable rows: " + path);
+  if (unavailable_rows != 0)
+    std::cerr << "Skipped " << unavailable_rows
+              << " workload rows with no measurement for a compatible "
+                 "configured system\n";
+  return catalog;
+}
+
+const Workload &sample_workload(const WorkloadCatalog &catalog,
+                                std::mt19937_64 &generator) {
+  std::uniform_int_distribution<std::size_t> app_distribution(
+      0, catalog.apps.size() - 1);
+  const auto app_index = app_distribution(generator);
+  const auto &samples = catalog.samples_by_app[app_index];
+  std::uniform_int_distribution<std::size_t> sample_distribution(
+      0, samples.size() - 1);
+  return samples[sample_distribution(generator)];
 }
 
 double estimate_release_wait(const WindowMessage &window,
@@ -411,25 +639,50 @@ double estimate_wait(const WindowMessage &window, std::uint32_t required_nodes,
 
 struct Choice {
   std::size_t index;
+  const char *execution_mode;
   double relative_performance;
   double estimated_wait;
-  double estimated_runtime;
+  double estimated_duration;
+  double adjusted_time_limit;
   double predicted_turnaround;
 };
 
-Choice choose_system(const Job &job, const Profile &profile,
-                     const std::vector<std::uint32_t> &capacities,
+Choice choose_system(const Job &job, const Workload &workload,
+                     const std::vector<System> &systems,
                      const std::vector<Response> &snapshots) {
   std::optional<Choice> best;
-  for (std::size_t i = 0; i < capacities.size(); ++i) {
-    if (job.num_nodes > capacities[i])
+  for (std::size_t i = 0; i < systems.size(); ++i) {
+    if (job.num_nodes > systems[i].physical_nodes)
       continue;
-    const double runtime = job.limit_time / profile.performance[i];
-    const double wait = estimate_wait(snapshots[i].window, job.num_nodes,
-                                      runtime, snapshots[i].prediction_horizon);
+    std::optional<double> performance;
+    const char *execution_mode = "CPU";
+    if (workload.requirement == SystemRequirement::CpuOnly) {
+      performance = workload.performance[i].cpu;
+    } else if (workload.requirement == SystemRequirement::GpuOnly) {
+      if (!systems[i].gpu_enabled)
+        continue;
+      performance = workload.performance[i].gpu;
+      execution_mode = "GPU";
+    } else if (!systems[i].gpu_enabled) {
+      performance = workload.performance[i].cpu;
+    } else {
+      performance = workload.performance[i].cpu;
+      if (workload.performance[i].gpu &&
+          (!performance || *workload.performance[i].gpu > *performance)) {
+        performance = workload.performance[i].gpu;
+        execution_mode = "GPU";
+      }
+    }
+    if (!performance)
+      continue;
+    const double duration = job.duration / *performance;
+    const double limit = job.limit_time / *performance;
+    const double wait = estimate_wait(snapshots[i].window, job.num_nodes, limit,
+                                      snapshots[i].prediction_horizon);
     if (!std::isfinite(wait))
       continue;
-    Choice choice{i, profile.performance[i], wait, runtime, wait + runtime};
+    Choice choice{i,        execution_mode, *performance,   wait,
+                  duration, limit,          wait + duration};
     if (!best ||
         std::tie(choice.predicted_turnaround, choice.estimated_wait,
                  choice.index) < std::tie(best->predicted_turnaround,
@@ -437,7 +690,9 @@ Choice choose_system(const Job &job, const Profile &profile,
       best = choice;
   }
   if (!best)
-    throw std::runtime_error("job " + job.id + " cannot fit any system");
+    throw std::runtime_error("job " + job.id + " sampled workload " +
+                             workload.app +
+                             " but no compatible system can run it");
   return *best;
 }
 
@@ -457,9 +712,9 @@ Response handle_request(dr_evt::Simulation &simulation,
       response.prediction_horizon =
           simulation.get_prediction_horizon(request.prediction_utilization);
     } else if (request.operation == Operation::Append) {
-      response.job_idx =
-          simulation.append_job(request.job.submit_time, request.job.num_nodes,
-                                request.job.queue, request.job.limit_time);
+      response.job_idx = simulation.append_job(
+          request.job.submit_time, request.job.num_nodes, request.job.queue,
+          request.job.limit_time, request.job.duration);
       simulation.advance_to(request.job.submit_time);
     } else {
       simulation.advance_to(std::numeric_limits<dr_evt::sim_time_t>::max());
@@ -475,14 +730,15 @@ Response handle_request(dr_evt::Simulation &simulation,
   return response;
 }
 
-void worker(const Options &options, int rank) {
+void worker(const Options &options, const std::vector<System> &systems,
+            int rank) {
   const std::size_t index = static_cast<std::size_t>(rank - 1);
   dr_evt::Sim_Params params;
   params.m_infile = options.jobs;
-  params.m_total_nodes = options.system_nodes[index];
+  params.m_total_nodes = systems[index].physical_nodes;
   params.m_trace_format = "simple";
   params.m_timestamp_format = "epoch";
-  params.m_run_time_mode = dr_evt::RunTimeMode::LIMIT;
+  params.m_run_time_mode = dr_evt::RunTimeMode::ACTUAL;
   params.m_backfill_policy = dr_evt::BackfillPolicy::EASY;
   params.m_priority_policy = dr_evt::PriorityPolicy::FCFS;
   params.m_queue_impl = dr_evt::QueueImplementation::CIRCULAR;
@@ -513,10 +769,30 @@ std::vector<Response> call_all(const Request &request, int worker_count) {
   return responses;
 }
 
-void controller(const Options &options, int worker_count) {
+std::string csv_field(const std::string &value) {
+  if (value.find_first_of(",\"\r\n") == std::string::npos)
+    return value;
+  std::string escaped = "\"";
+  for (const char character : value) {
+    escaped.push_back(character);
+    if (character == '"')
+      escaped.push_back('"');
+  }
+  escaped.push_back('"');
+  return escaped;
+}
+
+void controller(const Options &options, const std::vector<System> &systems,
+                int worker_count) {
   const auto jobs = read_jobs(options.jobs);
-  const auto profiles =
-      read_profiles(options.performance_table, options.system_ids);
+  const auto requirements = read_application_requirements(options.applications);
+  const auto catalog =
+      read_workloads(options.workload_table, systems, requirements);
+  const auto largest_system = std::max_element(
+      systems.begin(), systems.end(), [](const auto &left, const auto &right) {
+        return left.physical_nodes < right.physical_nodes;
+      });
+  std::mt19937_64 generator(options.seed);
   std::ofstream output_file;
   std::ostream *output = &std::cout;
   if (options.output) {
@@ -525,34 +801,47 @@ void controller(const Options &options, int worker_count) {
       throw std::runtime_error("cannot open output: " + *options.output);
     output = &output_file;
   }
-  *output << "job_id,submit_time,profile_id,system_id,relative_performance,"
-             "estimated_wait,estimated_runtime,predicted_turnaround,job_idx\n";
+  *output << "job_id,submit_time,num_nodes,effective_nodes,duration,time_limit,"
+             "App,Args,Ranks,baseline_system,sys_requirement,system_id,"
+             "execution_mode,"
+             "relative_performance,"
+             "estimated_wait,estimated_duration,adjusted_time_limit,"
+             "predicted_turnaround,job_idx\n";
   *output << std::setprecision(17);
 
   for (const auto &job : jobs) {
+    Job dispatch_job = job;
+    dispatch_job.num_nodes =
+        std::min(job.num_nodes, largest_system->physical_nodes);
     Request snapshot;
     snapshot.operation = Operation::Snapshot;
     snapshot.target_time = job.submit_time;
     snapshot.prediction_utilization = options.prediction_utilization;
     const auto snapshots = call_all(snapshot, worker_count);
-    const auto &profile = nearest_profile(job, profiles);
+    const auto &workload = sample_workload(catalog, generator);
     const Choice choice =
-        choose_system(job, profile, options.system_nodes, snapshots);
+        choose_system(dispatch_job, workload, systems, snapshots);
 
     Request append;
     append.operation = Operation::Append;
-    append.job = {job.submit_time, job.num_nodes, job.queue,
-                  choice.estimated_runtime};
+    append.job = {job.submit_time, dispatch_job.num_nodes, job.queue,
+                  choice.estimated_duration, choice.adjusted_time_limit};
     send_serialized(append, static_cast<int>(choice.index) + 1);
     const Response response =
         receive_serialized<Response>(static_cast<int>(choice.index) + 1);
     if (!response.ok)
       throw std::runtime_error("worker " + std::to_string(choice.index + 1) +
                                ": " + response.error);
-    *output << job.id << ',' << job.submit_time << ',' << profile.id << ','
-            << options.system_ids[choice.index] << ','
-            << choice.relative_performance << ',' << choice.estimated_wait
-            << ',' << choice.estimated_runtime << ','
+    *output << csv_field(job.id) << ',' << job.submit_time << ','
+            << job.num_nodes << ',' << dispatch_job.num_nodes << ','
+            << job.duration << ',' << job.limit_time << ','
+            << csv_field(workload.app) << ',' << csv_field(workload.args) << ','
+            << workload.ranks << ',' << csv_field(workload.baseline_system)
+            << ',' << to_string(workload.requirement) << ','
+            << csv_field(systems[choice.index].id) << ','
+            << choice.execution_mode << ',' << choice.relative_performance
+            << ',' << choice.estimated_wait << ',' << choice.estimated_duration
+            << ',' << choice.adjusted_time_limit << ','
             << choice.predicted_turnaround << ',' << response.job_idx << '\n';
   }
 
@@ -561,7 +850,7 @@ void controller(const Options &options, int worker_count) {
   const auto responses = call_all(finish, worker_count);
   for (std::size_t i = 0; i < responses.size(); ++i) {
     const auto &stats = responses[i].statistics;
-    std::cerr << options.system_ids[i] << ": submitted=" << stats.jobs_submitted
+    std::cerr << systems[i].id << ": submitted=" << stats.jobs_submitted
               << " completed=" << stats.jobs_completed
               << " makespan=" << stats.makespan << '\n';
   }
@@ -580,30 +869,15 @@ int main(int argc, char **argv) {
     if (size < 2)
       throw std::invalid_argument("at least two MPI ranks are required");
     const auto worker_count = static_cast<std::size_t>(size - 1);
-    if (options.system_ids.empty()) {
-      for (std::size_t i = 0; i < worker_count; ++i)
-        options.system_ids.push_back("system-" + std::to_string(i + 1));
-    }
-    if (options.system_ids.size() != worker_count)
+    const auto systems = read_systems(options.systems_table);
+    if (systems.size() != worker_count)
       throw std::invalid_argument(
-          "--system-id must be repeated once per worker rank");
-    auto unique_ids = options.system_ids;
-    std::sort(unique_ids.begin(), unique_ids.end());
-    if (std::adjacent_find(unique_ids.begin(), unique_ids.end()) !=
-        unique_ids.end())
-      throw std::invalid_argument("--system-id values must be unique");
-    if (options.system_nodes.empty())
-      options.system_nodes.assign(worker_count, options.total_nodes);
-    if (options.system_nodes.size() != worker_count ||
-        std::ranges::any_of(options.system_nodes,
-                            [](auto nodes) { return nodes == 0; }))
-      throw std::invalid_argument(
-          "--system-nodes must be positive and repeated once per worker rank");
+          "--systems must contain exactly one row per worker rank");
 
     if (rank == 0)
-      controller(options, size - 1);
+      controller(options, systems, size - 1);
     else
-      worker(options, rank);
+      worker(options, systems, rank);
     MPI_Finalize();
     return 0;
   } catch (const std::exception &error) {

@@ -98,7 +98,7 @@ Their scheduling semantics are documented in
 |---|---|
 | `run()` | Run a configured batch trace to completion. |
 | `initialize_trace(max_jobs=0)` | Load the configured trace and return the number loaded. |
-| `append_job(submit_time, num_nodes, queue, limit_time)` | Append and enqueue one live job; return its ID. |
+| `append_job(submit_time, num_nodes, queue, limit_time, actual_run_time=None)` | Append and enqueue one live job; return its ID. A known runtime must be positive and no greater than the limit. |
 | `append_jobs(requests)` | Atomically append and enqueue ordered `JobAppendRequest` values; return their IDs. |
 | `get_job_statuses(job_idxs)` | Return lifecycle and timing snapshots for appended job IDs. |
 | `advance_to(target_time)` | Process events at or before the target. |
@@ -138,8 +138,10 @@ mode.
 
 ## Supporting types
 
-`JobAppendRequest(submit_time, num_nodes, queue, limit_time)` represents one
-entry passed to `append_jobs()`.
+`JobAppendRequest(submit_time, num_nodes, queue, limit_time,
+actual_run_time=None)` represents one entry passed to `append_jobs()`. A known
+actual runtime lets `RunTimeMode.ACTUAL` complete a streamed job before its
+wall-time limit without any external per-job bookkeeping.
 
 `get_job_statuses()` preserves the requested ID order (including duplicates).
 A pending `JobStatus` has `state == JobState.PENDING` and an

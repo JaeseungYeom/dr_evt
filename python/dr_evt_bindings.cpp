@@ -107,15 +107,18 @@ PYBIND11_MODULE(dr_evt, m) {
   // One value passed to Simulation.append_jobs().
   py::class_<Simulation::Job_Append_Request>(m, "JobAppendRequest")
       .def(py::init([](sim_time_t submit_time, num_nodes_t num_nodes,
-                       const std::string &queue, tdiff_t limit_time) {
+                       const std::string &queue, tdiff_t limit_time,
+                       std::optional<tdiff_t> actual_run_time) {
              return Simulation::Job_Append_Request{submit_time, num_nodes,
-                                                   queue, limit_time};
+                                                   queue, limit_time,
+                                                   actual_run_time};
            }),
            py::arg("submit_time"), py::arg("num_nodes"), py::arg("queue"),
-           py::arg("limit_time"),
+           py::arg("limit_time"), py::arg("actual_run_time") = py::none(),
            "Create one batch job request. submit_time is a float, num_nodes is "
            "an int, "
-           "queue is a str, and limit_time is a float.")
+           "queue is a str, limit_time is a float, and actual_run_time is an "
+           "optional float.")
       .def_readwrite("submit_time",
                      &Simulation::Job_Append_Request::submit_time,
                      "float: Arrival time, not earlier than the simulation's "
@@ -125,7 +128,10 @@ PYBIND11_MODULE(dr_evt, m) {
       .def_readwrite("queue", &Simulation::Job_Append_Request::queue,
                      "str: Numeric queue ID, or a name in legacy-input builds.")
       .def_readwrite("limit_time", &Simulation::Job_Append_Request::limit_time,
-                     "float: Requested wall-time limit.");
+                     "float: Requested wall-time limit.")
+      .def_readwrite("actual_run_time",
+                     &Simulation::Job_Append_Request::actual_run_time,
+                     "Optional[float]: Known execution time.");
 
   // Statistics structure
   py::class_<Simulation::Statistics>(m, "Statistics")
@@ -221,6 +227,7 @@ PYBIND11_MODULE(dr_evt, m) {
       // Streaming API - New jobs are appended and enqueued atomically.
       .def("append_job", &Simulation::append_job, py::arg("submit_time"),
            py::arg("num_nodes"), py::arg("queue"), py::arg("limit_time"),
+           py::arg("actual_run_time") = py::none(),
            "Append and enqueue one new job.\n\n"
            "Args:\n"
            "    submit_time (float): Arrival time, not earlier than current "
@@ -229,6 +236,7 @@ PYBIND11_MODULE(dr_evt, m) {
            "    queue (str): Numeric queue ID, or a name in legacy-input "
            "builds.\n"
            "    limit_time (float): Requested wall-time limit.\n"
+           "    actual_run_time (Optional[float]): Known execution time.\n"
            "Returns:\n"
            "    int: Identifier of the appended trace job.")
 

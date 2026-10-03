@@ -33,8 +33,8 @@ in-process via the streaming API:
 | `InitRequest` | Constructing a `Simulation` from a `Sim_Params`-equivalent config |
 | `RunRequest` | Calls `Simulation::run()`; initialized input and `sim_start_time` select simulation, full replay, or replay-based warm start, and configured `max_time` supplies an inclusive stopping boundary |
 | `InitializeTraceRequest` | `Simulation::initialize_trace()` |
-| `AppendJobRequest` | `Simulation::append_job()` - a genuinely new job the server has never seen before |
-| `AppendJobsRequest` | `Simulation::append_jobs()` - the batch counterpart, several new jobs in one call |
+| `AppendJobRequest` | `Simulation::append_job()` - a genuinely new job, optionally including its known `actual_run_time` |
+| `AppendJobsRequest` | `Simulation::append_jobs()` - the batch counterpart, with an optional known runtime per job |
 | `GetJobStatusesRequest` | Query lifecycle and timing for IDs returned by the append APIs |
 | `AdvanceToRequest` | `Simulation::advance_to()` |
 | `RunUntilExclusiveRequest` | `Simulation::run_until_exclusive()` |

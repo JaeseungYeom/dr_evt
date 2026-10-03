@@ -1743,13 +1743,21 @@ template <typename TraceType>
 job_no_t BasicSimulation<TraceType>::append_job(sim_time_t submit_time,
                                                 num_nodes_t num_nodes,
                                                 const std::string &queue,
-                                                tdiff_t limit_time) {
+                                                tdiff_t limit_time,
+                                                std::optional<tdiff_t>
+                                                    actual_run_time) {
   if (submit_time < m_current_time) {
     throw std::runtime_error(
         "Cannot append job with submit_time < current_time. "
         "submit_time=" +
         std::to_string(submit_time) +
         " but current_time=" + std::to_string(m_current_time));
+  }
+  if (actual_run_time &&
+      (!std::isfinite(*actual_run_time) || *actual_run_time <= 0.0 ||
+       *actual_run_time > limit_time)) {
+    throw std::invalid_argument(
+        "actual_run_time must be positive and no greater than limit_time");
   }
 
   // Online callers need not invoke run() first. Open incremental outputs before
@@ -1774,7 +1782,8 @@ job_no_t BasicSimulation<TraceType>::append_job(sim_time_t submit_time,
 #endif
 
   job_no_t job_idx = m_trace.append_job(m_current_time, submit_epoch, num_nodes,
-                                        q, static_cast<timeout_t>(limit_time));
+                                        q, static_cast<timeout_t>(limit_time),
+                                        actual_run_time);
   submit_job(job_idx, submit_time);
   record_appended_job(job_idx, submit_time, num_nodes, limit_time);
   return job_idx;
@@ -1805,6 +1814,14 @@ std::vector<job_no_t> BasicSimulation<TraceType>::append_jobs(
           " has submit_time=" + std::to_string(requests[i].submit_time) +
           " but current_time=" + std::to_string(m_current_time));
     }
+    if (requests[i].actual_run_time &&
+        (!std::isfinite(*requests[i].actual_run_time) ||
+         *requests[i].actual_run_time <= 0.0 ||
+         *requests[i].actual_run_time > requests[i].limit_time)) {
+      throw std::invalid_argument(
+          "request " + std::to_string(i) +
+          " actual_run_time must be positive and no greater than limit_time");
+    }
   }
 
   std::vector<dr_evt::Job_Append_Request> trace_reqs;
@@ -1820,7 +1837,8 @@ std::vector<job_no_t> BasicSimulation<TraceType>::append_jobs(
 #endif
     trace_reqs.push_back(
         dr_evt::Job_Append_Request{epoch_t{sec, frac}, r.num_nodes, q,
-                                   static_cast<timeout_t>(r.limit_time)});
+                                   static_cast<timeout_t>(r.limit_time),
+                                   r.actual_run_time});
   }
 
   std::vector<job_no_t> job_idxs =

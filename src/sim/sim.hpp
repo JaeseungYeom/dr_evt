@@ -243,6 +243,8 @@ public:
     num_nodes_t num_nodes;  ///< Requested node count.
     std::string queue;      ///< Queue ID, or a name in legacy-input builds.
     tdiff_t limit_time;     ///< Requested time limit.
+    std::optional<tdiff_t> actual_run_time =
+        std::nullopt; ///< Known execution time, if any.
   };
 
   /**
@@ -260,12 +262,17 @@ public:
    * default Queue1), or a queue name such as "pbatch" when built with
    * `DR_EVT_LEGACY_QUEUE_INPUT`.
    * @param[in] limit_time User-estimated time limit in seconds.
+   * @param[in] actual_run_time Known execution time, or empty to use
+   *        limit_time as the streaming execution duration.
    * @return New Trace job identifier as job_no_t.
+   * @throws std::invalid_argument if actual_run_time is non-positive or
+   *         greater than limit_time.
    * @see submit_job()
    * @see SchedulerBase::insert_job()
    */
   job_no_t append_job(sim_time_t submit_time, num_nodes_t num_nodes,
-                      const std::string &queue, tdiff_t limit_time);
+                      const std::string &queue, tdiff_t limit_time,
+                      std::optional<tdiff_t> actual_run_time = std::nullopt);
 
   /**
    * @brief Add several new job records and enqueue all of them.
