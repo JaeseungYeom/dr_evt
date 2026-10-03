@@ -49,10 +49,20 @@ in-process via the streaming API:
 one `JobStatus` per ID in the same order. A pending job carries
 `expected_start_time`; a running or completed job carries `scheduled` with
 `start_time` and `end_time`; and a rejected job carries no timing value.
-Unknown or non-appended IDs produce `ErrorResponse`.
+Unknown or non-appended IDs produce `ErrorResponse`. The request reads the
+server's simulation state and works regardless of whether Redis output support
+is compiled or configured.
 
 Checkpoint requests use Ser20 and require a server built with
-`DR_EVT_WITH_SER20=ON`; otherwise the server returns an error response.
+`DR_EVT_WITH_SER20=ON`; otherwise the server returns an error response. Save
+and load are currently rejected when that simulation is configured to write
+output to Redis, independently of whether status queries are used. File output
+is reopened in append mode after a load, but is not rolled back: when restoring
+an older checkpoint, the corresponding output-file versions must also be
+restored to avoid retaining or duplicating post-checkpoint rows. The planned
+recovery workflow will archive the pre-restart file or Redis namespace and use
+a stitching tool to merge it with post-restart output at the saved boundary;
+that workflow is not yet implemented.
 
 For a replay-based warm start, set `InitRequest.sim_start_time` to a positive
 global simulation boundary, provide a replay-format `infile`, and send

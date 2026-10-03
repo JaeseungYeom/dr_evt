@@ -122,6 +122,8 @@ instead includes its simulated `start_time` and `end_time` and is reported as
 running or completed according to the current simulation time. Rejected jobs
 have no timing. Status remains queryable after completed trace records are
 flushed; an ID not created by the append APIs raises `std::out_of_range`.
+This query uses simulation state and does not require a Redis-enabled build or
+a Redis server.
 
 ### `advance_to(target_time)`
 
@@ -192,7 +194,20 @@ The checkpoint includes resident job records, appended-job status history,
 scheduler queue state, running jobs, pending events, capacity and statistics
 accounting, resource history, and the random-number generator. If incremental
 output files were open, they are flushed when saved and reopened in append mode
-when loaded.
+when loaded. The checkpoint does not contain those output files or their saved
+lengths, and loading it does not truncate output written after the checkpoint.
+To roll a run back to an older checkpoint, preserve the simulated-job and
+resource-history files together with that checkpoint and restore those file
+versions before loading it. Otherwise, resumed output is appended after stale
+post-checkpoint rows and may be duplicated or inconsistent with the restored
+simulation state.
+
+The intended output-recovery workflow is to archive the complete pre-restart
+output, for either a file destination or a Redis namespace, and write resumed
+output to a new segment. A companion stitching tool must then retain the
+archived output only through the checkpoint's committed boundary and append
+the post-restart segment. That automatic archive-and-stitch workflow is not
+implemented yet.
 
 Checkpoint/restart is compiled when `DR_EVT_WITH_SER20=ON`. Checkpoints are
 Ser20 binary, same-build artifacts rather than a portable exchange format. The
@@ -204,7 +219,10 @@ state, and accounting without invoking the cost callback during load; callback
 objects and their externally owned state are not serialized. Custom scheduler
 subclasses remain unsupported because they may add unknown state. Standard and
 Pcon traces are supported; replay/warm-start execution and progressive file
-loading are rejected.
+loading are rejected. A simulation configured to use Redis as its output sink
+rejects checkpoint save/load because Redis output cannot currently be archived
+and restored to the checkpoint boundary. This does not affect
+`get_job_statuses()`, which is independent of Redis.
 
 ### `run_until_exclusive(target_time)`
 

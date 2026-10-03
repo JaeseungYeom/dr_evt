@@ -204,7 +204,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 ```
 
-**Linux `perf` profiling (recommended):**
+### Linux `perf` profiling (recommended)
 
 `perf` profiles the default shared-library build and does not require `-pg` or
 `DR_EVT_GPROF`. Build the normal optimized configuration, then record a
@@ -226,7 +226,11 @@ The project adds debug information independently of the selected optimized
 build type. Use a workload long enough to collect substantially more than a
 few hundred samples.
 
-**GNU `gprof` profiling:**
+See [Performance Analysis](../dev/PERFORMANCE_ANALYSIS.md) for a worked
+`perf` profile of the circular FCFS scheduler and its identified optimization
+targets.
+
+### GNU `gprof` profiling
 
 ```bash
 cmake -S . -B build-gprof \
@@ -251,6 +255,11 @@ that configuration. The cached `BUILD_SHARED_LIBS` preference is not changed,
 so later non-gprof configurations retain the requested shared-library mode.
 Use a separate run directory for each process or run because each writes a
 file named `gmon.out` in its current working directory.
+
+See [Performance Analysis](../dev/PERFORMANCE_ANALYSIS.md) for the project's
+recorded profiling analysis. That snapshot was collected with Linux `perf`,
+but its workload documentation and interpretation guidance also apply when
+evaluating a `gprof` capture.
 
 **Complete example with all features:**
 ```bash

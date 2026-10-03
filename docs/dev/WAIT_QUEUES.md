@@ -33,6 +33,11 @@ and trace output. It is not an isolated wait-queue microbenchmark. The queue
 implementation is the intended variable, but the complete difference cannot be
 attributed solely to queue operations.
 
+For sampled hot-path measurements within the circular FCFS scheduler, see
+[Performance Analysis](PERFORMANCE_ANALYSIS.md). That profile complements this
+end-to-end queue comparison; the two measurements use different workloads and
+should not be compared numerically.
+
 ![Mean end-to-end runtime relative to deque; lower is better.](../_static/wait-queue-benchmark.svg)
 
 | Implementation | Time (s) | vs deque | Change | Peak queue | Correctness |

@@ -1,9 +1,15 @@
-# June 2022 RIKEN Trace Performance Analysis
+# Performance Analysis
 
 This page records a profiling snapshot of the C++ simulator using the June
 2022 RIKEN/Fugaku scheduling trace. It identifies optimization targets in the
 circular FCFS scheduler; it is not a general performance guarantee or a
 comparison among queue implementations.
+
+For instructions on collecting a new profile, see
+[Linux `perf` profiling](../getting-started/installation.md#linux-perf-profiling-recommended)
+or [GNU `gprof` profiling](../getting-started/installation.md#gnu-gprof-profiling).
+For end-to-end results comparing the available queue implementations, see the
+[wait queue performance comparison](WAIT_QUEUES.md#benchmark-record).
 
 ## Workload and measurement
 

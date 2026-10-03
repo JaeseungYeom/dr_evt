@@ -189,15 +189,22 @@ redis-cli -u redis://127.0.0.1:6379 \
 Sorted-set queries return job IDs. Use `HGETALL` with a returned ID to retrieve
 the full record.
 
-## Query unfinished jobs
+## Query job status (Redis optional)
+
+Job-status queries do not require Redis. The in-process, Python, and gRPC
+`get_job_statuses()` APIs query DR_EVT's in-memory status metadata and work in
+ordinary builds as well as Redis-enabled builds. They report pending, running,
+completed, and rejected appended jobs; pending jobs can include an estimated
+start time.
 
 Redis contains only finalized jobs that have reached an output flush. Pending,
 running, and completed-but-not-yet-flushed jobs are deliberately absent so
 Redis operations never enter the scheduler's append, start, or completion
 paths.
 
-The installed `dr_evt_client` demonstrates the complete Redis-first lookup.
-Build the client and server with both gRPC and Redis enabled:
+The installed `dr_evt_client` demonstrates an optional Redis-first lookup that
+avoids asking the live server about jobs already finalized in Redis. Build the
+client and server with both gRPC and Redis enabled to run this example:
 
 ```bash
 cmake -S . -B build \
@@ -243,25 +250,41 @@ A hash found in Redis is the authoritative finalized record. An absent hash
 means the job may still be pending, running, completed but waiting for an
 ordered flush, or rejected, so only missing IDs are sent back to the server.
 
-`get_job_statuses()` accepts multiple IDs and returns results in the order of
-the supplied `missing_job_ids`. Each result is `pending`, `running`,
-`completed`, or `rejected`; pending jobs can include an estimated start time.
+`get_job_statuses()` accepts multiple IDs and returns results in request order.
 The same bulk status operation is exposed by the Python binding and the gRPC
 `GetJobStatusesRequest` API. The no-option client invocation remains available;
 it batch-appends the CSV and finishes the simulation without an intermediate
-status query. `--advance-to` without Redis queries every appended ID from the
-server and reports those statuses before finishing.
+status query. `--advance-to` without Redis queries every appended ID directly
+from the server and reports those statuses before finishing.
 
 The query is read-only. Its compact retained status metadata is included in
-checkpoint version 3, so status queries continue to work after restoring a
+the checkpoint state, so status queries continue to work after restoring a
 checkpoint even when the corresponding trace record has been reclaimed.
 
-## Checkpoint limitation
+## Checkpoint/restart and output rollback
 
-Checkpointing is currently rejected when Redis output is active. This avoids
-duplicating or losing Redis writes when a restarted simulation reconnects to
-an existing key prefix. This restriction belongs to the Redis output sink;
-`get_job_statuses()` itself is checkpoint-safe.
+Checkpoint/restart does not roll output back to the saved boundary. With
+file-based output, loading a checkpoint reopens the existing simulated-job and
+resource-history files in append mode; it does not remove rows written after
+that checkpoint. To restore an older checkpoint safely, preserve matching
+copies of those files at checkpoint time and restore them before loading the
+checkpoint.
+
+A simulation whose output sink is Redis (that is, one initialized with
+`redis_uri` and `redis_key_prefix`) currently rejects checkpoint save/load
+entirely because Redis output cannot yet be restored to the checkpoint
+boundary.
+
+The intended behavior for both storage backends is the same: restart will
+rename the existing file or Redis namespace as an immutable pre-restart
+segment, write resumed output to a fresh destination, and provide a stitching
+tool that discards the archived segment's rows after the checkpoint boundary
+before joining it to the resumed segment. This automated workflow is not yet
+implemented.
+
+These output limitations are unrelated to job-status queries.
+`get_job_statuses()` works with Redis off or on, and its retained status
+metadata is checkpoint-safe whenever checkpointing itself is available.
 
 ## Connection URIs
 

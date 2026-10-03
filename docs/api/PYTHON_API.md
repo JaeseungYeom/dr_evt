@@ -128,7 +128,14 @@ supported when the destination `Simulation` is constructed with equivalent
 cost and selection callbacks; callback objects and external state are not
 stored in the checkpoint. Standard and Pcon trace state are preserved. Custom
 scheduler subclasses, replay/warm-start, and progressive file loading are
-rejected rather than restored inexactly.
+rejected rather than restored inexactly. Output files are external to the
+checkpoint and are reopened in append mode without truncation; restore the
+matching output-file versions before loading an older checkpoint. Simulations
+configured with Redis output reject checkpoint save/load because Redis output
+cannot currently be restored to the checkpoint boundary. The planned recovery
+workflow will archive either output backend at restart and provide a tool to
+stitch the archived and resumed segments at the checkpoint boundary; it is not
+yet implemented.
 
 ## Supporting types
 
