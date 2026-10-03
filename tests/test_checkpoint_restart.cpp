@@ -36,6 +36,7 @@ constexpr const char *test_queue = "1";
 
 constexpr const char *empty_trace = "/tmp/dr_evt_checkpoint_empty.csv";
 constexpr const char *loaded_trace = "/tmp/dr_evt_checkpoint_loaded.csv";
+constexpr const char *pcon_trace = "/tmp/dr_evt_checkpoint_pcon.csv";
 constexpr size_t scheduler_workload_size = 256;
 constexpr sim_time_t scheduler_checkpoint_time = 60.0;
 constexpr sim_time_t restarted_workload_start = 160.0;
@@ -390,6 +391,92 @@ void test_rejected_checkpoints() {
   assert(mismatch_rejected);
 }
 
+/** @brief Verify Pcon records, live totals, and resource output survive
+ * restart. */
+void test_pcon_continuation() {
+  const std::string checkpoint_path = "/tmp/dr_evt_pcon_checkpoint.bin";
+  const std::string baseline_resource_output =
+      "/tmp/dr_evt_pcon_checkpoint_baseline_resources.csv";
+  const std::string restarted_resource_output =
+      "/tmp/dr_evt_pcon_checkpoint_restarted_resources.csv";
+  std::remove(checkpoint_path.c_str());
+  std::remove(baseline_resource_output.c_str());
+  std::remove(restarted_resource_output.c_str());
+
+  {
+    std::ofstream input(pcon_trace);
+    input << "job_submit_time,num_nodes,q_id,time_limit,avgpcon,minpcon,"
+             "maxpcon\n"
+          << "0,3,1,10,1.5,2,3\n"
+          << "0,2,1,4,0.5,1,1.5\n"
+          << "0,1,1,8,2.5,3,4\n";
+    assert(input.good());
+  }
+
+  auto make_pcon_params = [](const std::string &resource_output) {
+    Sim_Params params;
+    params.m_infile = pcon_trace;
+    params.m_trace_type = TraceType::PCON;
+    params.m_total_nodes = 4;
+    params.m_trace_format = "simple";
+    params.m_timestamp_format = "epoch";
+    params.m_run_time_mode = RunTimeMode::LIMIT;
+    params.set_resource_trace(resource_output);
+    return params;
+  };
+
+  {
+    auto params = make_pcon_params(baseline_resource_output);
+    PconSimulation baseline(params);
+    baseline.run();
+    baseline.write_resource_trace(baseline_resource_output);
+  }
+
+  auto restart_params = make_pcon_params(restarted_resource_output);
+  restart_params.m_is_time_set = true;
+  restart_params.m_max_time = 5.0;
+  {
+    PconSimulation source(restart_params);
+    source.run();
+    const auto stats = source.get_statistics();
+    assert(stats.jobs_running > 0);
+    assert(stats.jobs_waiting > 0);
+    source.save_checkpoint(checkpoint_path);
+  }
+
+  {
+    PconSimulation resumed(restart_params);
+    resumed.load_checkpoint(checkpoint_path);
+    const auto &jobs = resumed.get_trace().data();
+    assert(jobs.size() == 3);
+    assert(close(jobs[0].pcon().avgpcon, 1.5));
+    assert(close(jobs[1].pcon().minpcon, 1.0));
+    assert(close(jobs[2].pcon().maxpcon, 4.0));
+    resumed.advance_to(std::numeric_limits<sim_time_t>::max());
+    resumed.write_resource_trace(restarted_resource_output);
+    assert(resumed.get_statistics().jobs_completed == 3);
+  }
+
+  assert(read_file(restarted_resource_output) ==
+         read_file(baseline_resource_output));
+
+  {
+    Simulation wrong_trace_type(restart_params);
+    bool trace_type_rejected = false;
+    try {
+      wrong_trace_type.load_checkpoint(checkpoint_path);
+    } catch (const std::runtime_error &) {
+      trace_type_rejected = true;
+    }
+    assert(trace_type_rejected);
+  }
+
+  std::remove(checkpoint_path.c_str());
+  std::remove(baseline_resource_output.c_str());
+  std::remove(restarted_resource_output.c_str());
+  std::remove(pcon_trace);
+}
+
 } // namespace
 
 /** @brief Run all exact checkpoint/restart tests. */
@@ -400,6 +487,7 @@ int main() {
   test_custom_scheduler_continuation();
   test_output_continuation();
   test_rejected_checkpoints();
+  test_pcon_continuation();
   std::cout << "Checkpoint/restart tests passed\n";
   return EXIT_SUCCESS;
 }

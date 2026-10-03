@@ -181,8 +181,8 @@ public:
 #if defined(DR_EVT_HAS_SER20)
   /**
    * @brief Save an exact continuation checkpoint to a binary stream.
-   * @details The simulation must use the standard trace. Callback-based Custom
-   * FCFS is supported when restart constructs the destination with equivalent
+   * @details Standard and Pcon traces are supported. Callback-based Custom FCFS
+   * is supported when restart constructs the destination with equivalent
    * callbacks; callback objects themselves are not serialized. The checkpoint
    * is intended for the same DR_EVT build and matching Sim_Params. Buffered
    * output is flushed before the snapshot is written.

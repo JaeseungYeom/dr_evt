@@ -126,8 +126,9 @@ Checkpoint methods are present when DR_EVT is built with
 `DR_EVT_WITH_SER20=ON`, and files require matching `SimParams`. Custom FCFS is
 supported when the destination `Simulation` is constructed with equivalent
 cost and selection callbacks; callback objects and external state are not
-stored in the checkpoint. Custom scheduler subclasses, Pcon, replay/warm-start,
-and progressive file loading are rejected rather than restored inexactly.
+stored in the checkpoint. Standard and Pcon trace state are preserved. Custom
+scheduler subclasses, replay/warm-start, and progressive file loading are
+rejected rather than restored inexactly.
 
 ## Supporting types
 

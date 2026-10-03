@@ -84,6 +84,8 @@ struct Standard_Trace_Policy {
   static std::string resource_values(const resource_sample_type &) {
     return "";
   }
+  /** @brief Reset runtime accounting before restoring running jobs. */
+  void reset_runtime_state() {}
   void on_start(const record_type &) {}
   void on_finish(const record_type &) {}
 };
@@ -112,6 +114,8 @@ struct Pcon_Trace_Policy {
            std::to_string(sample.pcon.minpcon) + "," +
            std::to_string(sample.pcon.maxpcon);
   }
+  /** @brief Reset accumulated Pcon values before restoring running jobs. */
+  void reset_runtime_state() { m_current = {}; }
   void on_start(const record_type &job) {
     const auto &pcon = job.pcon();
     m_current.avgpcon += pcon.avgpcon;

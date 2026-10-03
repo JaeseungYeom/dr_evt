@@ -37,7 +37,7 @@ namespace {
 
 constexpr std::array<char, 8> checkpoint_magic{'D', 'R', 'E', 'V',
                                                'T', 'C', 'K', 'P'};
-constexpr std::uint32_t checkpoint_version = 3;
+constexpr std::uint32_t checkpoint_version = 4;
 constexpr std::uint64_t checkpoint_collection_limit = 100000000;
 constexpr std::uint64_t checkpoint_string_limit = 64 * 1024 * 1024;
 
@@ -796,10 +796,8 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
   if (!m_params.m_redis_uri.empty()) {
     throw std::logic_error("checkpointing is not supported with Redis output");
   }
-  if constexpr (!std::is_same_v<TraceType, Trace>) {
-    throw std::logic_error(
-        "checkpointing is not supported for the experimental Pcon trace");
-  } else {
+  if constexpr (std::is_same_v<TraceType, Trace> ||
+                std::is_same_v<TraceType, PconTrace>) {
     if (m_custom_scheduler != nullptr &&
         typeid(*m_custom_scheduler) != typeid(CustomFCFSScheduler)) {
       throw std::logic_error(
@@ -828,7 +826,9 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
     CheckpointWriter writer(output);
     writer.bytes(checkpoint_magic.data(), checkpoint_magic.size());
     writer.value(checkpoint_version);
-    writer.value(static_cast<std::uint32_t>(sizeof(Job_Record)));
+    writer.value(std::is_same_v<TraceType, PconTrace>);
+    writer.value(static_cast<std::uint32_t>(
+        sizeof(typename TraceType::policy_type::record_type)));
 
     // Configuration remains owned by Sim_Params. Persist the fields that
     // determine scheduling or output identity so a mismatched destination is
@@ -972,6 +972,11 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
       writer.value(job.m_dat);
 #endif
       writer.value(job.m_busy_nodes);
+      if constexpr (std::is_same_v<TraceType, PconTrace>) {
+        writer.value(job.pcon().avgpcon);
+        writer.value(job.pcon().minpcon);
+        writer.value(job.pcon().maxpcon);
+      }
     }
 
 #if MARK_DAT_PERIOD
@@ -1004,6 +1009,11 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
       write_epoch(writer, sample.time);
       writer.value(sample.allocated);
       writer.value(sample.capacity);
+      if constexpr (std::is_same_v<TraceType, PconTrace>) {
+        writer.value(sample.pcon.avgpcon);
+        writer.value(sample.pcon.minpcon);
+        writer.value(sample.pcon.maxpcon);
+      }
     }
     writer.value(m_trace.m_resource_trace_total_nodes);
     writer.value(m_trace.m_resource_trace_current_capacity);
@@ -1012,11 +1022,20 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
     write_epoch(writer, m_trace.m_resource_recording_baseline.time);
     writer.value(m_trace.m_resource_recording_baseline.allocated);
     writer.value(m_trace.m_resource_recording_baseline.capacity);
+    if constexpr (std::is_same_v<TraceType, PconTrace>) {
+      writer.value(m_trace.m_resource_recording_baseline.pcon.avgpcon);
+      writer.value(m_trace.m_resource_recording_baseline.pcon.minpcon);
+      writer.value(m_trace.m_resource_recording_baseline.pcon.maxpcon);
+    }
     writer.value(m_trace.m_has_resource_recording_baseline);
     writer.value(m_trace.m_resource_trace_msec);
     writer.value(m_trace.m_simulated_trace_msec);
     writer.value(simulated_output_open);
     writer.value(resource_output_open);
+  } else {
+    static_assert(std::is_same_v<TraceType, Trace> ||
+                      std::is_same_v<TraceType, PconTrace>,
+                  "checkpoint serialization is not defined for this trace");
   }
 }
 
@@ -1041,10 +1060,8 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
   if (!m_params.m_redis_uri.empty()) {
     throw std::logic_error("checkpointing is not supported with Redis output");
   }
-  if constexpr (!std::is_same_v<TraceType, Trace>) {
-    throw std::logic_error(
-        "checkpointing is not supported for the experimental Pcon trace");
-  } else {
+  if constexpr (std::is_same_v<TraceType, Trace> ||
+                std::is_same_v<TraceType, PconTrace>) {
     if (m_custom_scheduler != nullptr &&
         typeid(*m_custom_scheduler) != typeid(CustomFCFSScheduler)) {
       throw std::logic_error(
@@ -1059,9 +1076,13 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
     }
     require_checkpoint_match(reader.value<std::uint32_t>(), checkpoint_version,
                              "format version");
+    require_checkpoint_match(reader.value<bool>(),
+                             std::is_same_v<TraceType, PconTrace>,
+                             "trace type");
     require_checkpoint_match(reader.value<std::uint32_t>(),
-                             static_cast<std::uint32_t>(sizeof(Job_Record)),
-                             "Job_Record ABI");
+                             static_cast<std::uint32_t>(sizeof(
+                                 typename TraceType::policy_type::record_type)),
+                             "trace record ABI");
     require_checkpoint_match(reader.value<num_nodes_t>(),
                              m_params.m_total_nodes, "total_nodes");
     require_checkpoint_match(reader.enumeration<BackfillPolicy>(),
@@ -1274,7 +1295,29 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
       job.m_dat = reader.value<bool>();
 #endif
       job.m_busy_nodes = reader.value<num_nodes_t>();
-      m_trace.m_data.push_back(std::move(job));
+      if constexpr (std::is_same_v<TraceType, PconTrace>) {
+        const Pcon_Values pcon{reader.value<double>(), reader.value<double>(),
+                               reader.value<double>()};
+        m_trace.m_data.push_back(Pcon_Job_Record(std::move(job), pcon));
+      } else {
+        m_trace.m_data.push_back(std::move(job));
+      }
+    }
+
+    const auto first_resident_job =
+        static_cast<job_no_t>(m_trace.m_num_reclaimed);
+    const auto resident_job_count =
+        static_cast<job_no_t>(m_trace.m_data.size());
+    m_trace.reset_policy_runtime_state();
+    for (const auto &[job_id, running] : m_running_jobs) {
+      (void)running;
+      if (job_id < first_resident_job ||
+          job_id - first_resident_job >= resident_job_count) {
+        throw std::runtime_error(
+            "checkpoint running-job map references a non-resident job");
+      }
+      m_trace.restore_policy_running_job(
+          m_trace.m_data[job_id - first_resident_job]);
     }
 
 #if MARK_DAT_PERIOD
@@ -1310,9 +1353,18 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
     m_trace.m_ctx.m_resource_history.clear();
     m_trace.m_ctx.m_resource_history.set_capacity(resource_capacity);
     for (size_t i = 0; i < resource_count; ++i) {
-      m_trace.m_ctx.m_resource_history.push_back(Standard_Resource_Sample{
-          read_epoch(reader), reader.value<num_nodes_t>(),
-          reader.value<num_nodes_t>()});
+      const auto time = read_epoch(reader);
+      const auto allocated = reader.value<num_nodes_t>();
+      const auto capacity = reader.value<num_nodes_t>();
+      if constexpr (std::is_same_v<TraceType, PconTrace>) {
+        const Pcon_Values pcon{reader.value<double>(), reader.value<double>(),
+                               reader.value<double>()};
+        m_trace.m_ctx.m_resource_history.push_back(
+            Pcon_Resource_Sample{time, allocated, capacity, pcon});
+      } else {
+        m_trace.m_ctx.m_resource_history.push_back(
+            Standard_Resource_Sample{time, allocated, capacity});
+      }
     }
     m_trace.m_resource_trace_total_nodes = reader.value<num_nodes_t>();
     m_trace.m_resource_trace_current_capacity = reader.value<num_nodes_t>();
@@ -1323,6 +1375,11 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
         reader.value<num_nodes_t>();
     m_trace.m_resource_recording_baseline.capacity =
         reader.value<num_nodes_t>();
+    if constexpr (std::is_same_v<TraceType, PconTrace>) {
+      m_trace.m_resource_recording_baseline.pcon = {reader.value<double>(),
+                                                    reader.value<double>(),
+                                                    reader.value<double>()};
+    }
     m_trace.m_has_resource_recording_baseline = reader.value<bool>();
     m_trace.m_resource_trace_msec = reader.value<bool>();
     m_trace.m_simulated_trace_msec = reader.value<bool>();
@@ -1330,10 +1387,6 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
     const bool resource_output_open = reader.value<bool>();
     m_trace.m_simulated_trace_buffer.clear();
 
-    const auto first_resident_job =
-        static_cast<job_no_t>(m_trace.m_num_reclaimed);
-    const auto resident_job_count =
-        static_cast<job_no_t>(m_trace.m_data.size());
     for (const auto job_id : pending_job_ids) {
       if (job_id < first_resident_job ||
           job_id - first_resident_job >= resident_job_count) {
@@ -1398,6 +1451,10 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
                                  filename);
       }
     }
+  } else {
+    static_assert(std::is_same_v<TraceType, Trace> ||
+                      std::is_same_v<TraceType, PconTrace>,
+                  "checkpoint deserialization is not defined for this trace");
   }
 }
 
