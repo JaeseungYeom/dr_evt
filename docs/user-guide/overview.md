@@ -54,11 +54,15 @@ session gets its own isolated simulation, scheduler state, and nodes.
 
 For deployment patterns, see
 [Client/Server Use Cases](client-server-use-cases.md).
+For the online performance-aware routing experiment—including the native
+C++/MPI implementation that does not use gRPC—see the
+[Multi-Cluster Dispatch Experiment](multi-cluster-experiment.md).
 
 ## Further reading
 
 - [Backfilling Algorithms](../BACKFILLING_ALGORITHMS.md)
 - [Fugaku Power-Usage Experiment](fugaku-power-experiment.md)
+- [Multi-Cluster Dispatch Experiment](multi-cluster-experiment.md)
 - [Maintenance, Capacity Changes, and Warm Starts](maintenance-and-warm-start.md)
 - [Testing Guide](../TESTING_GUIDE.md)
 - [Developer Notes](../dev/README.md)

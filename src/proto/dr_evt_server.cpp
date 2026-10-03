@@ -21,6 +21,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <string>
@@ -321,7 +322,10 @@ public:
           require_init(sim);
           const AppendJobRequest &r = req.append_job();
           dr_evt::job_no_t job_idx = sim->append_job(
-              r.submit_time(), r.num_nodes(), r.queue(), r.limit_time());
+              r.submit_time(), r.num_nodes(), r.queue(), r.limit_time(),
+              r.has_actual_run_time()
+                  ? std::optional<dr_evt::tdiff_t>(r.actual_run_time())
+                  : std::nullopt);
           resp.mutable_append_job()->set_job_idx(job_idx);
           break;
         }
@@ -332,7 +336,10 @@ public:
           reqs.reserve(r.requests_size());
           for (const auto &jd : r.requests()) {
             reqs.push_back(dr_evt::Simulation::Job_Append_Request{
-                jd.submit_time(), jd.num_nodes(), jd.queue(), jd.limit_time()});
+                jd.submit_time(), jd.num_nodes(), jd.queue(), jd.limit_time(),
+                jd.has_actual_run_time()
+                    ? std::optional<dr_evt::tdiff_t>(jd.actual_run_time())
+                    : std::nullopt});
           }
           std::vector<dr_evt::job_no_t> job_idxs = sim->append_jobs(reqs);
           auto *out = resp.mutable_append_jobs();

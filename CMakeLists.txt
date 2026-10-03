@@ -868,6 +868,14 @@ if(DR_EVT_WITH_UNIT_TESTING)
     set_tests_properties(test_trace_tools PROPERTIES
       LABELS "unit;scripts"
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(
+      NAME test_python_performance_dispatch
+      COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/experimental/multi-cluster/test_performance_dispatch.py)
+    set_tests_properties(test_python_performance_dispatch PROPERTIES
+      LABELS "unit;scripts;multi-cluster"
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
   endif()
 
   set_tests_properties(
@@ -891,6 +899,21 @@ if(DR_EVT_WITH_UNIT_TESTING)
       LABELS "unit;native;mpi"
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
       RUN_SERIAL TRUE)
+    if(DR_EVT_HAS_SER20 AND Python3_Interpreter_FOUND)
+      add_test(
+        NAME test_mpi_performance_dispatch
+        COMMAND ${Python3_EXECUTABLE}
+          ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mpi_performance_dispatch.py
+          ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG}
+          $<TARGET_FILE:mpi_performance_dispatch-bin>
+          ${CMAKE_CURRENT_SOURCE_DIR})
+      set_tests_properties(test_mpi_performance_dispatch PROPERTIES
+        LABELS "unit;native;mpi"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        RUN_SERIAL TRUE
+        SKIP_RETURN_CODE 77
+        TIMEOUT 120)
+    endif()
   endif()
 endif()
 

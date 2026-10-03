@@ -122,6 +122,7 @@ message AppendJobRequest {
     // name (e.g. "pbatch") when DR_EVT_LEGACY_QUEUE_INPUT is enabled.
     string queue = 3;
     double limit_time = 4;  // user-estimated time limit, in seconds
+    optional double actual_run_time = 5; // known execution time, if available
 }
 
 // One job's data within an AppendJobsRequest - same fields as
@@ -132,6 +133,7 @@ message JobAppendData {
     // Uses the same compile-time queue representation as AppendJobRequest.
     string queue = 3;
     double limit_time = 4;
+    optional double actual_run_time = 5;
 }
 
 // The batch counterpart to AppendJobRequest: several genuinely new jobs

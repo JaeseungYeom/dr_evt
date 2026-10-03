@@ -1,0 +1,6 @@
+#machine,size,GPU
+dane,256,CPU-only
+mammoth,64,CPU-only
+tioga,30,GPU-enabled
+tuolumne,256,GPU-enabled
+matrix,26,GPU-enabled

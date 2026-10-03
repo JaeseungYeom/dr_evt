@@ -35,6 +35,7 @@ user-guide/output-traces
 user-guide/redis-output
 user-guide/grpc-setup
 user-guide/client-server-use-cases
+user-guide/multi-cluster-experiment
 user-guide/maintenance-and-warm-start
 user-guide/fugaku-power-experiment
 ```

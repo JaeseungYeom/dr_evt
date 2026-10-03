@@ -18,6 +18,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -50,6 +51,8 @@ struct Job_Append_Request {
   num_nodes_t num_nodes;            ///< Requested node count.
   job_queue_t queue = QueueUnknown; ///< Queue identity, initially unknown.
   timeout_t limit_time;             ///< Requested execution-time limit.
+  std::optional<tdiff_t> actual_run_time =
+      std::nullopt; ///< Known execution time, if any.
 };
 
 /** @brief Job store, event queue, and output-trace state for one workload. */
@@ -411,6 +414,8 @@ public:
    * @param[in] num_nodes Number of nodes the job requests.
    * @param[in] queue Which queue the job was submitted to.
    * @param[in] limit_time User-estimated time limit.
+   * @param[in] actual_run_time Known execution time, or empty to use
+   *        limit_time as the streaming execution duration.
    * @return The new job's job_no. Simulation::append_job() immediately
    *         passes it to its protected submit_job() helper to enqueue it.
    * @see Simulation::append_job()
@@ -418,24 +423,18 @@ public:
    */
   job_no_t append_job(sim_time_t current_time, const epoch_t &submit_time,
                       num_nodes_t num_nodes, job_queue_t queue,
-                      timeout_t limit_time);
+                      timeout_t limit_time,
+                      std::optional<tdiff_t> actual_run_time = std::nullopt);
 
   /**
    * @brief Append several genuinely new jobs to m_data in one call -
    * the batch counterpart to append_job(), for the same never-seen-
    * before case (not a batch-preload; see load_data() for that).
    *
-   * Originally designed with a future chunked-loading reader in mind
-   * (a chunk as a std::vector<Job_Append_Request>, appended here once
-   * per chunk) - that didn't end up how progressive/multi-file
-   * loading (--infile_list) was actually built: Job_Append_Request's
-   * narrower, network-facing 4 fields can't carry actual_run_time,
-   * which load()'s output (what a real file read produces) can -
-   * routing that through this struct would silently drop it. See
-   * Trace::load_next_file() instead, which takes Job_Record directly;
-   * see OUTPUT_TRACE_BUFFERS.md for the full reasoning. This function
-   * still exists for genuine streaming, where a Job_Record doesn't
-   * exist yet - only the caller's raw values do.
+   * Progressive/multi-file loading does not use this network-facing record;
+   * Trace::load_next_file() retains each parser-created Job_Record directly.
+   * This structure remains the genuine streaming representation for jobs
+   * that do not already exist in the trace.
    *
    * Fully all-or-nothing: nothing in this batch is appended unless
    * all of it can be. Two things are checked before m_data is
@@ -491,13 +490,9 @@ public:
    * bounded --job_store_capacity can actually be honored (unlike
    * load_data(), which always grows to fit its one file whole).
    *
-   * Deliberately does not go through append_jobs()/Job_Append_Request:
-   * that struct only carries the 4 fields a genuine streaming caller
-   * (no Job_Record in hand yet) can supply - routing an
-   * already-parsed Job_Record through it would silently drop
-   * actual_run_time back to 0.0, wrong for run_time_mode=actual/
-   * distribution. This takes load()'s output directly instead,
-   * losing nothing.
+   * Deliberately does not go through append_jobs()/Job_Append_Request. This
+   * takes the parser-created Job_Record objects directly, preserving their
+   * complete input state and avoiding an unnecessary conversion.
    *
    * Two checks, both all-or-nothing before m_data is touched at all
    * (same shape as append_jobs()): this file's own rows must already

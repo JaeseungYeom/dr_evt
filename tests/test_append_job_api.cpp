@@ -1049,6 +1049,33 @@ void test_prediction_horizon() {
   std::cout << "  PASSED" << std::endl;
 }
 
+void test_append_with_known_actual_runtime() {
+  std::cout << "\n=== Known actual runtime for streaming jobs ==="
+            << std::endl;
+  Sim_Params params = make_params();
+  Simulation sim(params);
+  sim.get_trace().load_data(0);
+
+  const auto job =
+      sim.append_job(0.0, 10, kTestQueueInput, 100.0, 25.0);
+  sim.advance_to(24.0);
+  assert(sim.get_job_statuses({job}).front().state ==
+         Simulation::Job_State::RUNNING);
+  sim.advance_to(25.0);
+  const auto completed = sim.get_job_statuses({job}).front();
+  assert(completed.state == Simulation::Job_State::COMPLETED);
+  assert(completed.end_time == 25.0);
+
+  bool rejected = false;
+  try {
+    sim.append_job(25.0, 10, kTestQueueInput, 10.0, 11.0);
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  assert(rejected);
+  std::cout << "  PASSED" << std::endl;
+}
+
 int main() {
   std::cout << "====================================" << std::endl;
   std::cout << "Append-Job Test Suite" << std::endl;
@@ -1078,6 +1105,7 @@ int main() {
     test_append_jobs_memory_pressure();
     test_resource_area_and_time_accounted_utilization();
     test_prediction_horizon();
+    test_append_with_known_actual_runtime();
 
     std::cout << "\n====================================" << std::endl;
     std::cout << "ALL APPEND_JOB TESTS PASSED" << std::endl;
