@@ -280,25 +280,33 @@ fi
 assert_equal "large Redis job count" "200" \
     "$(redis_command SCARD "$LARGE_PREFIX:job_ids")"
 
-CHECKPOINT_TEST="$(dirname "$SIMULATOR")/test_checkpoint_restart"
-if [ ! -x "$CHECKPOINT_TEST" ]; then
-    echo "FAIL: checkpoint/restart test executable not found: $CHECKPOINT_TEST" >&2
-    exit 1
+CHECKPOINT_TEST=${CHECKPOINT_RESTART_TEST:-$INSTALL_PREFIX/bin/tests/test_checkpoint_restart}
+if [ ! -x "$CHECKPOINT_TEST" ] &&
+        [ -x "$(dirname "$SIMULATOR")/test_checkpoint_restart" ]; then
+    CHECKPOINT_TEST="$(dirname "$SIMULATOR")/test_checkpoint_restart"
 fi
-DR_EVT_TEST_REDIS_URI="$REDIS_URI" \
-DR_EVT_TEST_REDIS_PREFIX="$REDIS_PREFIX" \
-    "$CHECKPOINT_TEST" >>"$TEST_WORK_DIR/simulator.log" 2>&1
-CHECKPOINT_BASELINE="$REDIS_PREFIX:checkpoint-baseline"
-CHECKPOINT_RESTART="$REDIS_PREFIX:checkpoint-restart"
-assert_equal "stitched checkpoint job count" \
-    "$(redis_command SCARD "$CHECKPOINT_BASELINE:job_ids")" \
-    "$(redis_command SCARD "$CHECKPOINT_RESTART:job_ids")"
-assert_equal "stitched checkpoint submit index" \
-    "$(redis_command --raw ZRANGE "$CHECKPOINT_BASELINE:by_submit" 0 -1)" \
-    "$(redis_command --raw ZRANGE "$CHECKPOINT_RESTART:by_submit" 0 -1)"
-assert_equal "stitched checkpoint resource count" \
-    "$(redis_command ZCARD "$CHECKPOINT_BASELINE:resources:by_time")" \
-    "$(redis_command ZCARD "$CHECKPOINT_RESTART:resources:by_time")"
+if [ -x "$CHECKPOINT_TEST" ]; then
+    DR_EVT_TEST_REDIS_URI="$REDIS_URI" \
+    DR_EVT_TEST_REDIS_PREFIX="$REDIS_PREFIX" \
+        "$CHECKPOINT_TEST" >>"$TEST_WORK_DIR/simulator.log" 2>&1
+    CHECKPOINT_BASELINE="$REDIS_PREFIX:checkpoint-baseline"
+    CHECKPOINT_RESTART="$REDIS_PREFIX:checkpoint-restart"
+    assert_equal "stitched checkpoint job count" \
+        "$(redis_command SCARD "$CHECKPOINT_BASELINE:job_ids")" \
+        "$(redis_command SCARD "$CHECKPOINT_RESTART:job_ids")"
+    assert_equal "stitched checkpoint submit index" \
+        "$(redis_command --raw ZRANGE "$CHECKPOINT_BASELINE:by_submit" 0 -1)" \
+        "$(redis_command --raw ZRANGE "$CHECKPOINT_RESTART:by_submit" 0 -1)"
+    assert_equal "stitched checkpoint resource count" \
+        "$(redis_command ZCARD "$CHECKPOINT_BASELINE:resources:by_time")" \
+        "$(redis_command ZCARD "$CHECKPOINT_RESTART:resources:by_time")"
+elif [ "${REQUIRE_CHECKPOINT_RESTART:-0}" = "1" ]; then
+    echo "FAIL: checkpoint/restart test executable not found: $CHECKPOINT_TEST" >&2
+    echo "Set CHECKPOINT_RESTART_TEST to its build-tree path if tests are not installed." >&2
+    exit 1
+else
+    echo "SKIP: checkpoint/restart Redis test requires a Ser20-enabled build"
+fi
 
 # No more Redis queries occur after this point. Shut the server down and prove
 # that the exported CSV remains independently usable for comparison.
