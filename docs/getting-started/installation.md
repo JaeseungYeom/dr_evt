@@ -35,6 +35,12 @@
 - Install: `apt-get install libopenmpi-dev openmpi-bin`
 - Install the Python MPI binding for the launcher: `python3 -m pip install mpi4py`
 
+**Redis**: For searchable job and resource output (`-DDR_EVT_WITH_REDIS=ON`)
+- Requires hiredis headers and a reachable Redis server at runtime
+- Redis++ is found as an installed package or fetched automatically
+- See [Redis Output](../user-guide/redis-output.md) for installation, server
+  startup, and query examples
+
 ### gRPC and Protocol Buffers
 
 Enable gRPC directly when the client/server interface is needed. This selects
@@ -81,6 +87,10 @@ Protobuf or gRPC (both are opt-in, see below). If Boost or Ser20 is not found,
 the first build obtains and compiles it via FetchContent. Boost can take
 ~10-15 minutes; enabling Protobuf and/or gRPC adds their own download/build
 time when they are not found either. Subsequent builds reuse populated sources.
+When fetched Boost must be installed, DR_EVT excludes Boost's upstream install
+rules and installs the dependency once through its own guarded step. A later
+install to a prefix already containing the same Boost version skips the Boost
+header tree instead of traversing and reinstalling it.
 
 **CMake warnings**: You will see deprecation warnings from third-party dependencies (Boost, pybind11). These are harmless and come from their old cmake_minimum_required versions. To suppress them:
 ```bash
@@ -148,6 +158,13 @@ cmake -S . -B build -DDR_EVT_BUILD_PYTHON=ON
 # Specify Python executable
 cmake -S . -B build -DDR_EVT_BUILD_PYTHON=ON -DPython3_EXECUTABLE=/path/to/python3
 ```
+
+**Redis output:**
+```bash
+cmake -S . -B build -DDR_EVT_WITH_REDIS=ON
+```
+
+See [Redis Output](../user-guide/redis-output.md) for the runtime options.
 
 **Testing:**
 ```bash

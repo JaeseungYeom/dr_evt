@@ -80,10 +80,10 @@ compatible header at the same path; the server validates that header but does
 not load the rows. Custom clients can use a different server-side header file
 path in `InitRequest.infile`.
 
-The API's core is the bidirectional session stream. A client initializes
-simulation settings, sends each arrival with `AppendJobRequest` (which
-immediately enqueues it), advances simulated time with
-`AdvanceToRequest`, and obtains events or statistics from the responses.
+The API's core is the bidirectional session stream. The example client
+initializes simulation settings, sends all CSV rows in one `AppendJobsRequest`,
+optionally advances simulated time with `AdvanceToRequest`, and obtains status
+or statistics responses.
 An application can generate those messages from a live digital twin, a
 database, another simulator, or any other source, so no client-side job trace
 is required. The server still needs a readable CSV header during
@@ -100,6 +100,27 @@ ordinary full run), point `infile` at the server-readable trace, and send
 `begin_time`. A positive simulation start time requires replay columns
 including `begin_time` and `end_time`; negative and non-finite values are
 rejected.
+
+For a Redis-enabled server build, an `InitRequest` may set `redis_uri`,
+`redis_key_prefix`, and optionally `job_flush_interval`. Both Redis strings are
+required together. The simulated-job and resource-history files are then
+replaced by Redis output, and `InitResponse.redis_key_prefix` identifies the
+namespace. `simulated_trace_file` and `resource_trace_file` are empty in the
+response. Installation, key layout, and query commands are in
+[Redis Output](redis-output.md).
+
+The Redis-enabled example client implements finalized/live status lookup:
+
+```bash
+${CMAKE_INSTALL_PREFIX}/bin/dr_evt_client <server_host>:50051 /path/to/trace.csv \
+  --redis-uri redis://127.0.0.1:6379 \
+  --redis-key-prefix dr_evt:client-example \
+  --advance-to 100
+```
+
+It pipelines Redis job-hash queries, asks the server only for absent IDs, and
+prints the merged results in append order. The client must also be built with
+`DR_EVT_WITH_REDIS=ON`; a client built without it rejects the Redis options.
 
 ## Session identity and completion
 

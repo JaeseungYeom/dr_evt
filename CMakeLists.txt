@@ -113,6 +113,9 @@ option(DR_EVT_WITH_SER20 "Include Ser20" ON)
 
 option(DR_EVT_WITH_OPENMP "Enable OpenMP" OFF)
 
+option(DR_EVT_WITH_REDIS
+  "Enable Redis output support through redis-plus-plus" OFF)
+
 option(DR_EVT_WITH_UNIT_TESTING
   "Enable the unit testing framework (requires Catch2)" OFF)
 
@@ -287,6 +290,10 @@ if (DR_EVT_WITH_SER20)
   include(SetupSer20)
 endif (DR_EVT_WITH_SER20)
 
+if (DR_EVT_WITH_REDIS)
+  include(SetupRedisPlusPlus)
+endif (DR_EVT_WITH_REDIS)
+
 
 if (OpenMP_CXX_FOUND)
   message(STATUS "DR_EVT_OMP_MODE value (${DR_EVT_OMP_MODE})")
@@ -365,6 +372,10 @@ if (DR_EVT_HAS_SER20)
   target_link_libraries(dr_evt PUBLIC ser20::ser20)
 endif (DR_EVT_HAS_SER20)
 
+if (DR_EVT_HAS_REDIS_PLUS_PLUS)
+  target_link_libraries(dr_evt PRIVATE DR_EVT::redis_plus_plus)
+endif (DR_EVT_HAS_REDIS_PLUS_PLUS)
+
 if (DR_EVT_WITH_UNIT_TESTING)
   target_include_directories(dr_evt PUBLIC
     $<BUILD_INTERFACE:${CATCH2_INCLUDE_DIR}>)
@@ -442,6 +453,9 @@ if (DR_EVT_HAS_GRPC)
   # separately-running server, it never links against the simulation
   # library directly.
   target_link_libraries(dr_evt_client-bin PRIVATE dr_evt_service_proto)
+  if (DR_EVT_HAS_REDIS_PLUS_PLUS)
+    target_link_libraries(dr_evt_client-bin PRIVATE DR_EVT::redis_plus_plus)
+  endif ()
   set_target_properties(dr_evt_client-bin PROPERTIES OUTPUT_NAME dr_evt_client)
   set_target_properties(dr_evt_client-bin PROPERTIES CMAKE_INSTALL_RPATH
                         "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
@@ -882,22 +896,27 @@ if(DR_EVT_BOOST_FETCHCONTENT)
     endif()
   ")
 
-  # Boost headers are spread across many libs/*/include/boost trees in the
-  # CMake distribution. Merge them into the conventional include/boost
-  # destination, including .ipp implementation headers and generated config
-  # headers. Without this, the installed libraries cannot be consumed by a
-  # subsequent configure that searches CMAKE_INSTALL_PREFIX.
-  if(EXISTS "${boost_SOURCE_DIR}/boost")
-    install(DIRECTORY "${boost_SOURCE_DIR}/boost"
-            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-  endif()
-  file(GLOB BOOST_HEADER_TREES LIST_DIRECTORIES true
+  # Boost's own subdirectory is EXCLUDE_FROM_ALL, so install its development
+  # headers through one guarded script. The version check avoids traversing
+  # thousands of files again when the effective destination already contains
+  # this fetched Boost version (including with `cmake --install --prefix`).
+  file(GLOB DR_EVT_BOOST_HEADER_TREES LIST_DIRECTORIES true
        "${boost_SOURCE_DIR}/libs/*/include/boost")
-  foreach(BOOST_HEADER_TREE IN LISTS BOOST_HEADER_TREES)
-    install(DIRECTORY "${BOOST_HEADER_TREE}/"
-            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/boost)
-  endforeach()
-  unset(BOOST_HEADER_TREES)
+  file(STRINGS "${boost_SOURCE_DIR}/libs/config/include/boost/version.hpp"
+       DR_EVT_FETCHED_BOOST_VERSION_LINE
+       REGEX "^#define BOOST_VERSION [0-9]+$"
+       LIMIT_COUNT 1)
+  string(REGEX MATCH "[0-9]+$" DR_EVT_FETCHED_BOOST_VERSION
+         "${DR_EVT_FETCHED_BOOST_VERSION_LINE}")
+  configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/InstallFetchedBoost.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/InstallFetchedBoost.cmake"
+    @ONLY)
+  install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/InstallFetchedBoost.cmake"
+          COMPONENT Development)
+  unset(DR_EVT_BOOST_HEADER_TREES)
+  unset(DR_EVT_FETCHED_BOOST_VERSION_LINE)
+  unset(DR_EVT_FETCHED_BOOST_VERSION)
 endif()
 
 # Install the binaries
@@ -1124,6 +1143,7 @@ string(APPEND _str "\n")
 append_str_tf(_str
   DR_EVT_GNU_LINUX
   DR_EVT_HAS_SER20
+  DR_EVT_HAS_REDIS_PLUS_PLUS
   DR_EVT_HAS_CATCH2
   DR_EVT_HAS_DOXYGEN
   DR_EVT_HAS_OPENMP

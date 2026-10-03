@@ -24,6 +24,11 @@ set_full_path(THIS_DIR_SOURCES
   system_memory.cpp
 )
 
+if (DR_EVT_HAS_REDIS_PLUS_PLUS)
+  set_full_path(THIS_DIR_REDIS_SOURCES redis_output.cpp)
+  set(THIS_DIR_SOURCES "${THIS_DIR_SOURCES}" "${THIS_DIR_REDIS_SOURCES}")
+endif ()
+
 # Add OpenMP diagnostics only if OpenMP is available
 if (DR_EVT_HAS_OPENMP)
   set_full_path(THIS_DIR_OMP_SOURCES

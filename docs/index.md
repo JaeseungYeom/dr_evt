@@ -32,6 +32,7 @@ user-guide/command-line
 user-guide/protobuf-config
 user-guide/trace-formats
 user-guide/output-traces
+user-guide/redis-output
 user-guide/grpc-setup
 user-guide/client-server-use-cases
 user-guide/maintenance-and-warm-start
