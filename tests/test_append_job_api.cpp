@@ -122,6 +122,54 @@ void test_append_with_empty_trace() {
   std::cout << "  PASSED" << std::endl;
 }
 
+void test_appended_job_statuses() {
+  std::cout << "\n=== Appended-job status query ===" << std::endl;
+  Sim_Params params = make_params();
+  params.m_total_nodes = 10;
+  params.m_job_store_capacity = 2;
+  params.m_job_flush_interval = 1;
+  params.set_outfile("/tmp/test_job_status_out.csv");
+  Simulation sim(params);
+  sim.get_trace().load_data(0);
+
+  const auto ids = sim.append_jobs(
+      {{0.0, 10, kTestQueueInput, 10.0}, {0.0, 10, kTestQueueInput, 5.0}});
+  const auto rejected_id = sim.append_job(0.0, 11, kTestQueueInput, 5.0);
+  const auto rejected = sim.get_job_statuses({rejected_id}).front();
+  assert(rejected.state == Simulation::Job_State::REJECTED);
+  assert(!rejected.start_time && !rejected.end_time &&
+         !rejected.expected_start_time);
+  auto pending = sim.get_job_statuses({ids[1], ids[0], ids[1]});
+  assert(pending.size() == 3);
+  assert(pending[0].state == Simulation::Job_State::PENDING);
+  assert(pending[0].expected_start_time == 10.0);
+  assert(pending[1].expected_start_time == 0.0);
+  assert(pending[2].job_idx == ids[1]);
+
+  sim.advance_to(0.0);
+  auto active = sim.get_job_statuses(ids);
+  assert(active[0].state == Simulation::Job_State::RUNNING);
+  assert(active[0].start_time == 0.0 && active[0].end_time == 10.0);
+  assert(active[1].state == Simulation::Job_State::PENDING);
+  assert(active[1].expected_start_time == 10.0);
+
+  sim.advance_to(15.0);
+  sim.flush_completed_jobs();
+  auto completed = sim.get_job_statuses(ids);
+  assert(completed[0].state == Simulation::Job_State::COMPLETED);
+  assert(completed[1].state == Simulation::Job_State::COMPLETED);
+  assert(completed[1].start_time == 10.0 && completed[1].end_time == 15.0);
+
+  bool invalid_rejected = false;
+  try {
+    (void)sim.get_job_statuses({999});
+  } catch (const std::out_of_range &) {
+    invalid_rejected = true;
+  }
+  assert(invalid_rejected);
+  std::cout << "  PASSED" << std::endl;
+}
+
 // Test 2: reclaim-before-grow at the actual insertion point (append_job(),
 // not load_data() - see OUTPUT_TRACE_BUFFERS.md's "Reclaim at the point
 // of need" section for why load_data() itself never needs this).
@@ -1010,6 +1058,7 @@ int main() {
 
   try {
     test_append_with_empty_trace();
+    test_appended_job_statuses();
     test_append_reclaims_before_growing();
     test_append_rejects_past_submit_time();
     test_append_jobs_batch();

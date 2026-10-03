@@ -10,6 +10,7 @@ INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX:-$REPO_ROOT/install}"
 if [[ "$INSTALL_PREFIX" != /* ]]; then
     INSTALL_PREFIX="$REPO_ROOT/${INSTALL_PREFIX#./}"
 fi
+source "$SCRIPT_DIR/select_python.sh"
 
 supports_market_package() {
     command -v "$1" >/dev/null 2>&1 &&
@@ -28,16 +29,13 @@ find_dr_evt_module() {
 
     EXPECTED_EXTENSION=$("$python_bin" -c \
         'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX") or ".so")')
-    for module_dir in \
-        "$INSTALL_PREFIX/lib/python" \
-        "$INSTALL_PREFIX/lib64/python" \
-        "$REPO_ROOT/build"; do
+    while IFS= read -r module_dir; do
         candidate="$module_dir/dr_evt$EXPECTED_EXTENSION"
         if [[ -f "$candidate" ]]; then
             MODULE_DIR="$module_dir"
             return 0
         fi
-    done
+    done < <(python_install_module_dirs "$INSTALL_PREFIX"; printf '%s\n' "$REPO_ROOT/build")
 
     return 1
 }
@@ -48,8 +46,7 @@ report_missing_binding() {
 
     echo "Error: dr_evt cannot be imported by $python_bin" >&2
     echo "No matching dr_evt$extension was found under:" >&2
-    echo "  $INSTALL_PREFIX/lib/python" >&2
-    echo "  $INSTALL_PREFIX/lib64/python" >&2
+    python_install_module_dirs "$INSTALL_PREFIX" | sed 's/^/  /' >&2
     echo "  $REPO_ROOT/build" >&2
     echo "Build/install the Python bindings with the same interpreter, or set PYTHONPATH." >&2
 }
@@ -67,24 +64,22 @@ if [[ -n "${PYTHON_EXECUTABLE:-}" ]]; then
 else
     PYTHON_BIN=""
     FOUND_COMPATIBLE_PYTHON=0
-    for candidate in python3 python; do
-        if supports_market_package "$candidate"; then
+    while IFS=$'\t' read -r _ candidate_path; do
+        if supports_market_package "$candidate_path"; then
             FOUND_COMPATIBLE_PYTHON=1
-            candidate_path="$(command -v "$candidate")"
             if find_dr_evt_module "$candidate_path"; then
                 PYTHON_BIN="$candidate_path"
                 break
             fi
         fi
-    done
+    done < <(python_interpreter_candidates)
     if [[ -z "$PYTHON_BIN" ]]; then
         if [[ "$FOUND_COMPATIBLE_PYTHON" -eq 0 ]]; then
             echo "Error: dr_evt_market requires Python 3.10+; set PYTHON_EXECUTABLE" >&2
         else
             echo "Error: no Python 3.10+ interpreter has a matching dr_evt binding." >&2
             echo "Searched the configured PYTHONPATH and:" >&2
-            echo "  $INSTALL_PREFIX/lib/python" >&2
-            echo "  $INSTALL_PREFIX/lib64/python" >&2
+            python_install_module_dirs "$INSTALL_PREFIX" | sed 's/^/  /' >&2
             echo "  $REPO_ROOT/build" >&2
             echo "Build/install the bindings with a compatible interpreter, or set PYTHON_EXECUTABLE." >&2
         fi

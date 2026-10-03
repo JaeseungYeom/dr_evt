@@ -16,6 +16,11 @@ cd "$REPO_ROOT"
 
 # Source common simulator path finder
 source "$SCRIPT_DIR/set_simulator_path.sh"
+source "$SCRIPT_DIR/select_python.sh"
+if ! select_python_interpreter 3 6; then
+    echo "Error: Python 3.6 or newer is required" >&2
+    exit 1
+fi
 
 echo "=========================================="
 echo "Configuration File Tests"
@@ -194,7 +199,7 @@ fi
 # trace-file argument - see tests/test_protobuf_config_doc_examples.py's
 # own docstring for the full story).
 echo "Test 7: protobuf-config.md's own documented examples"
-if SIMULATOR="$SIMULATOR" python3 tests/test_protobuf_config_doc_examples.py \
+if SIMULATOR="$SIMULATOR" "$PYTHON_BIN" tests/test_protobuf_config_doc_examples.py \
     > "$TEST_WORK_DIR/doc_examples.log" 2>&1; then
     echo "  ✓ all documented config examples parse and run correctly"
     PASS=$((PASS + 1))

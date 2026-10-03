@@ -13,15 +13,23 @@ cd "$REPO_ROOT"
 # shellcheck source=tests/set_simulator_path.sh
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/set_simulator_path.sh"
+source "$SCRIPT_DIR/select_python.sh"
 
-for command_name in redis-server redis-cli python3; do
+for command_name in redis-server redis-cli; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "Error: required command not found: $command_name" >&2
         exit 1
     fi
 done
+if ! select_python_interpreter 3 6; then
+    echo "Error: Python 3.6 or newer is required" >&2
+    exit 1
+fi
 
-TEST_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/dr-evt-redis.XXXXXXXX")
+if ! TEST_WORK_DIR=$(mktemp -d \
+    "${TMPDIR:-/tmp}/dr-evt-redis.XXXXXXXX" 2>/dev/null); then
+    TEST_WORK_DIR=$(mktemp -d "/tmp/dr-evt-redis.XXXXXXXX")
+fi
 REDIS_PID=""
 
 cleanup() {
@@ -43,7 +51,7 @@ trap 'exit 130' INT TERM
 
 # Ask the kernel for an unused loopback port. Redis is started immediately
 # afterward, keeping the small bind/start race local to this isolated test.
-REDIS_PORT=${DR_EVT_TEST_REDIS_PORT:-$(python3 -c \
+REDIS_PORT=${DR_EVT_TEST_REDIS_PORT:-$("$PYTHON_BIN" -c \
     'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')}
 REDIS_HOST=127.0.0.1
 REDIS_URI="redis://${REDIS_HOST}:${REDIS_PORT}"

@@ -41,6 +41,7 @@ fi
 
 # Locate the installed simulator. This is shared with the other test scripts.
 source "$SCRIPT_DIR/set_simulator_path.sh"
+source "$SCRIPT_DIR/select_python.sh"
 
 # Check trace file exists
 if [[ ! -f "$TRACE_FILE" ]]; then
@@ -336,26 +337,31 @@ echo ""
 # not a byte-for-byte correctness comparison with the C++ output.
 PYTHON_TIME=""
 PYTHON_STATUS="unavailable"
-if command -v python3 > /dev/null 2>&1 && [[ -f "scripts/python_reference_scheduler.py" ]]; then
+if select_python_interpreter 3 6 && [[ -f "scripts/python_reference_scheduler.py" ]]; then
     echo "=========================================="
     echo "5. PYTHON REFERENCE: EASY backfilling"
     echo "=========================================="
 
-    PYTHON_OUT_DIR="/tmp/python_reference_benchmark"
-    mkdir -p "$PYTHON_OUT_DIR"
+    if ! PYTHON_OUT_DIR=$(mktemp -d \
+        "${TMPDIR:-/tmp}/dr-evt-python-reference.XXXXXXXX" 2>/dev/null); then
+        PYTHON_OUT_DIR=$(mktemp -d "/tmp/dr-evt-python-reference.XXXXXXXX")
+    fi
+    PYTHON_LOG="$PYTHON_OUT_DIR/python_reference.log"
     echo -n "Running... "
     START_TIME=$(date +%s%N)
-    if python3 scripts/python_reference_scheduler.py "$TRACE_FILE" \
+    if "$PYTHON_BIN" scripts/python_reference_scheduler.py "$TRACE_FILE" \
         --nodes "$TOTAL_NODES" \
         --outdir "$PYTHON_OUT_DIR" \
-        > /tmp/python_reference_log.txt 2>&1; then
+        > "$PYTHON_LOG" 2>&1; then
         END_TIME=$(date +%s%N)
         PYTHON_TIME=$(echo "scale=3; ($END_TIME - $START_TIME) / 1000000000" | bc)
         PYTHON_STATUS="reference only"
         echo "done (${PYTHON_TIME}s)"
     else
         PYTHON_STATUS="FAILED"
-        echo "FAILED (see /tmp/python_reference_log.txt)"
+        echo "FAILED"
+        sed 's/^/  /' "$PYTHON_LOG"
+        echo "  Full log: $PYTHON_LOG"
     fi
     echo "  Correctness: not byte-compared (different CSV schema)"
     echo ""
@@ -547,7 +553,12 @@ echo ""
 
 # Cleanup option
 echo "Temporary files in /tmp/:"
-echo "  baseline_*, block*_*.{csv,txt}, circular_*.{csv,txt}, multimap_*.{csv,txt}, python_reference_benchmark/"
+echo "  baseline_*, block*_*.{csv,txt}, circular_*.{csv,txt}, multimap_*.{csv,txt}"
+if [[ -n "${PYTHON_OUT_DIR:-}" ]]; then
+    echo "  $PYTHON_OUT_DIR/"
+fi
 echo ""
 echo "To clean up: rm /tmp/baseline_* /tmp/block* /tmp/circular_* /tmp/multimap_*"
-echo "             rm -rf /tmp/python_reference_benchmark"
+if [[ -n "${PYTHON_OUT_DIR:-}" ]]; then
+    echo "             rm -rf $PYTHON_OUT_DIR"
+fi

@@ -14,6 +14,7 @@ cd "$REPO_ROOT"
 
 # Source common simulator path finder
 source "$SCRIPT_DIR/set_simulator_path.sh"
+source "$SCRIPT_DIR/select_python.sh"
 
 TEST_WORK_DIR=$(mktemp -d "/tmp/dr-evt-fcfs-queues.XXXXXXXX")
 trap 'rm -rf -- "$TEST_WORK_DIR"' EXIT INT TERM
@@ -318,6 +319,10 @@ run_performance_tests() {
         echo "Error: scripts/python_reference_scheduler.py not found"
         return 1
     fi
+    if ! select_python_interpreter 3 6; then
+        echo "Error: Python 3.6 or newer is required"
+        return 1
+    fi
 
     # Test files - comprehensive and scale tests
     TEST_FILES=(
@@ -361,7 +366,7 @@ run_performance_tests() {
         python_out="$TEST_WORK_DIR/python_${test_name}.csv"
         fcfs_perf_out="$TEST_WORK_DIR/perf_fcfs_${test_name}.csv"
         alt_perf_out="$TEST_WORK_DIR/perf_alt_${test_name}.csv"
-        python3 scripts/python_reference_scheduler.py "$test_file" --nodes "$total_nodes" > "$python_out" 2>/dev/null
+        "$PYTHON_BIN" scripts/python_reference_scheduler.py "$test_file" --nodes "$total_nodes" > "$python_out" 2>/dev/null
         PYTHON_END=$(date +%s.%N)
         PYTHON_TIME=$(echo "$PYTHON_END - $PYTHON_START" | bc)
         printf "%8.4f sec\n" "$PYTHON_TIME"

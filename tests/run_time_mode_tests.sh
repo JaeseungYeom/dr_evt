@@ -25,6 +25,11 @@ cd "$REPO_ROOT"
 
 # Source common simulator path finder
 source "$SCRIPT_DIR/set_simulator_path.sh"
+source "$SCRIPT_DIR/select_python.sh"
+if ! select_python_interpreter 3 6; then
+    echo "Error: Python 3.6 or newer is required" >&2
+    exit 1
+fi
 
 echo "=========================================="
 echo "Run Time Mode Tests"
@@ -200,7 +205,7 @@ check_no_exceedance() {
         --outfile "$outfile" \
         > /dev/null 2>&1
 
-    python3 - "$outfile" "$dist" "$should_cap" "$EXPECTED_LARGE_JOBS" <<'PY'
+    "$PYTHON_BIN" - "$outfile" "$dist" "$should_cap" "$EXPECTED_LARGE_JOBS" <<'PY'
 import csv
 import sys
 

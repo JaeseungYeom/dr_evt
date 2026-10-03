@@ -57,6 +57,11 @@ cd "$ROOT_DIR"
 # Resolve an explicitly configured or installed simulator before falling back
 # to the repository build tree.
 source "$SCRIPT_DIR/set_simulator_path.sh"
+source "$SCRIPT_DIR/select_python.sh"
+if ! select_python_interpreter 3 6; then
+    echo "ERROR: Python 3.6 or newer is required" >&2
+    exit 1
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -113,7 +118,7 @@ echo "=== Comparing Results Against Expected ==="
 echo ""
 
 # Compare using Python
-python3 - "$OUTDIR/easy.csv" "$OUTDIR/conservative.csv" \
+"$PYTHON_BIN" - "$OUTDIR/easy.csv" "$OUTDIR/conservative.csv" \
     "$EXPECTED_EASY" "$EXPECTED_CONS" << 'PYTHON_SCRIPT'
 import csv
 import sys

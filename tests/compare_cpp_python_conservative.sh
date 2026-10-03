@@ -31,34 +31,17 @@ echo ""
 
 # Check prerequisites
 source "$SCRIPT_DIR/set_simulator_path.sh"
+source "$SCRIPT_DIR/select_python.sh"
 
 if [ ! -f "./scripts/python_conservative_scheduler.py" ]; then
     echo -e "${RED}Error: Python conservative scheduler not found${NC}"
     exit 1
 fi
 
-# The reference uses the standard-library dataclasses module (Python >= 3.7).
-# On some LC allocations `python` and `python3` resolve to different module
-# installations, so do not assume the unversioned python3 is suitable.
-PYTHON_BIN="${PYTHON_EXECUTABLE:-}"
-if [ -n "$PYTHON_BIN" ]; then
-    if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 || \
-       ! "$PYTHON_BIN" -c 'import dataclasses' >/dev/null 2>&1; then
-        echo -e "${RED}Error: PYTHON_EXECUTABLE does not provide Python 3.7+ with dataclasses: $PYTHON_BIN${NC}"
-        exit 1
-    fi
-else
-    for candidate in python3 python python3.13 python3.12 python3.11 \
-        python3.10 python3.9 python3.8 python3.7; do
-        if command -v "$candidate" >/dev/null 2>&1 && \
-           "$candidate" -c 'import dataclasses' >/dev/null 2>&1; then
-            PYTHON_BIN=$(command -v "$candidate")
-            break
-        fi
-    done
-fi
-if [ -z "$PYTHON_BIN" ]; then
-    echo -e "${RED}Error: no Python 3.7+ interpreter with dataclasses was found${NC}"
+# Select by the actual interpreter version: python can be newer than python3
+# on LC systems. Python 3.7 supplies the dataclasses module used here.
+if ! select_python_interpreter 3 7; then
+    echo -e "${RED}Error: no Python 3.7+ interpreter was found${NC}"
     exit 1
 fi
 
