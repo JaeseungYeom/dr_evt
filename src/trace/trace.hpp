@@ -916,6 +916,17 @@ protected:
   /// Write and clear file lines accumulated by one reclaim/final-write
   /// operation. If sync is true, also flush the underlying ostream buffer.
   void flush_simulated_trace_buffer(bool sync);
+
+  /** @brief Reset policy-owned runtime aggregates before checkpoint restore. */
+  void reset_policy_runtime_state() { this->reset_runtime_state(); }
+
+  /**
+   * @brief Rebuild policy-owned runtime aggregates for one restored job.
+   * @param[in] job Restored job that is currently running.
+   */
+  void restore_policy_running_job(const typename Policy::record_type &job) {
+    this->on_start(job);
+  }
 };
 
 /// Experimental trace carrying Pcon values in both job and resource records.

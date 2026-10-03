@@ -202,8 +202,9 @@ simulation is constructed with equivalent cost and selection callbacks. The
 checkpoint restores its queue entries, previously computed costs, candidate
 state, and accounting without invoking the cost callback during load; callback
 objects and their externally owned state are not serialized. Custom scheduler
-subclasses remain unsupported because they may add unknown state. Pcon traces,
-replay/warm-start execution, and progressive file loading are also rejected.
+subclasses remain unsupported because they may add unknown state. Standard and
+Pcon traces are supported; replay/warm-start execution and progressive file
+loading are rejected.
 
 ### `run_until_exclusive(target_time)`
 
