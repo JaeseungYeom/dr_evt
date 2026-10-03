@@ -10,6 +10,7 @@
 #include "trace/epoch.hpp"
 #include "trace/parse_utils.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iterator>
 #include <stdexcept>
@@ -185,5 +186,72 @@ bool RedisOutput::resource_trace_active() const {
 }
 
 const std::string &RedisOutput::key_prefix() const { return m_impl->prefix; }
+
+RedisCheckpointBoundary RedisOutput::checkpoint_boundary() {
+  RedisCheckpointBoundary result;
+  const auto job_bytes = m_impl->redis.strlen(m_impl->prefix + ":csv");
+  result.job_csv_bytes = static_cast<std::uint64_t>(job_bytes);
+  result.resource_trace_active = m_impl->resource_trace_initialized;
+  if (result.resource_trace_active) {
+    result.resource_csv_bytes = static_cast<std::uint64_t>(
+        m_impl->redis.strlen(m_impl->prefix + ":resources:csv"));
+    result.resource_count = m_impl->next_resource_id;
+  }
+  m_impl->redis.smembers(m_impl->prefix + ":job_ids",
+                         std::back_inserter(result.job_ids));
+  std::sort(result.job_ids.begin(), result.job_ids.end());
+  return result;
+}
+
+std::uint64_t RedisOutput::archive_checkpoint_namespace(
+    const std::string &uri, const std::string &key_prefix,
+    const RedisCheckpointBoundary &boundary) {
+  sw::redis::Redis redis(uri);
+  std::uint64_t generation = 1;
+  std::string archive;
+  do {
+    archive = key_prefix + ":pre-restart:" + std::to_string(generation++);
+  } while (redis.exists(archive + ":checkpoint:job_csv_bytes") != 0);
+  --generation;
+
+  std::vector<std::string> job_ids;
+  redis.smembers(key_prefix + ":job_ids", std::back_inserter(job_ids));
+  std::vector<std::string> resource_ids;
+  redis.zrange(key_prefix + ":resources:by_time", 0, -1,
+               std::back_inserter(resource_ids));
+  const std::array<std::string, 7> fixed_suffixes{
+      ":csv",          ":job_ids",       ":by_submit", ":by_start",
+      ":by_completion", ":by_resources", ":resources:csv"};
+  for (const auto &suffix : fixed_suffixes) {
+    if (redis.exists(key_prefix + suffix) != 0) {
+      redis.rename(key_prefix + suffix, archive + suffix);
+    }
+  }
+  if (redis.exists(key_prefix + ":resources:by_time") != 0) {
+    redis.rename(key_prefix + ":resources:by_time",
+                 archive + ":resources:by_time");
+  }
+  for (const auto &id : job_ids) {
+    redis.rename(key_prefix + ":job:" + id, archive + ":job:" + id);
+  }
+  for (const auto &id : resource_ids) {
+    redis.rename(key_prefix + ":resource:" + id,
+                 archive + ":resource:" + id);
+  }
+
+  auto transaction = redis.transaction(false);
+  transaction
+      .set(archive + ":checkpoint:job_csv_bytes",
+           std::to_string(boundary.job_csv_bytes))
+      .set(archive + ":checkpoint:resource_csv_bytes",
+           std::to_string(boundary.resource_csv_bytes))
+      .set(archive + ":checkpoint:resource_count",
+           std::to_string(boundary.resource_count));
+  for (const auto &id : boundary.job_ids) {
+    transaction.sadd(archive + ":checkpoint:job_ids", id);
+  }
+  transaction.exec();
+  return generation;
+}
 
 } // namespace dr_evt

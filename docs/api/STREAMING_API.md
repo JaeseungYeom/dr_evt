@@ -194,20 +194,21 @@ The checkpoint includes resident job records, appended-job status history,
 scheduler queue state, running jobs, pending events, capacity and statistics
 accounting, resource history, and the random-number generator. If incremental
 output files were open, they are flushed when saved and reopened in append mode
-when loaded. The checkpoint does not contain those output files or their saved
-lengths, and loading it does not truncate output written after the checkpoint.
-To roll a run back to an older checkpoint, preserve the simulated-job and
-resource-history files together with that checkpoint and restore those file
-versions before loading it. Otherwise, resumed output is appended after stale
-post-checkpoint rows and may be duplicated or inconsistent with the restored
-simulation state.
+when loaded. For file output, the checkpoint stores each flushed byte boundary.
+Loading it renames the current file to `<path>.pre-restart.N`, records the
+boundary in an adjacent `.checkpoint-bytes` sidecar, and starts a fresh segment
+at the original path.
 
-The intended output-recovery workflow is to archive the complete pre-restart
-output, for either a file destination or a Redis namespace, and write resumed
-output to a new segment. A companion stitching tool must then retain the
-archived output only through the checkpoint's committed boundary and append
-the post-restart segment. That automatic archive-and-stitch workflow is not
-implemented yet.
+After the resumed run, reconstruct either output with:
+
+```bash
+dr_evt_stitch_checkpoint_output output.csv output.stitched.csv
+```
+
+The tool discovers all numbered archives, retains each only through its saved
+checkpoint boundary, removes repeated CSV headers, and atomically writes the
+combined result. For Redis, rebuild the canonical namespace in place with
+`dr_evt_stitch_checkpoint_output --redis-uri URI --redis-prefix PREFIX`.
 
 Checkpoint/restart is compiled when `DR_EVT_WITH_SER20=ON`. Checkpoints are
 Ser20 binary, same-build artifacts rather than a portable exchange format. The
@@ -218,11 +219,10 @@ checkpoint restores its queue entries, previously computed costs, candidate
 state, and accounting without invoking the cost callback during load; callback
 objects and their externally owned state are not serialized. Custom scheduler
 subclasses remain unsupported because they may add unknown state. Standard and
-Pcon traces are supported; replay/warm-start execution and progressive file
-loading are rejected. A simulation configured to use Redis as its output sink
-rejects checkpoint save/load because Redis output cannot currently be archived
-and restored to the checkpoint boundary. This does not affect
-`get_job_statuses()`, which is independent of Redis.
+Pcon traces and progressive file loading are supported; replay/warm-start
+execution remains unsupported. Redis namespaces are archived as numbered
+`PREFIX:pre-restart:N` generations and rebuilt by the same stitch tool.
+`get_job_statuses()` remains independent of Redis.
 
 ### `run_until_exclusive(target_time)`
 

@@ -16,6 +16,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace dr_evt {
 
@@ -44,6 +45,15 @@ struct RedisResourceRecord {
   num_nodes_t free_nodes;              ///< Available nodes at @p time.
   num_nodes_t allocated_nodes;         ///< Allocated nodes at @p time.
   std::optional<RedisPconValues> pcon; ///< Pcon values when enabled.
+};
+
+/** Redis output position captured only when a checkpoint is requested. */
+struct RedisCheckpointBoundary {
+  std::uint64_t job_csv_bytes = 0;      ///< Committed job CSV byte count.
+  std::uint64_t resource_csv_bytes = 0; ///< Committed resource CSV byte count.
+  std::uint64_t resource_count = 0;     ///< Committed resource sample count.
+  std::vector<std::string> job_ids;     ///< Committed job hashes/index members.
+  bool resource_trace_active = false;   ///< Whether resource output exists.
 };
 
 /** Writes simulated-job and resource-history output to Redis. */
@@ -145,6 +155,24 @@ public:
 
   /** @return Redis namespace prefix owned by this output sink. */
   const std::string &key_prefix() const;
+
+  /**
+   * @brief Capture the committed Redis output boundary.
+   * @return CSV sizes, resource count, and job IDs at checkpoint time.
+   */
+  RedisCheckpointBoundary checkpoint_boundary();
+
+  /**
+   * @brief Archive the canonical namespace and record its saved boundary.
+   * @param[in] uri Redis++ connection URI.
+   * @param[in] key_prefix Canonical namespace to archive.
+   * @param[in] boundary Boundary captured in the loaded checkpoint.
+   * @return Number assigned to the new pre-restart generation.
+   */
+  static std::uint64_t
+  archive_checkpoint_namespace(const std::string &uri,
+                               const std::string &key_prefix,
+                               const RedisCheckpointBoundary &boundary);
 
 private:
   /** @return Mutable Redis++ connection used to construct transactions. */

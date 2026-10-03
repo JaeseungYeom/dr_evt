@@ -263,24 +263,23 @@ checkpoint even when the corresponding trace record has been reclaimed.
 
 ## Checkpoint/restart and output rollback
 
-Checkpoint/restart does not roll output back to the saved boundary. With
-file-based output, loading a checkpoint reopens the existing simulated-job and
-resource-history files in append mode; it does not remove rows written after
-that checkpoint. To restore an older checkpoint safely, preserve matching
-copies of those files at checkpoint time and restore them before loading the
-checkpoint.
+Checkpoint output remains external to the binary snapshot. File-backed restart
+renames the existing file as an immutable
+`.pre-restart.N` segment, writes resumed output to a fresh file, and provides
+`dr_evt_stitch_checkpoint_output` to join the segments at their saved byte
+boundaries. Redis restart similarly renames the canonical namespace to
+`PREFIX:pre-restart:N` and starts a fresh canonical namespace. Rebuild its CSV
+values, hashes, sets, and sorted indexes after the resumed run with:
 
-A simulation whose output sink is Redis (that is, one initialized with
-`redis_uri` and `redis_key_prefix`) currently rejects checkpoint save/load
-entirely because Redis output cannot yet be restored to the checkpoint
-boundary.
+```bash
+dr_evt_stitch_checkpoint_output --redis-uri URI --redis-prefix PREFIX
+```
 
-The intended behavior for both storage backends is the same: restart will
-rename the existing file or Redis namespace as an immutable pre-restart
-segment, write resumed output to a fresh destination, and provide a stitching
-tool that discards the archived segment's rows after the checkpoint boundary
-before joining it to the resumed segment. This automated workflow is not yet
-implemented.
+The Redis operation rebuilds the canonical namespace in place and removes the
+consumed archived namespaces after it succeeds.
+
+In both modes, rows written after the saved checkpoint remain in the archive
+for auditability but are excluded by the recorded boundary during stitching.
 
 These output limitations are unrelated to job-status queries.
 `get_job_statuses()` works with Redis off or on, and its retained status

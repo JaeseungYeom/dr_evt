@@ -41,6 +41,8 @@ The owning fixtures and runner commands are listed in
   from output and statistics.
 - `analyze_trace_performance.py` — summary performance analysis.
 - `calculate_resource_trace.py` — derive resource occupancy from a schedule.
+- `stitch_checkpoint_output.py` — reconstruct file-backed output from archived
+  segments, or rebuild archived Redis CSV values, hashes, sets, and indexes.
 - `trace/detect_abnormality.awk` — flag anomalous trace records.
 - `trace/plot/resource_time.py` — plot resource use over time.
 - `trace/plot/t_exec_limit.py` and `t_exec_limit2.py` — plot execution time

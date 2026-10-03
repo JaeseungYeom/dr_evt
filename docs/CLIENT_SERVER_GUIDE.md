@@ -55,14 +55,12 @@ is compiled or configured.
 
 Checkpoint requests use Ser20 and require a server built with
 `DR_EVT_WITH_SER20=ON`; otherwise the server returns an error response. Save
-and load are currently rejected when that simulation is configured to write
-output to Redis, independently of whether status queries are used. File output
-is reopened in append mode after a load, but is not rolled back: when restoring
-an older checkpoint, the corresponding output-file versions must also be
-restored to avoid retaining or duplicating post-checkpoint rows. The planned
-recovery workflow will archive the pre-restart file or Redis namespace and use
-a stitching tool to merge it with post-restart output at the saved boundary;
-that workflow is not yet implemented.
+and load archive configured file or Redis output independently of whether
+status queries are used. File output is archived into numbered pre-restart
+segments on load; use
+`dr_evt_stitch_checkpoint_output` after the resumed run to reconstruct output
+at the checkpoint boundary. For Redis, pass `--redis-uri` and `--redis-prefix`
+to rebuild the canonical namespace.
 
 For a replay-based warm start, set `InitRequest.sim_start_time` to a positive
 global simulation boundary, provide a replay-format `infile`, and send

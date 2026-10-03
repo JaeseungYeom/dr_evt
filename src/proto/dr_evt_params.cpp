@@ -65,6 +65,12 @@ set_sim_options(const dr_evt_proto::DR_EVT_Params::Simulation_Params &cfg,
 
   sp.m_redis_uri = cfg.redis_uri();
   sp.m_redis_key_prefix = cfg.redis_key_prefix();
+  sp.m_checkpoint_file = cfg.checkpoint_file();
+  sp.m_checkpoint_interval_jobs = cfg.checkpoint_interval_jobs();
+  if (sp.m_checkpoint_file.empty() && sp.m_checkpoint_interval_jobs != 0) {
+    throw std::runtime_error(
+        "checkpoint_interval_jobs requires checkpoint_file");
+  }
   if (sp.m_redis_uri.empty() != sp.m_redis_key_prefix.empty()) {
     throw std::runtime_error(
         "redis_uri and redis_key_prefix must be specified together");

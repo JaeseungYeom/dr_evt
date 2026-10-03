@@ -111,6 +111,11 @@ message DR_EVT_Params {
         // DR_EVT_WITH_REDIS=ON.
         string redis_uri = 32;
         string redis_key_prefix = 33;
+
+        // Automatic checkpoint destination and completed-job cadence.
+        // Progressive loading also checkpoints at each input-file boundary.
+        string checkpoint_file = 34;
+        uint64 checkpoint_interval_jobs = 35;
     }
 
     message Tracing_Params {
