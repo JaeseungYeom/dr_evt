@@ -19,7 +19,7 @@ for comparison, testing, and research.
 
 ## Benchmark record
 
-This record was collected in September 2026 using
+This record was collected in October 2026 using
 [`tests/test_traces/scale/huge_10000jobs.csv`](https://github.com/LLNL/dr_evt/blob/main/tests/test_traces/scale/huge_10000jobs.csv)
 (10,001 jobs), 500 nodes, and
 FCFS with EASY backfilling on an Intel Sapphire Rapids node (112 cores,
@@ -35,19 +35,21 @@ attributed solely to queue operations.
 
 ![Mean end-to-end runtime relative to deque; lower is better.](../_static/wait-queue-benchmark.svg)
 
-| Implementation | Time (s) | Relative to deque |
-| --- | ---: | --- |
-| `deque` | 3.160 ± 0.083 | baseline |
-| `multimap` | 27.840 ± 0.024 | 781% slower (8.81× slowdown) |
-| **`circular`** | **0.805 ± 0.006** | **75% less elapsed time (3.93× speedup)** |
-| `block`-4 | 4.741 ± 0.004 | 50% slower (1.50× slowdown) |
-| `block`-8 | 4.288 ± 0.004 | 36% slower (1.36× slowdown) |
-| `block`-16 | 3.961 ± 0.003 | 25% slower (1.25× slowdown) |
-| `block`-32 | 4.056 ± 0.005 | 28% slower (1.28× slowdown) |
-| `block`-64 | 4.354 ± 0.002 | 38% slower (1.38× slowdown) |
-| `block`-128 | 4.388 ± 0.007 | 39% slower (1.39× slowdown) |
-| `block`-256 | 4.716 ± 0.006 | 49% slower (1.49× slowdown) |
-| Python reference | 7.675 ± 0.052 | 143% slower (2.43× slowdown) |
+| Implementation | Time (s) | vs deque | Change | Peak queue | Correctness |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `deque` | 0.4735 ± 0.0173 | 1.00× | baseline | 8,904 | baseline |
+| `multimap` | 7.4367 ± 0.0420 | 15.71× | +1,471% | 8,904 | PASS |
+| **`circular`** | **0.3238 ± 0.0035** | **0.68×** | **−32%** | **8,904** | **PASS** |
+| Python reference | 7.5574 ± 0.0124 | 15.96× | +1,496% | N/A | PASS |
+| `block`-4 | 0.4293 ± 0.0022 | 0.91× | −9% | 8,904 | PASS |
+| `block`-8 | 0.3753 ± 0.0005 | 0.79× | −21% | 8,904 | PASS |
+| `block`-16 | 0.3570 ± 0.0006 | 0.75× | −25% | 8,904 | PASS |
+| `block`-32 | 0.3837 ± 0.0014 | 0.81× | −19% | 8,904 | PASS |
+| `block`-64 | 0.3978 ± 0.0022 | 0.84× | −16% | 8,904 | PASS |
+| `block`-128 | 0.4197 ± 0.0021 | 0.89× | −11% | 8,904 | PASS |
+| `block`-256 | 0.4350 ± 0.0036 | 0.92× | −8% | 8,904 | PASS |
+
+`circular` was fastest overall, and `block`-16 was the fastest block size.
 
 The 10 runs produced identical simulated-job output across every measured C++
 queue variant, including `multimap`. The Python reference is an end-to-end

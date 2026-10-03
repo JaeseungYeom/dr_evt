@@ -42,6 +42,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
 TRACE="$SCRIPT_DIR/test_traces/feature/easy_vs_conservative_test.csv"
 EXPECTED_EASY="$SCRIPT_DIR/test_traces/feature/easy_vs_conservative_expected_easy.csv"
 EXPECTED_CONS="$SCRIPT_DIR/test_traces/feature/easy_vs_conservative_expected_conservative.csv"
@@ -50,7 +52,8 @@ NODES=100
 if ! OUTDIR="$(mktemp -d "${TMPDIR:-/tmp}/dr-evt-easy-vs-conservative.XXXXXXXX" 2>/dev/null)"; then
     OUTDIR="$(mktemp -d "/tmp/dr-evt-easy-vs-conservative.XXXXXXXX")"
 fi
-trap 'rm -rf -- "$OUTDIR"' EXIT INT TERM
+cleanup() { rm -rf -- "$OUTDIR"; }
+test_report_set_cleanup cleanup
 
 cd "$ROOT_DIR"
 

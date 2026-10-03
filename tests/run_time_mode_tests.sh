@@ -20,6 +20,8 @@ set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
 
 cd "$REPO_ROOT"
 
@@ -40,7 +42,8 @@ echo ""
 PASS=0
 FAIL=0
 TEST_WORK_DIR=$(mktemp -d "/tmp/dr-evt-runtime-modes.XXXXXXXX")
-trap 'rm -rf -- "$TEST_WORK_DIR"' EXIT INT TERM
+cleanup() { rm -rf -- "$TEST_WORK_DIR"; }
+test_report_set_cleanup cleanup
 
 # Use a trace where actual_run_time differs from time_limit
 # Job 1: time_limit=200, actual_run_time=50

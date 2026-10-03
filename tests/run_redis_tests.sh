@@ -8,6 +8,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
 cd "$REPO_ROOT"
 
 # shellcheck source=tests/set_simulator_path.sh
@@ -33,7 +35,7 @@ fi
 REDIS_PID=""
 
 cleanup() {
-    exit_code=$?
+    exit_code="${1:-$?}"
     if [ -n "$REDIS_PID" ]; then
         kill "$REDIS_PID" 2>/dev/null || true
         wait "$REDIS_PID" 2>/dev/null || true
@@ -46,8 +48,7 @@ cleanup() {
     fi
     rm -rf -- "$TEST_WORK_DIR"
 }
-trap cleanup EXIT
-trap 'exit 130' INT TERM
+test_report_set_cleanup cleanup
 
 # Ask the kernel for an unused loopback port. Redis is started immediately
 # afterward, keeping the small bind/start race local to this isolated test.

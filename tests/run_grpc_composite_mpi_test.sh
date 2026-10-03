@@ -6,6 +6,9 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+SCRIPT_DIR="$REPO_ROOT/tests"
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
 INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX:-"$REPO_ROOT/install"}
 if [[ "$INSTALL_PREFIX" != /* ]]; then
     INSTALL_PREFIX="$REPO_ROOT/${INSTALL_PREFIX#./}"

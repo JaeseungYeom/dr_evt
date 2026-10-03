@@ -9,6 +9,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
 cd "$REPO_ROOT"
 
 INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX:-$REPO_ROOT/install}"
@@ -37,7 +39,7 @@ cleanup() {
     fi
     rm -rf "$RUN_DIR"
 }
-trap cleanup EXIT
+test_report_set_cleanup cleanup
 
 (cd "$RUN_DIR" && exec "$SERVER" "127.0.0.1:${PORT}") \
     >"$RUN_DIR/server.log" 2>&1 &

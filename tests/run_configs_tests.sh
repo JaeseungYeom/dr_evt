@@ -11,6 +11,8 @@ set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
 
 cd "$REPO_ROOT"
 
@@ -34,6 +36,7 @@ echo ""
 if ! $SIMULATOR --help 2>&1 | grep -q -- "--config"; then
     echo "Simulator built without Protobuf support (no --config option)"
     echo "Skipping config tests (require -DDR_EVT_ENABLE_PROTOBUF=ON)"
+    test_report_skip "simulator was built without Protobuf support"
     exit 0
 fi
 
@@ -48,7 +51,8 @@ fi
 PASS=0
 FAIL=0
 TEST_WORK_DIR=$(mktemp -d "/tmp/dr-evt-config.XXXXXXXX")
-trap 'rm -rf -- "$TEST_WORK_DIR"' EXIT INT TERM
+cleanup() { rm -rf -- "$TEST_WORK_DIR"; }
+test_report_set_cleanup cleanup
 
 # Test 1: Minimal config vs CLI
 echo "Test 1: Minimal config"

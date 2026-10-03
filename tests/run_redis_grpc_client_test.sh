@@ -5,6 +5,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
 INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX:-$REPO_ROOT/install}"
 if [[ "$INSTALL_PREFIX" != /* ]]; then
     INSTALL_PREFIX="$REPO_ROOT/${INSTALL_PREFIX#./}"
@@ -25,7 +27,7 @@ cleanup() {
     fi
     rm -rf -- "$TEST_WORK_DIR"
 }
-trap cleanup EXIT INT TERM
+test_report_set_cleanup cleanup
 
 SERVER_BIN=${DR_EVT_SERVER:-"$INSTALL_PREFIX/bin/dr_evt_server"}
 CLIENT_BIN=${DR_EVT_CLIENT:-"$INSTALL_PREFIX/bin/dr_evt_client"}

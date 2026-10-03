@@ -11,6 +11,10 @@
 
 set -e
 
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
+
 USE_VALGRIND=0
 if [ "${1:-}" = "--valgrind" ]; then
     USE_VALGRIND=1
@@ -21,7 +25,6 @@ if [ "$#" -ne 0 ]; then
     exit 2
 fi
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$SCRIPT_DIR/.."
 
 cd "$REPO_ROOT"
@@ -41,7 +44,8 @@ echo ""
 PASS=0
 FAIL=0
 TEST_WORK_DIR=$(mktemp -d "/tmp/dr-evt-replay.XXXXXXXX")
-trap 'rm -rf -- "$TEST_WORK_DIR"' EXIT INT TERM
+cleanup() { rm -rf -- "$TEST_WORK_DIR"; }
+test_report_set_cleanup cleanup
 
 RUN_PREFIX=()
 if [ "$USE_VALGRIND" -eq 1 ]; then

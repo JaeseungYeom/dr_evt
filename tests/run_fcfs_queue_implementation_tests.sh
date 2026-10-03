@@ -9,6 +9,8 @@ set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
 
 cd "$REPO_ROOT"
 
@@ -17,7 +19,8 @@ source "$SCRIPT_DIR/set_simulator_path.sh"
 source "$SCRIPT_DIR/select_python.sh"
 
 TEST_WORK_DIR=$(mktemp -d "/tmp/dr-evt-fcfs-queues.XXXXXXXX")
-trap 'rm -rf -- "$TEST_WORK_DIR"' EXIT INT TERM
+cleanup() { rm -rf -- "$TEST_WORK_DIR"; }
+test_report_set_cleanup cleanup
 
 # Parse command-line options
 MODE="both"  # Default: run both tests

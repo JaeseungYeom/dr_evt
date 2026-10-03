@@ -46,14 +46,24 @@ all registered with CTest:
 ./tests/run_progressive_load_tests.sh
 ./tests/run_configs_tests.sh
 ./tests/run_python_tests.sh
-./tests/run_warm_start_validation_tests.sh \
-  "${CMAKE_INSTALL_PREFIX}/bin/simulator"
-./tests/run_max_time_tests.sh "${CMAKE_INSTALL_PREFIX}/bin/simulator"
+./tests/run_warm_start_validation_tests.sh
+./tests/run_max_time_tests.sh
 ./tests/run_grpc_tests.sh
 ./tests/run_backfill_window_grpc_test.sh
 python3 tests/test_grpc_single_coordinator.py \
   "${CMAKE_INSTALL_PREFIX}/bin/dr_evt_server"
 ```
+
+Every shell runner ends with one machine-readable, ANSI-free status line:
+
+```text
+<<<<<<<<<<<<<<<< TEST RESULT: PASS | run_unit_tests >>>>>>>>>>>>>>>>
+<<<<<<<<<<<<<<<< TEST RESULT: FAIL | run_unit_tests | exit=1 >>>>>>>>>>>>>>>>
+<<<<<<<<<<<<<<<< TEST RESULT: SKIP | run_configs_tests | simulator was built without Protobuf support >>>>>>>>>>>>>>>>
+```
+
+Detailed per-case output remains above that line. The shared reporter also
+covers early failures and runs each suite's temporary-file cleanup first.
 
 Python-driven shell runners source `select_python.sh`. Unless
 `PYTHON_EXECUTABLE` is set explicitly, it probes both `python` and `python3`
