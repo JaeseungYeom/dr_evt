@@ -220,8 +220,12 @@ if(NOT Boost_FOUND)
         program_options serialization graph multi_index circular_buffer)
     set(BOOST_ENABLE_CMAKE ON)
 
-    # Suppress compiler warnings from third-party Boost code
+    # Suppress compiler warnings from third-party Boost C and C++ code.
+    # SYSTEM include directories only affect consumers of Boost headers; they
+    # do not silence diagnostics while Boost's own sources are compiled.
+    set(_dr_evt_saved_c_flags "${CMAKE_C_FLAGS}")
     set(_dr_evt_saved_cxx_flags "${CMAKE_CXX_FLAGS}")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w")
 
     if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.28)
@@ -238,7 +242,9 @@ if(NOT Boost_FOUND)
                          EXCLUDE_FROM_ALL)
     endif()
 
+    set(CMAKE_C_FLAGS "${_dr_evt_saved_c_flags}")
     set(CMAKE_CXX_FLAGS "${_dr_evt_saved_cxx_flags}")
+    unset(_dr_evt_saved_c_flags)
     unset(_dr_evt_saved_cxx_flags)
 
     # Modern CMake 3.24+: Boost imported targets (Boost::component) are automatically created

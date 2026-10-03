@@ -39,10 +39,28 @@ endif ()
 # Muck with flags
 ################################################################
 
-if (${DR_EVT_GPROF})
-  set (COMPILER_OPT_FOR_GPROF "-pg")
-  set (DR_EVT_PERF_PROF ON)
-endif (${DR_EVT_GPROF})
+if (DR_EVT_GPROF)
+  # check_cxx_compiler_flag compiles and links its probe, so this verifies
+  # that -pg is accepted at both stages required by gprof instrumentation.
+  set(CMAKE_REQUIRED_LIBRARIES "-pg")
+  check_cxx_compiler_flag("-pg" DR_EVT_GPROF_FLAG_SUPPORTED)
+  unset(CMAKE_REQUIRED_LIBRARIES)
+  if (NOT DR_EVT_GPROF_FLAG_SUPPORTED)
+    message(FATAL_ERROR
+      "DR_EVT_GPROF=ON requires a compiler and linker that support -pg")
+  endif ()
+
+  # Keep optimized profiling representative while preventing whole-program
+  # and identical-code folding from merging unrelated C++ template symbols.
+  # Such merging makes gprof attribute samples to an arbitrary alias (for
+  # example, a circular-buffer allocation to a BlockWaitQueue symbol).
+  set(COMPILER_OPT_FOR_GPROF -pg -fno-lto)
+  if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    list(APPEND COMPILER_OPT_FOR_GPROF -fno-ipa-icf)
+  endif ()
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
+endif ()
 
 # Initialize C++ flags
 dr_evt_check_and_append_flag(CMAKE_CXX_FLAGS

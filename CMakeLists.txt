@@ -124,6 +124,20 @@ option(DR_EVT_WITH_SER20 "Include Ser20" ON)
 
 option(DR_EVT_WITH_OPENMP "Enable OpenMP" OFF)
 
+option(DR_EVT_GPROF
+  "Build with gprof instrumentation (-pg); requires static libraries" OFF)
+
+# GNU gprof does not collect useful call-graph or time samples for code in
+# shared libraries.  Keep the cached BUILD_SHARED_LIBS preference intact for
+# subsequent non-gprof configurations, but make every library created during
+# this configure static so the profiled code is linked into the executables.
+if (DR_EVT_GPROF AND BUILD_SHARED_LIBS)
+  message(STATUS
+    "DR_EVT_GPROF=ON requires static libraries; using BUILD_SHARED_LIBS=OFF "
+    "for this configuration")
+  set(BUILD_SHARED_LIBS OFF)
+endif ()
+
 option(DR_EVT_WITH_REDIS
   "Enable Redis output support through redis-plus-plus" OFF)
 
@@ -214,6 +228,9 @@ option(DR_EVT_ENABLE_PROTOBUF "Enable Protobuf support" OFF)
 # Setup gRPC client/server (optional - requires DR_EVT_ENABLE_PROTOBUF=ON,
 # since the gRPC service definition is itself a .proto file)
 option(DR_EVT_ENABLE_GRPC "Enable gRPC client/server support" OFF)
+
+option(DR_EVT_INSTALL_FETCHED_GRPC
+  "Install fetched gRPC, Protobuf, Abseil, and supporting libraries" OFF)
 
 # Select the trace-file queue representation at configure time. Legacy mode
 # keeps existing `queue`-name traces compatible; ID mode reads `q_id` only.
@@ -1159,7 +1176,9 @@ append_str_tf(_str
   DR_EVT_HAS_DOXYGEN
   DR_EVT_HAS_OPENMP
   DR_EVT_HAS_NUMA
-  DR_EVT_HAS_PROTOBUF)
+  DR_EVT_HAS_PROTOBUF
+  DR_EVT_INSTALL_FETCHED_GRPC
+  DR_EVT_GPROF)
 string(APPEND _str
   "\n== End DR_EVT Configuration Summary ==\n")
 
@@ -1196,9 +1215,43 @@ install(FILES "${CMAKE_BINARY_DIR}/dr_evt_module.lua.install"
 if(DR_EVT_HAS_PYBIND11)
   message(STATUS "Building Python bindings...")
 
-  pybind11_add_module(dr_evt_python
+  # Let CMake select the compiler's supported IPO flags before pybind11
+  # creates the module.  In particular, modern CMake uses GCC's
+  # parallel-capable -flto=auto instead of pybind11's plain -flto.
+  set(DR_EVT_PYTHON_IPO_WAS_UNDEFINED FALSE)
+  if(NOT DEFINED CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT DR_EVT_PYTHON_IPO_SUPPORTED
+                        OUTPUT DR_EVT_PYTHON_IPO_ERROR
+                        LANGUAGES CXX)
+    if(DR_EVT_PYTHON_IPO_SUPPORTED)
+      set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+    else()
+      set(CMAKE_INTERPROCEDURAL_OPTIMIZATION FALSE)
+      message(WARNING
+        "IPO is unavailable for the Python module: "
+        "${DR_EVT_PYTHON_IPO_ERROR}")
+    endif()
+    set(DR_EVT_PYTHON_IPO_WAS_UNDEFINED TRUE)
+  endif()
+
+  # pybind11 enables LTO as one of its default "extras" in Release builds.
+  # Suppress those extras for gprof so every target follows the profiling-safe
+  # no-LTO policy established by SetupCXX.cmake.
+  set(DR_EVT_PYBIND11_OPTIONS)
+  if(DR_EVT_GPROF)
+    list(APPEND DR_EVT_PYBIND11_OPTIONS NO_EXTRAS)
+  endif()
+  pybind11_add_module(dr_evt_python ${DR_EVT_PYBIND11_OPTIONS}
     python/dr_evt_bindings.cpp
   )
+  unset(DR_EVT_PYBIND11_OPTIONS)
+  if(DR_EVT_PYTHON_IPO_WAS_UNDEFINED)
+    unset(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+  endif()
+  unset(DR_EVT_PYTHON_IPO_WAS_UNDEFINED)
+  unset(DR_EVT_PYTHON_IPO_SUPPORTED)
+  unset(DR_EVT_PYTHON_IPO_ERROR)
 
   target_link_libraries(dr_evt_python PRIVATE dr_evt)
 
