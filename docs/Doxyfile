@@ -47,8 +47,10 @@ EXTRACT_LOCAL_CLASSES  = YES
 # reference as well.
 EXTRACT_ANON_NSPACES   = YES
 
-# Source browsing
-SOURCE_BROWSER         = YES
+# Source listings and Graphviz output are not consumed by Breathe. Generating
+# them substantially increases the Read the Docs post-install time while the
+# published Sphinx site uses only Doxygen's declaration XML.
+SOURCE_BROWSER         = NO
 INLINE_SOURCES         = NO
 STRIP_CODE_COMMENTS    = NO
 
@@ -70,16 +72,16 @@ PREDEFINED             = DR_EVT_HAS_SER20=1 \
 EXCLUDE_SYMBOLS        = seed_hashable
 
 # Diagrams
-HAVE_DOT               = YES
-CLASS_DIAGRAMS         = YES
-COLLABORATION_GRAPH    = YES
-CALL_GRAPH             = YES
-CALLER_GRAPH           = YES
-GRAPHICAL_HIERARCHY    = YES
-DIRECTORY_GRAPH        = YES
-
-DOT_IMAGE_FORMAT       = svg
-INTERACTIVE_SVG        = YES
+# The XML-only Breathe build does not publish Doxygen's generated diagrams.
+# In particular, whole-project call and caller graphs can exceed the hosted
+# documentation build timeout.
+HAVE_DOT               = NO
+CLASS_DIAGRAMS         = NO
+COLLABORATION_GRAPH    = NO
+CALL_GRAPH             = NO
+CALLER_GRAPH           = NO
+GRAPHICAL_HIERARCHY    = NO
+DIRECTORY_GRAPH        = NO
 
 # Index generation
 ALPHABETICAL_INDEX     = YES
