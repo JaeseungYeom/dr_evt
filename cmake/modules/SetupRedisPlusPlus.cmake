@@ -15,9 +15,22 @@ if (AVOID_SYSTEM_REDIS_PLUS_PLUS)
   list(APPEND DR_EVT_REDIS_PLUS_PLUS_FIND_OPTIONS NO_DEFAULT_PATH)
 endif ()
 
-find_package(redis++ CONFIG QUIET
-  HINTS ${CMAKE_PREFIX_PATH}
-  ${DR_EVT_REDIS_PLUS_PLUS_FIND_OPTIONS})
+# An installed redis++ package delegates hiredis discovery through
+# find_dependency(), which is fatal even when redis++ itself was requested
+# QUIETly. Probe that dependency first using this project's Findhiredis module,
+# which supports systems that provide only the hiredis headers and library. If
+# hiredis is genuinely unavailable, skip the unusable installed redis++ package
+# so normal fetched-source handling can report or resolve the dependency.
+find_package(hiredis QUIET)
+if (hiredis_FOUND)
+  find_package(redis++ CONFIG QUIET
+    HINTS ${CMAKE_PREFIX_PATH}
+    ${DR_EVT_REDIS_PLUS_PLUS_FIND_OPTIONS})
+else ()
+  message(STATUS
+    "hiredis CMake package not found; skipping installed redis-plus-plus "
+    "package discovery")
+endif ()
 unset(DR_EVT_REDIS_PLUS_PLUS_FIND_OPTIONS)
 
 if (TARGET redis++::redis++)

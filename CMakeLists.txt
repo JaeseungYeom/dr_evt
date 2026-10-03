@@ -2,6 +2,17 @@ cmake_minimum_required(VERSION 3.24)
 
 project(DR_EVT CXX)
 
+# Single-config generators otherwise leave CMAKE_BUILD_TYPE empty, which
+# produces an unoptimized build. Use Release by default without affecting an
+# explicit selection or multi-config generators such as Visual Studio.
+if (NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the build type" FORCE)
+endif ()
+if (NOT CMAKE_CONFIGURATION_TYPES)
+  set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+    Debug Release RelWithDebInfo MinSizeRel)
+endif ()
+
 # Resolve the platform's install layout before any install or RPATH variable
 # is used. The cached CMAKE_INSTALL_LIBDIR value is also inherited by
 # dependencies added with FetchContent.
