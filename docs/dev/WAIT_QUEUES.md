@@ -51,8 +51,8 @@ attributed solely to queue operations.
 
 The 10 runs produced identical simulated-job output across every measured C++
 queue variant, including `multimap`. The Python reference is an end-to-end
-baseline, but is not byte-compared with C++ because it emits a different CSV
-schema.
+baseline. Its CSV schema is normalized before its job order and start/end times
+are compared with the C++ `deque` schedule using a `0.001` tolerance.
 
 Run the same benchmark with:
 
@@ -61,8 +61,8 @@ tests/benchmark_block_sizes.sh
 ```
 
 The script tests `deque`, `multimap`, `circular`, every supported `block` size,
-and the Python reference. It compares the C++ queue outputs with `deque` for
-correctness.
+and the Python reference. It byte-compares the C++ queue outputs with `deque`
+and compares the normalized Python schedule with `deque` within `0.001`.
 
 The unit and differential coverage is listed under
 [Wait-queue tests](https://github.com/LLNL/dr_evt/blob/main/tests/README.md#wait-queue-tests).

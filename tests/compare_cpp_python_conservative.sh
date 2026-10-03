@@ -9,7 +9,7 @@
 # Compare C++ vs Python Conservative Backfilling Implementations
 #
 # This script runs both implementations on the same trace and verifies
-# that they produce identical schedules.
+# that they produce equivalent schedules within the configured time tolerance.
 
 set -e
 
@@ -144,86 +144,12 @@ if [ "$PY_TIME" -gt 0 ] && [ "$CPP_TIME" -gt 0 ]; then
     echo ""
 fi
 
-# Compare schedules
+# Compare schedules with the same schema-normalizing comparator used by the
+# EASY benchmark.
 echo -e "${YELLOW}Comparing schedules...${NC}"
 
-if "$PYTHON_BIN" - "$PYTHON_OUT" "$CPP_OUT" << 'PYTHON_COMPARE'
-import sys
-import csv
-
-def load_schedule(filename):
-    """Load schedule and return sorted list of (job_id, start_time, end_time)"""
-    jobs = []
-    try:
-        with open(filename, 'r') as f:
-            reader = csv.DictReader(f)
-            for idx, row in enumerate(reader):
-                # Handle various column name formats
-                job_id_str = row.get('job_idx', row.get('job_id', row.get('idx', '')))
-                if job_id_str and job_id_str != '':
-                    job_id = int(job_id_str)
-                else:
-                    # No job ID column - use row index
-                    job_id = idx
-
-                start_str = row.get('start_time', row.get('begin_time', ''))
-                start_time = float(start_str) if start_str and start_str != '' else None
-
-                end_str = row.get('end_time', '')
-                end_time = float(end_str) if end_str and end_str != '' else None
-
-                if start_time is not None and end_time is not None:
-                    jobs.append((job_id, start_time, end_time))
-    except Exception as e:
-        print(f"Error loading {filename}: {e}")
-        return None
-
-    return sorted(jobs)
-
-try:
-    python_file = sys.argv[1]
-    cpp_file = sys.argv[2]
-
-    python_jobs = load_schedule(python_file)
-    cpp_jobs = load_schedule(cpp_file)
-
-    if python_jobs is None or cpp_jobs is None:
-        sys.exit(1)
-
-    if len(python_jobs) != len(cpp_jobs):
-        print(f"ERROR: Job count mismatch - Python: {len(python_jobs)}, C++: {len(cpp_jobs)}")
-        sys.exit(1)
-
-    mismatches = []
-    for i, (p_job, c_job) in enumerate(zip(python_jobs, cpp_jobs)):
-        p_id, p_start, p_end = p_job
-        c_id, c_start, c_end = c_job
-
-        if p_id != c_id:
-            mismatches.append(f"Job {i}: ID mismatch - Python: {p_id}, C++: {c_id}")
-        elif abs(p_start - c_start) > 0.001 or abs(p_end - c_end) > 0.001:
-            mismatches.append(f"Job {p_id}: Time mismatch")
-            mismatches.append(f"  Python: start={p_start:.3f}, end={p_end:.3f}")
-            mismatches.append(f"  C++:    start={c_start:.3f}, end={c_end:.3f}")
-            mismatches.append(f"  Diff:   start={c_start-p_start:+.3f}, end={c_end-p_end:+.3f}")
-
-    if mismatches:
-        print("MISMATCHES FOUND:")
-        for m in mismatches[:20]:  # Show first 20
-            print(f"  {m}")
-        if len(mismatches) > 20:
-            print(f"  ... and {len(mismatches)-20} more")
-        sys.exit(1)
-    else:
-        print(f"✓ MATCH: {len(python_jobs)} jobs, all schedules IDENTICAL")
-        sys.exit(0)
-
-except Exception as e:
-    print(f"ERROR: {e}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
-PYTHON_COMPARE
+if "$PYTHON_BIN" tests/compare_scheduler_outputs.py \
+    "$PYTHON_OUT" "$CPP_OUT" --tolerance 0.001
 then
     COMPARE_RESULT=0
 else
@@ -236,7 +162,7 @@ if [ $COMPARE_RESULT -eq 0 ]; then
     echo -e "${GREEN}✅ VERIFICATION PASSED${NC}"
     echo -e "${GREEN}======================================================================${NC}"
     echo ""
-    echo "C++ and Python conservative implementations produce IDENTICAL schedules"
+    echo "C++ and Python conservative schedules agree within 0.001"
     echo ""
     echo "Summary:"
     echo "  Jobs compared: $PYTHON_JOBS"

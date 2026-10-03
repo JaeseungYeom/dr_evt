@@ -170,7 +170,9 @@ directly exercises the block queue at every supported block size.
 runs the end-to-end performance and output-equivalence benchmark documented in
 [Wait Queues](../docs/dev/WAIT_QUEUES.md#benchmark-record). Its workload is
 [`test_traces/scale/huge_10000jobs.csv`](test_traces/scale/huge_10000jobs.csv);
-the differential runner uses the
+it byte-compares every C++ queue output with `deque` and compares the normalized
+Python EASY schedule with `deque` using a `0.001` time tolerance. The
+differential runner uses the
 [`scheduler_correctness`](test_traces/scheduler_correctness/) fixtures.
 
 ### Streaming API tests

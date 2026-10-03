@@ -65,7 +65,7 @@ if ! redis-cli -h 127.0.0.1 -p "$REDIS_PORT" PING 2>/dev/null |
     exit 1
 fi
 
-(cd "$REPO_ROOT" && exec "$SERVER_BIN" "127.0.0.1:$SERVER_PORT") \
+(cd "$TEST_WORK_DIR" && exec "$SERVER_BIN" "127.0.0.1:$SERVER_PORT") \
     >"$TEST_WORK_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 sleep 1
