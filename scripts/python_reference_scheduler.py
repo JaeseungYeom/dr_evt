@@ -29,34 +29,30 @@ This is the REFERENCE implementation for verifying DR_EVT.
 import csv
 import sys
 import os
-from dataclasses import dataclass
 from typing import List, Optional, Dict
 import heapq
 
-@dataclass
 class Job:
     """Job record"""
-    idx: int
-    submit_time: float
-    nodes: int
-    duration: float  # time_limit (what scheduler sees for planning)
-    actual_run_time: Optional[float] = None  # actual run time (<= duration), defaults to duration
 
-    # Simulation results (filled in by scheduler)
-    start_time: Optional[float] = None
-    end_time: Optional[float] = None
+    def __init__(self, idx: int, submit_time: float, nodes: int,
+                 duration: float, actual_run_time: Optional[float] = None):
+        self.idx = idx
+        self.submit_time = submit_time
+        self.nodes = nodes
+        self.duration = duration
+        self.actual_run_time = (duration if actual_run_time is None
+                                else actual_run_time)
+        self.start_time = None
+        self.end_time = None
 
-    def __post_init__(self):
-        # Default actual_run_time to duration if not specified
-        if self.actual_run_time is None:
-            self.actual_run_time = self.duration
-
-@dataclass
 class Event:
     """Simulation event"""
-    time: float
-    type: str  # 'SUBMIT', 'START', 'END'
-    job_idx: int
+
+    def __init__(self, time: float, event_type: str, job_idx: int):
+        self.time = time
+        self.type = event_type  # 'SUBMIT', 'START', 'END'
+        self.job_idx = job_idx
 
     def __lt__(self, other):
         # Sort by time first, then END before SUBMIT (freeing nodes takes
