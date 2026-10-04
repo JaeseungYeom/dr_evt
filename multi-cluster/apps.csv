@@ -1,8 +1,0 @@
-#app,sys_requirement
-amg,CPU-only
-kripke.exe,GPU-portable
-xsbench,GPU-portable
-laghos,GPU-portable
-minife.x,GPU-portable
-minivite,CPU-only
-testdfft,CPU-only

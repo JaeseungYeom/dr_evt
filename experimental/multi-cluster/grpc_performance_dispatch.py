@@ -47,9 +47,8 @@ def read_arrivals(path):
     """Read and validate a chronologically ordered streaming job trace."""
     stream, reader = csv_reader(path)
     with stream:
-        require_fields(
-            path, reader, ("job_submit_time", "num_nodes", "time_limit")
-        )
+        submit_field = "submit_time" if "submit_time" in reader.fieldnames else "job_submit_time"
+        require_fields(path, reader, (submit_field, "num_nodes", "time_limit"))
         duration_field = (
             "actual_run_time"
             if "actual_run_time" in reader.fieldnames
@@ -61,7 +60,7 @@ def read_arrivals(path):
         for index, row in enumerate(reader):
             job = {
                 "job_id": (row.get("job_id") or str(index)).strip(),
-                "submit_time": float(row["job_submit_time"]),
+                "submit_time": float(row[submit_field]),
                 "num_nodes": int(row["num_nodes"]),
                 "queue": (row.get(QUEUE_FIELD) or DEFAULT_QUEUE_INPUT).strip(),
                 "duration": float(row[duration_field]),
@@ -79,7 +78,7 @@ def read_arrivals(path):
                 raise ValueError(f"{path}: job {job['job_id']} has invalid data")
             jobs.append(job)
     if any(a["submit_time"] > b["submit_time"] for a, b in zip(jobs, jobs[1:])):
-        raise ValueError(f"{path}: jobs must be sorted by job_submit_time")
+        raise ValueError(f"{path}: jobs must be sorted by submit_time")
     return jobs
 
 
@@ -141,7 +140,7 @@ def read_systems(path):
 
 def parse_performance(path, row_number, row, column):
     """Return one optional positive relative-performance value."""
-    if column is None or not row[column].strip():
+    if not row[column].strip():
         return None
     value = float(row[column])
     if not math.isfinite(value) or value <= 0:
@@ -151,102 +150,104 @@ def parse_performance(path, row_number, row, column):
     return value
 
 
-def detect_baseline(path, row_number, row):
-    """Find a row's explicit, Quartz, or other unit-valued baseline."""
-    if row.get("baseline_system", "").strip():
-        return row["baseline_system"].strip()
-    if row.get("quartz", "").strip() == "1.0":
-        return "quartz"
-    baseline = None
-    for name, text in row.items():
-        if name in {"app", "args", "ranks", "baseline_system"} or not text.strip():
-            continue
-        try:
-            is_baseline = float(text) == 1.0
-        except ValueError:
-            continue
-        if is_baseline:
-            if baseline is not None:
-                raise ValueError(
-                    f"{path}: row {row_number}: ambiguous performance baseline"
-                )
-            baseline = name
-    if baseline is None:
-        raise ValueError(
-            f"{path}: row {row_number}: cannot identify a baseline value of 1.0"
-        )
-    return baseline
-
-
-def read_workloads(path, systems, requirements):
-    """Read, validate, and group unique runnable workloads by application."""
+def read_performance_table(path, columns):
+    """Read one performance table indexed by its workload identity."""
     stream, reader = csv_reader(path)
     with stream:
-        require_fields(path, reader, ("app", "args", "ranks"))
-        columns = []
-        for system in systems:
-            columns.append(system["cpu_column"])
-            if system["gpu_column"]:
-                columns.append(system["gpu_column"])
-        require_fields(path, reader, columns)
-
-        workloads = {}
-        identities = {}
-        unavailable_rows = 0
+        names = set(reader.fieldnames or ())
+        identity_fields = tuple(
+            upper if upper in names else lower
+            for upper, lower in (("App", "app"), ("Args", "args"), ("Ranks", "ranks"))
+        )
+        require_fields(path, reader, (*identity_fields, *columns))
+        rows = {}
         for row_number, row in enumerate(reader, start=2):
-            app = row["app"].strip()
-            if app not in requirements:
-                raise ValueError(f"{path}: no sys_requirement for app {app}")
-            workload = {
-                "app": app,
-                "args": row["args"],
-                "ranks": int(row["ranks"]),
-                "baseline_system": detect_baseline(path, row_number, row),
-                "sys_requirement": requirements[app],
-                "performance": [],
-            }
-            if not app or workload["ranks"] <= 0:
+            identity = (
+                row[identity_fields[0]].strip(),
+                row[identity_fields[1]],
+                int(row[identity_fields[2]]),
+            )
+            if not identity[0] or identity[2] <= 0:
                 raise ValueError(f"{path}: invalid workload at row {row_number}")
+            if identity in rows:
+                raise ValueError(f"{path}: duplicate workload {identity}")
+            rows[identity] = {
+                column: parse_performance(path, row_number, row, column)
+                for column in columns
+            }
+    return rows
 
-            runnable = False
-            for system in systems:
-                performance = {
-                    "CPU": parse_performance(
-                        path, row_number, row, system["cpu_column"]
-                    ),
-                    "GPU": parse_performance(
-                        path, row_number, row, system["gpu_column"]
-                    ),
-                }
-                if workload["sys_requirement"] == "CPU-only":
-                    runnable = runnable or performance["CPU"] is not None
-                elif workload["sys_requirement"] == "GPU-only":
-                    runnable = runnable or performance["GPU"] is not None
-                else:
-                    runnable = runnable or any(
-                        value is not None for value in performance.values()
+
+def read_workloads(ground_truth_path, prediction_path, systems, requirements):
+    """Read, validate, and group unique runnable workloads by application."""
+    columns = []
+    for system in systems:
+        columns.append(system["cpu_column"])
+        if system["gpu_column"]:
+            columns.append(system["gpu_column"])
+    ground_truth = read_performance_table(ground_truth_path, columns)
+    prediction = read_performance_table(prediction_path, columns)
+    if ground_truth.keys() != prediction.keys():
+        missing_prediction = ground_truth.keys() - prediction.keys()
+        missing_truth = prediction.keys() - ground_truth.keys()
+        raise ValueError(
+            "ground-truth and prediction workload identities differ "
+            f"(missing prediction: {len(missing_prediction)}, missing ground truth: {len(missing_truth)})"
+        )
+
+    workloads = {}
+    unavailable_rows = 0
+    for identity, truth_values in ground_truth.items():
+        app, workload_args, ranks = identity
+        if app not in requirements:
+            raise ValueError(
+                f"{ground_truth_path}: no sys_requirement for app {app}"
+            )
+        workload = {
+            "app": app,
+            "args": workload_args,
+            "ranks": ranks,
+            "sys_requirement": requirements[app],
+            "performance": [],
+        }
+        runnable = False
+        for system in systems:
+            performance = {}
+            for mode, column in (
+                ("CPU", system["cpu_column"]),
+                ("GPU", system["gpu_column"]),
+            ):
+                if column is None:
+                    performance[mode] = None
+                    continue
+                actual = truth_values[column]
+                predicted = prediction[identity][column]
+                if (actual is None) != (predicted is None):
+                    raise ValueError(
+                        f"incomplete {column} pair for workload {identity}"
                     )
-                workload["performance"].append(performance)
-            if not runnable:
-                unavailable_rows += 1
-                continue
-
-            identity = (workload["app"], workload["args"], workload["ranks"])
-            if identity not in identities:
-                samples = workloads.setdefault(app, [])
-                identities[identity] = (app, len(samples))
-                samples.append(workload)
+                performance[mode] = (
+                    None
+                    if actual is None
+                    else {"ground_truth": actual, "predicted": predicted}
+                )
+            if workload["sys_requirement"] == "CPU-only":
+                runnable = runnable or performance["CPU"] is not None
+            elif workload["sys_requirement"] == "GPU-only":
+                runnable = runnable or performance["GPU"] is not None
             else:
-                selected_app, selected_index = identities[identity]
-                selected = workloads[selected_app][selected_index]
-                if (
-                    selected["baseline_system"] != "quartz"
-                    and workload["baseline_system"] == "quartz"
-                ):
-                    workloads[selected_app][selected_index] = workload
+                runnable = runnable or any(
+                    value is not None for value in performance.values()
+                )
+            workload["performance"].append(performance)
+        if not runnable:
+            unavailable_rows += 1
+            continue
+
+        workloads.setdefault(app, []).append(workload)
 
     if not workloads:
-        raise ValueError(f"{path}: workload table has no runnable rows")
+        raise ValueError("performance tables have no runnable rows")
     if unavailable_rows:
         print(
             f"Skipped {unavailable_rows} workload rows with no measurement "
@@ -289,7 +290,7 @@ def estimate_wait(window, required_nodes, runtime, prediction_horizon):
 
 
 def execution_performance(workload, system, index):
-    """Return the compatible execution mode and performance for one system."""
+    """Return the compatible execution mode and performance pair."""
     performance = workload["performance"][index]
     requirement = workload["sys_requirement"]
     if requirement == "CPU-only":
@@ -306,7 +307,7 @@ def execution_performance(workload, system, index):
         for mode in ("CPU", "GPU")
         if performance[mode] is not None
     ]
-    return max(candidates, key=lambda item: item[1], default=None)
+    return max(candidates, key=lambda item: item[1]["predicted"], default=None)
 
 
 def choose_system(job, workload, systems, windows, horizons):
@@ -321,20 +322,27 @@ def choose_system(job, workload, systems, windows, horizons):
         if execution is None:
             continue
         mode, performance = execution
-        duration = job["duration"] / performance
-        adjusted_limit = job["limit_time"] / performance
-        wait = estimate_wait(window, job["num_nodes"], adjusted_limit, horizon)
+        predicted_speedup = performance["predicted"]
+        ground_truth_speedup = performance["ground_truth"]
+        predicted_duration = job["duration"] / predicted_speedup
+        actual_duration = job["duration"] / ground_truth_speedup
+        predicted_limit = job["limit_time"] / predicted_speedup
+        actual_limit = job["limit_time"] / ground_truth_speedup
+        wait = estimate_wait(window, job["num_nodes"], predicted_limit, horizon)
         if math.isfinite(wait):
             candidates.append(
                 {
                     "index": index,
                     "system_id": system["system_id"],
                     "execution_mode": mode,
-                    "relative_performance": performance,
+                    "ground_truth_relative_performance": ground_truth_speedup,
+                    "predicted_relative_performance": predicted_speedup,
                     "estimated_wait": wait,
-                    "estimated_duration": duration,
-                    "adjusted_time_limit": adjusted_limit,
-                    "predicted_turnaround": wait + duration,
+                    "estimated_duration": predicted_duration,
+                    "actual_duration": actual_duration,
+                    "predicted_time_limit": predicted_limit,
+                    "actual_time_limit": actual_limit,
+                    "predicted_turnaround": wait + predicted_duration,
                 }
             )
     if not candidates:
@@ -368,7 +376,7 @@ def run_experiment(args, grpc, pb, service):
         raise ValueError("--systems must contain exactly one row per --server")
     jobs = read_arrivals(args.jobs)
     requirements = read_applications(args.applications)
-    workloads = read_workloads(args.workload_table, systems, requirements)
+    workloads = read_workloads(args.ground_truth, args.prediction, systems, requirements)
     generator = random.Random(args.seed)
     largest_system = max(system["capacity"] for system in systems)
     sessions = [ServerSession(address, grpc, pb, service) for address in args.server]
@@ -435,8 +443,8 @@ def run_experiment(args, grpc, pb, service):
                             submit_time=job["submit_time"],
                             num_nodes=job["num_nodes"],
                             queue=job["queue"],
-                            limit_time=choice["adjusted_time_limit"],
-                            actual_run_time=choice["estimated_duration"],
+                            limit_time=choice["actual_time_limit"],
+                            actual_run_time=choice["actual_duration"],
                         )
                     ]
                 )
@@ -459,17 +467,19 @@ def run_experiment(args, grpc, pb, service):
                         "App": workload["app"],
                         "Args": workload["args"],
                         "Ranks": workload["ranks"],
-                        "baseline_system": workload["baseline_system"],
                         "sys_requirement": workload["sys_requirement"],
                         **{
                             key: choice[key]
                             for key in (
                                 "system_id",
                                 "execution_mode",
-                                "relative_performance",
+                                "ground_truth_relative_performance",
+                                "predicted_relative_performance",
                                 "estimated_wait",
                                 "estimated_duration",
-                                "adjusted_time_limit",
+                                "actual_duration",
+                                "predicted_time_limit",
+                                "actual_time_limit",
                                 "predicted_turnaround",
                             )
                         },
@@ -504,14 +514,16 @@ def write_results(stream, decisions):
         "App",
         "Args",
         "Ranks",
-        "baseline_system",
         "sys_requirement",
         "system_id",
         "execution_mode",
-        "relative_performance",
+        "ground_truth_relative_performance",
+        "predicted_relative_performance",
         "estimated_wait",
         "estimated_duration",
-        "adjusted_time_limit",
+        "actual_duration",
+        "predicted_time_limit",
+        "actual_time_limit",
         "predicted_turnaround",
         "job_idx",
     )
@@ -534,7 +546,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--server", action="append", required=True)
     parser.add_argument("--jobs", required=True, type=pathlib.Path)
-    parser.add_argument("--workload-table", required=True, type=pathlib.Path)
+    parser.add_argument("--ground-truth", required=True, type=pathlib.Path)
+    parser.add_argument("--prediction", required=True, type=pathlib.Path)
     parser.add_argument("--applications", required=True, type=pathlib.Path)
     parser.add_argument("--systems", required=True, type=pathlib.Path)
     parser.add_argument("--seed", type=int, default=0)
