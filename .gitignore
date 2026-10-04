@@ -78,3 +78,6 @@ python/dr_evt_market/learn/output/
 
 # Local job traces, never committed
 python/dr_evt_market/lc_traces/
+
+# Local multi-cluster experiment inputs and generated results
+/multi-cluster/

@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 
 
-def run_dispatch(command, output):
+def run_dispatch(command, output, expected_jobs):
     result = subprocess.run(
         command + ["--output", str(output)],
         check=False,
@@ -35,7 +35,7 @@ def run_dispatch(command, output):
         submitted, completed = map(int, match.groups())
         assert submitted == completed
         total += submitted
-    assert total == 60
+    assert total == expected_jobs
     return output.read_bytes()
 
 
@@ -73,14 +73,15 @@ def main():
             writer.writerow(
                 (
                     "job_id",
-                    "job_submit_time",
+                    "submit_time",
                     "num_nodes",
                     "time_limit",
-                    "actual_run_time",
+                    "duration",
                 )
             )
-            for index in range(60):
-                nodes = (1, 16, 26, 27, 64, 300)[index % 6]
+            node_counts = (1, 16, 26, 27, 30, 31, 64, 65, 300)
+            for index in range(63):
+                nodes = node_counts[index % len(node_counts)]
                 writer.writerow((f"job-{index}", index * 10, nodes, 120, 80))
 
         command = [
@@ -90,8 +91,10 @@ def main():
             executable,
             "--jobs",
             str(jobs),
-            "--workload-table",
-            str(fixture_dir / "workload_table.csv"),
+            "--ground-truth",
+            str(fixture_dir / "ground_truth.csv"),
+            "--prediction",
+            str(fixture_dir / "prediction.csv"),
             "--applications",
             str(fixture_dir / "applications.csv"),
             "--systems",
@@ -101,11 +104,14 @@ def main():
         ]
         first = temp_dir / "first.csv"
         second = temp_dir / "second.csv"
-        assert run_dispatch(command, first) == run_dispatch(command, second)
+        expected_jobs = 63
+        assert run_dispatch(command, first, expected_jobs) == run_dispatch(
+            command, second, expected_jobs
+        )
 
         with first.open(newline="") as stream:
             rows = list(csv.DictReader(stream))
-        assert len(rows) == 60
+        assert len(rows) == expected_jobs
         assert {row["App"] for row in rows} == set(requirements)
         for row in rows:
             original_nodes = int(row["num_nodes"])
@@ -119,15 +125,20 @@ def main():
                 assert gpu_system and mode == "GPU"
             elif not gpu_system:
                 assert mode == "CPU"
-            performance = float(row["relative_performance"])
+            ground_truth = float(row["ground_truth_relative_performance"])
+            predicted = float(row["predicted_relative_performance"])
             duration = float(row["duration"])
             limit = float(row["time_limit"])
             estimated = float(row["estimated_duration"])
-            adjusted_limit = float(row["adjusted_time_limit"])
+            actual = float(row["actual_duration"])
+            predicted_limit = float(row["predicted_time_limit"])
+            actual_limit = float(row["actual_time_limit"])
             turnaround = float(row["predicted_turnaround"])
             wait = float(row["estimated_wait"])
-            assert abs(estimated - duration / performance) < 1e-9
-            assert abs(adjusted_limit - limit / performance) < 1e-9
+            assert abs(estimated - duration / predicted) < 1e-9
+            assert abs(actual - duration / ground_truth) < 1e-9
+            assert abs(predicted_limit - limit / predicted) < 1e-9
+            assert abs(actual_limit - limit / ground_truth) < 1e-9
             assert abs(turnaround - (wait + estimated)) < 1e-9
 
 

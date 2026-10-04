@@ -243,7 +243,7 @@ bool Data_Columns::check_header(const std::string &fname) {
         "Ambiguous trace format: has one of begin_time/end_time but not both");
   }
 
-  // time_limit and actual_run_time each accept multiple column-name
+  // Submission time, time_limit, and actual_run_time accept column-name
   // aliases, so an existing trace can be reused without editing its
   // header (which is slow to do by hand on a large file). Only one of
   // each alias set is expected to actually be present; if more than one
@@ -274,6 +274,8 @@ bool Data_Columns::check_header(const std::string &fname) {
 
   static const std::vector<std::string> time_limit_aliases = {
       "time_limit", "timelimit", "walltime"};
+  static const std::vector<std::string> submit_time_aliases = {
+      "job_submit_time", "submit_time"};
   static const std::vector<std::string> actual_run_time_aliases = {
       "actual_run_time", "actual_runtime", "duration", "actual_duration",
       "run_time"};
@@ -294,7 +296,7 @@ bool Data_Columns::check_header(const std::string &fname) {
     m_cols_to_read = {{find_column({"num_nodes"}), "num_nodes"},
                       {find_column({"begin_time"}), "begin_time"},
                       {find_column({"end_time"}), "end_time"},
-                      {find_column({"job_submit_time"}), "job_submit_time"},
+                      {find_column(submit_time_aliases), "job_submit_time"},
                       {find_column(time_limit_aliases), "time_limit"}};
 #if DR_EVT_LEGACY_QUEUE_INPUT
     if (m_has_queue_column) {
@@ -319,7 +321,7 @@ bool Data_Columns::check_header(const std::string &fname) {
   } else {
     // Simulation mode: no begin_time or end_time
     col_no_t num_nodes_idx = find_column({"num_nodes"});
-    col_no_t submit_time_idx = find_column({"job_submit_time"});
+    col_no_t submit_time_idx = find_column(submit_time_aliases);
     col_no_t time_limit_idx = find_column(time_limit_aliases);
 
     m_cols_to_read = {{num_nodes_idx, "num_nodes"},

@@ -58,7 +58,8 @@ cmake --install build
 ### Simulation
 
 `simulator` reads job submissions and invokes the selected scheduler. Its
-minimum input fields are `job_submit_time`, `num_nodes`, and `time_limit`.
+minimum input fields are `job_submit_time` (or `submit_time`), `num_nodes`,
+and `time_limit` (also accepted as `timelimit` or `walltime`).
 `time_limit` is always the scheduler's estimate for reservation planning. The
 job's execution duration is selected separately with `--run_time_mode`:
 

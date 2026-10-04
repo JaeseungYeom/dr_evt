@@ -1,0 +1,7 @@
+App,Args,Ranks,dane,mammoth,matrix-cpu,matrix-gpu,tioga-cpu,tioga-gpu,tuolumne-cpu,tuolumne-gpu
+cpu-solver,--mesh-small,32,0.9,1.3,0.8,,1.1,,1.0,
+cpu-solver,--mesh-large,128,0.9,1.1,0.8,,0.7,,1.0,
+gpu-trainer,--batch-64,64,,,,0.9,,1.1,,1.3
+portable-md,--size-small,32,0.9,1.0,0.8,1.5,0.9,1.1,1.0,1.2
+portable-md,--size-medium,64,0.8,1.1,0.9,1.2,1.0,1.4,1.1,1.3
+portable-md,--size-large,128,0.8,0.9,0.7,1.0,0.9,1.1,1.0,1.3
