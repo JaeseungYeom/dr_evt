@@ -24,12 +24,12 @@ used:
 | Priority policy | FCFS |
 | Wait queue | `circular` (`boost::circular_buffer`) |
 | Backfilling | EASY |
-| Runtime mode | `limit` |
+| Runtime mode | `actual` |
 | System size | 142,167 nodes |
 | Trace format | `simple` |
 | Timestamp format | `epoch` |
 
-The profile was captured on October 3, 2026, on the LLNL Dane system with an
+The profile was captured on October 4, 2026, on the LLNL Dane system with an
 Intel Xeon Platinum 8480+ processor. The build was an optimized Release build
 with debug information. The capture was launched through the temporary
 wrapper; its expanded simulator command was equivalent to:
@@ -44,17 +44,15 @@ perf record -F 999 -g --call-graph dwarf -- \
   --max_jobs 50000 \
   --trace_format simple \
   --timestamp_format epoch \
-  --run_time_mode limit \
+  --run_time_mode actual \
   --backfill_policy easy \
   --outfile /tmp/circular_output.csv \
   --resource_trace /tmp/circular_resources.csv
 perf report --stdio -i perf.data > analysis.txt
 ```
 
-The recording covered 4.340 seconds, collected approximately 4,000 `cycles`
-samples representing 16.52 billion cycles, and lost no samples. The simulator
-accounted for 97.76% of recorded cycles; the remaining 2.24% was principally
-the wrapper and process-management overhead.
+The recording covered 3.442 seconds, collected approximately 3,000 `cycles`
+samples representing 12.97 billion cycles, and lost no samples.
 
 Percentages below use all recorded cycles as the denominator. `Children` is
 inclusive cost and therefore overlaps with callees; `Self` is time sampled in
@@ -62,23 +60,22 @@ the named function itself. Inclusive rows must not be added indiscriminately.
 
 ## Scheduler-level breakdown
 
-`CircularBufferFCFSScheduler::schedule()` accounted for 85.61% of all
-recorded cycles, or 87.57% of cycles attributed to the simulator. Its call
-tree divides almost exactly into three parts:
+`CircularBufferFCFSScheduler::schedule()` accounted for 84.41% of all
+recorded cycles. Its call tree divides into three parts:
 
 | Scheduler work | All recorded cycles | Share of scheduler |
 | --- | ---: | ---: |
-| Calculate the FCFS reservation | 39.11% | 45.7% |
-| Copy and destroy the effective running-job tree | 37.31% | 43.6% |
-| Direct scheduler work | 9.19% | 10.7% |
+| Copy and destroy the effective running-job tree | 45.96% | 54.4% |
+| Calculate the FCFS reservation | 36.27% | 43.0% |
+| Direct scheduler work | 2.18% | 2.6% |
 
-The 37.31% branch is displayed as unresolved inlined frames, but its identity
+The 45.96% branch is displayed as unresolved inlined frames, but its identity
 is supported by the source and the sampled standard-library symbols:
 
-- `std::_Rb_tree<...>::_M_copy` has 8.67% self cost;
-- `std::_Rb_tree<...>::_M_erase` has 4.32% self cost; and
+- `std::_Rb_tree<...>::_M_copy` has 7.20% self cost;
+- `std::_Rb_tree<...>::_M_erase` has 5.26% self cost; and
 - allocation and deallocation routines together account for approximately
-  30% of all self samples, although some of those allocations also belong to
+  38% of all self samples, although some of those allocations also belong to
   temporary vectors elsewhere in the scheduler.
 
 The source of this work is the full copy of `running_jobs` into
@@ -95,22 +92,22 @@ effective_running_jobs[job.job_id] = {
 
 See `src/sim/scheduler_circular_fcfs.cpp`, lines 70-86.
 
-The remaining 9.19% self cost includes consuming runnable jobs from the queue,
+The remaining 2.18% direct cost includes consuming runnable jobs from the queue,
 scanning eligible jobs for EASY backfill candidates, maintaining lazy-removal
 state, and growing the returned job vector. The profile does not resolve those
 inlined operations finely enough to assign reliable individual percentages.
 
 ## Reservation calculation
 
-`SchedulerBase::calculate_fcfs_reservation()` accounts for 39.98% inclusive
-across the report; 39.11% is reached from the circular scheduler. Its measured
+`SchedulerBase::calculate_fcfs_reservation()` accounts for 36.91% inclusive
+across the report; 36.27% is reached from the circular scheduler. Its measured
 cost is:
 
 | Reservation work | All recorded cycles | Share of reservation |
 | --- | ---: | ---: |
-| Sort completion events (`std::__introsort_loop`) | 21.62% | 54.1% |
-| Traverse the running-job red-black tree | 10.10% | 25.3% |
-| Build and scan the event vector and other direct work | 7.78% | 19.5% |
+| Sort completion events (`std::__introsort_loop`) | 19.10% | 51.7% |
+| Traverse the running-job red-black tree | 7.89% | 21.4% |
+| Build and scan the event vector and other direct work | 9.92% | 26.9% |
 
 The function traverses the job-ID-keyed `std::map`, creates a vector containing
 every future completion, sorts the entire vector by completion time, and then
@@ -136,13 +133,14 @@ running jobs and the number of scheduling passes.
 
 ## Other observed costs
 
-Trace completion and job-output processing accounted for less than 1%:
+Trace completion and job-output processing each accounted for approximately
+1%:
 
-- `BasicTrace::process_single_event`: 0.98% inclusive;
-- `BasicTrace::flush_completed_jobs_impl`: 0.89% inclusive; and
-- `BasicTrace::write_job_range`: 0.87% inclusive.
+- `BasicTrace::process_single_event`: 1.05% inclusive;
+- `BasicTrace::flush_completed_jobs_impl`: 1.02% inclusive; and
+- `BasicTrace::write_job_range`: 1.05% inclusive.
 
-Initialization and resource-trace output were each below 0.5%. For this
+Trace initialization accounted for 0.73%. For this
 workload, parsing and output are not useful first optimization targets.
 
 ## Optimization priorities
@@ -150,29 +148,36 @@ workload, parsing and output are not useful first optimization targets.
 1. Eliminate the full `running_jobs` map copy. Reservation calculation can
    consume the authoritative running-job collection by const reference and a
    short-lived range of jobs selected during the current scheduling pass.
-   This avoids duplicating ownership and targets the 37.31% copy/destruction
+   This avoids duplicating ownership and targets the 45.96% copy/destruction
    branch. That percentage is an upper bound, not an expected speedup.
 2. Avoid fully sorting every completion event for every blocked scheduling
    pass. Potential designs should first determine whether release ordering can
    be maintained by the existing running-job lifecycle owner without adding
-   independently synchronized state. This targets the 21.62% sorting cost.
+   independently synchronized state. This targets the 19.10% sorting cost.
 3. Reuse temporary vector capacity where ownership and reentrancy permit it.
    This can reduce allocator pressure but will not remove the sorting and tree
    traversal costs.
-4. Re-profile before optimizing the backfill scan. Only 9.19% remains as
+4. Re-profile before optimizing the backfill scan. Only 2.18% remains as
    direct scheduler work after the two dominant branches, and that percentage
    includes more than the scan itself.
 
-Together, map-copy/destruction and reservation calculation account for 76.42%
+Together, map-copy/destruction and reservation calculation account for 82.23%
 of all recorded cycles. They are therefore the appropriate first targets, but
 their percentages overlap with allocator and STL implementation symbols and
 must not be added to those lower-level rows.
+
+Compared with the preceding limit-runtime capture of the same trace prefix,
+the scheduler's total share is similar (84.41% versus 85.61%), but the
+copy/destruction branch is larger (45.96% versus 37.31%) and reservation
+calculation is smaller (36.27% versus 39.11%). Actual job durations change the
+set and lifetime of concurrent jobs, so hotspot proportions from one runtime
+mode should not be used as estimates for the other.
 
 ## Interpretation limits
 
 This is one short sample of one trace prefix and scheduler configuration.
 Results may change with queue depth, concurrent running-job count, backfill
-frequency, compiler, allocator, and CPU. Approximately 4,000 samples are
+frequency, compiler, allocator, and CPU. Approximately 3,000 samples are
 enough to distinguish the dominant paths but not sub-percent differences.
 Several optimized inlined frames appear as `??`; a longer profile plus
 `perf annotate` should be used to evaluate source-line changes.
