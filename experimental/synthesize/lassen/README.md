@@ -6,8 +6,9 @@ This directory contains two scripts:
    CSM allocation history, converts local timestamps to Unix epoch seconds,
    and can calculate job duration.
 2. `generate_synthetic_job_stream.py` accepts a standardized historical job
-   trace and generates a synthetic trace by sampling arrival times, job
-   size/runtime pairs, and time limits separately.
+   trace and generates a synthetic trace by sampling arrival times and job
+   size/runtime pairs separately, then sampling each time limit conditionally
+   on the selected runtime.
 
 Both scripts use Python's standard library and require Python 3.9 or newer.
 
@@ -119,7 +120,7 @@ and extra columns are ignored.
 | `submit_time` | Numeric timestamp, normally Unix epoch seconds |
 | `num_nodes` | Number of nodes associated with the job |
 | `duration` | Positive runtime in seconds; fractions are supported |
-| `time_limit` | Time-limit value to sample |
+| `time_limit` | Positive time-limit value in seconds to sample |
 | `exit_status` | Required only when `--successful-only` is used; zero means success |
 
 The generated `lassen_pbatch_scheduling_simulation.csv` is directly usable as
@@ -131,10 +132,19 @@ time limit should both be in seconds.
 The script sorts eligible input jobs by numeric `submit_time`; the original
 CSV does not need to be pre-sorted.
 
-### Eligibility filters
+### Time-limit handling, eligibility filters, and normalization
 
-- `--min-duration SECONDS` removes jobs whose duration is less than the given
-  value. A job exactly equal to the threshold remains eligible.
+- `time_limit` is expressed in seconds, like `duration`; it is not a runtime
+  multiplier or a value in minutes.
+- `--max-time-limit SECONDS` applies the target platform's maximum time limit.
+  A larger historical `time_limit` is set to this cap. The job remains
+  eligible; if its `duration` exceeds the resulting limit, its duration is
+  set to that limit. No platform maximum is applied when the option is omitted.
+- After applying the optional platform maximum, an input job whose `duration`
+  exceeds its effective `time_limit` is normalized by setting `duration` to
+  `time_limit`.
+- `--min-duration SECONDS` removes jobs whose normalized duration is less than
+  the given value. A job exactly equal to the threshold remains eligible.
 - `--successful-only` removes jobs whose `exit_status` is not `0`.
 - Without these options, all positive-duration jobs are eligible and the
   `exit_status` column is optional.
@@ -156,9 +166,14 @@ For a requested count of `N` jobs, the script does the following:
    by default; `--with-replacement` enables bootstrap sampling.
 3. **Time limit:** Assign every eligible historical job to a one-second bucket
    using `ceil(duration)`. Thus `(0, 1]` is bucket 1, `(1, 2]` is bucket 2,
-   and so on. For each synthetic job, uniformly select a `time_limit` from the
-   historical records in the same duration bucket. Repeated historical values
-   remain repeated in the bucket and retain their empirical frequency.
+   and so on. For each synthetic job, uniformly select a `time_limit` from all
+   eligible historical records in the sampled runtime's bucket. This is a
+   conditional sample, not an independent sample from the trace-wide
+   `time_limit` distribution. Repeated historical values remain repeated in
+   the bucket and retain their empirical frequency. If the selected limit is
+   slightly shorter than the sampled duration (possible when two fractional
+   durations share a bucket), the output duration is capped at that selected
+   limit.
 
 The three stages are independent except that `num_nodes` and `duration` remain
 paired and the time-limit bucket is selected from the sampled duration.
@@ -170,11 +185,15 @@ submit_time,num_nodes,time_limit,duration
 ```
 
 The output has one header row followed by exactly `N` synthetic jobs.
+Every newly generated row satisfies `duration <= time_limit`. Existing CSVs
+are not rewritten automatically when the generator changes; regenerate older
+outputs to apply this invariant.
 
 ### Generate one trace
 
 The following creates 100,000 jobs using successful historical jobs that ran
-for at least 60 seconds:
+for at least 60 seconds. Lassen's platform time-limit cap is 43,200 seconds
+(12 hours):
 
 ```bash
 ./generate_synthetic_job_stream.py \
@@ -182,6 +201,7 @@ for at least 60 seconds:
   synthetic_jobs_100000_min60s_successful.csv \
   100000 \
   --min-duration 60 \
+  --max-time-limit 43200 \
   --successful-only
 ```
 
@@ -189,7 +209,7 @@ For reproducible results, provide a seed:
 
 ```bash
 ./generate_synthetic_job_stream.py historical.csv synthetic.csv 100000 \
-  --min-duration 60 --successful-only --seed 2026
+  --min-duration 60 --max-time-limit 43200 --successful-only --seed 2026
 ```
 
 Running the same command with the same input and seed produces identical
@@ -204,6 +224,7 @@ for i in $(seq -w 1 10); do
     "synthetic_jobs_100000_min60s_successful_${i}.csv" \
     100000 \
     --min-duration 60 \
+    --max-time-limit 43200 \
     --successful-only
 done
 ```
