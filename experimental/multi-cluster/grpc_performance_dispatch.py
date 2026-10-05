@@ -333,12 +333,12 @@ def choose_system(
     horizons,
     max_time_limit=math.inf,
     dispatch_policy="turnaround",
-    wall_time_policy="adapted-prediction",
+    wall_time_policy="adapted-limit",
 ):
     """Choose a feasible system using turnaround or paper Algorithm 2."""
     if dispatch_policy not in {"turnaround", "IPDPS24"}:
         raise ValueError(f"unknown dispatch policy: {dispatch_policy}")
-    if wall_time_policy not in {"adapted-prediction", "actual-duration"}:
+    if wall_time_policy not in {"adapted-limit", "actual-duration"}:
         raise ValueError(f"unknown wall-time policy: {wall_time_policy}")
     candidates = []
     for index, (system, window, horizon) in enumerate(
@@ -719,11 +719,11 @@ def main():
     )
     parser.add_argument(
         "--wall-time-policy",
-        choices=("adapted-prediction", "actual-duration"),
-        default="adapted-prediction",
+        choices=("adapted-limit", "actual-duration"),
+        default="adapted-limit",
         help=(
             "submit an adapted predicted limit or the ground-truth runtime "
-            "(default: adapted-prediction)"
+            "(default: adapted-limit)"
         ),
     )
     parser.add_argument("--session-name", default="performance-dispatch")

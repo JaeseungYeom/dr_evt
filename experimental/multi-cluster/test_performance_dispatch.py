@@ -598,7 +598,7 @@ class PerformanceDispatchTests(unittest.TestCase):
             prediction_utilization=1.0,
             max_time_limit=1000.0,
             dispatch_policy="turnaround",
-            wall_time_policy="adapted-prediction",
+            wall_time_policy="adapted-limit",
             session_name="test",
         )
         FakeSession.instances = []

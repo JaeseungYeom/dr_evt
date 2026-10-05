@@ -58,7 +58,7 @@ constexpr int kPayloadTag = 101;
 enum class Operation : std::uint8_t { Snapshot, Append, Finish };
 enum class DispatchPolicy : std::uint8_t { Turnaround, Ipdps24 };
 enum class WallTimePolicy : std::uint8_t {
-  AdaptedPrediction,
+  AdaptedLimit,
   ActualDuration
 };
 
@@ -171,7 +171,7 @@ struct Options {
   double prediction_utilization = 1.0;
   double max_time_limit = std::numeric_limits<double>::infinity();
   DispatchPolicy dispatch_policy = DispatchPolicy::Turnaround;
-  WallTimePolicy wall_time_policy = WallTimePolicy::AdaptedPrediction;
+  WallTimePolicy wall_time_policy = WallTimePolicy::AdaptedLimit;
 };
 
 [[noreturn]] void usage(const char *program, const std::string &error = {}) {
@@ -189,8 +189,8 @@ struct Options {
                "(default: unlimited)\n"
             << "  --dispatch-policy POLICY  turnaround or IPDPS24 "
                "(default: turnaround)\n"
-            << "  --wall-time-policy POLICY adapted-prediction or "
-               "actual-duration (default: adapted-prediction)\n"
+            << "  --wall-time-policy POLICY adapted-limit or "
+               "actual-duration (default: adapted-limit)\n"
             << "  --output PATH             decision CSV (default: stdout)\n";
   throw std::invalid_argument(error.empty() ? "help requested" : error);
 }
@@ -233,12 +233,12 @@ Options parse_options(int argc, char **argv) {
         usage(argv[0], "--dispatch-policy must be turnaround or IPDPS24");
     } else if (arg == "--wall-time-policy") {
       const auto value = option_value(i, argc, argv, arg);
-      if (value == "adapted-prediction")
-        options.wall_time_policy = WallTimePolicy::AdaptedPrediction;
+      if (value == "adapted-limit")
+        options.wall_time_policy = WallTimePolicy::AdaptedLimit;
       else if (value == "actual-duration")
         options.wall_time_policy = WallTimePolicy::ActualDuration;
       else
-        usage(argv[0], "--wall-time-policy must be adapted-prediction or "
+        usage(argv[0], "--wall-time-policy must be adapted-limit or "
                        "actual-duration");
     }
     else if (arg == "--output")

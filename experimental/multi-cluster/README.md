@@ -243,7 +243,7 @@ capacity-compatible system can finish within the maximum, the job is dropped.
   it chooses the highest predicted relative performance over all feasible
   systems and lets that system queue the job. Ties use systems-table order.
 
-`--wall-time-policy adapted-prediction` uses the doubling behavior described
+`--wall-time-policy adapted-limit` uses the doubling behavior described
 above. `--wall-time-policy actual-duration` instead submits the smallest
 whole-second time limit that covers the selected system's ground-truth runtime.
 This second policy never changes or truncates the runtime; it changes only the
@@ -271,7 +271,7 @@ mpirun -np 6 build/mpi_performance_dispatch \
   --seed 7 \
   --max-time-limit 43200 \
   --dispatch-policy IPDPS24 \
-  --wall-time-policy adapted-prediction \
+  --wall-time-policy adapted-limit \
   --output dispatch-decisions.csv
 ```
 
@@ -281,7 +281,7 @@ allocation. MPI and Ser20 are required; gRPC and Python are not.
 ### Prediction-study matrix
 
 The prediction-study runner executes both dispatch policies (`turnaround` and
-`IPDPS24`) with both wall-time policies (`adapted-prediction` and
+`IPDPS24`) with both wall-time policies (`adapted-limit` and
 `actual-duration`) for the ideal, application-average, and RAJAPerf prediction
 tables. Each of these 12 configurations runs on all ten synthetic traces, for
 120 runs by default:
@@ -374,7 +374,7 @@ python3 python/grpc_mpi_launcher.py --mpi-ranks 6 \
   --seed 7 \
   --max-time-limit 43200 \
   --dispatch-policy IPDPS24 \
-  --wall-time-policy adapted-prediction \
+  --wall-time-policy adapted-limit \
   --output grpc-dispatch-decisions.csv
 ```
 

@@ -25,7 +25,7 @@ METRICS = (
     "average_speedup",
 )
 DISPATCH_POLICIES = ("turnaround", "IPDPS24")
-WALL_TIME_POLICIES = ("adapted-prediction", "actual-duration")
+WALL_TIME_POLICIES = ("adapted-limit", "actual-duration")
 JOBS_PER_TRACE = 100_000
 OVERALL_RE = re.compile(
     r"^overall: jobs=(?P<jobs>\d+) dropped_jobs=(?P<dropped_jobs>\d+) "
@@ -312,9 +312,9 @@ def plot_results(output_dir, summary_rows):
         "rajaperf": "RAJAPerf",
     }
     configuration_labels = {
-        ("turnaround", "adapted-prediction"): "Turnaround",
+        ("turnaround", "adapted-limit"): "Turnaround",
         ("turnaround", "actual-duration"): "Turnaround / limit = duration",
-        ("IPDPS24", "adapted-prediction"): "IPDPS24",
+        ("IPDPS24", "adapted-limit"): "IPDPS24",
         ("IPDPS24", "actual-duration"): "IPDPS24 / limit = duration",
     }
     titles = {
