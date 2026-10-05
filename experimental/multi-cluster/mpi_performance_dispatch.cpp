@@ -953,7 +953,7 @@ void controller(const Options &options, const std::vector<System> &systems,
     throw std::runtime_error("completed job count does not match dispatched "
                              "job count");
   const double denominator = static_cast<double>(jobs.size());
-  std::cerr << "overall: jobs=" << jobs.size()
+  std::cerr << std::setprecision(8) << "overall: jobs=" << jobs.size()
             << " average_turnaround_time="
             << (jobs.empty() ? 0.0 : total_turnaround / denominator)
             << " average_bounded_slowdown="

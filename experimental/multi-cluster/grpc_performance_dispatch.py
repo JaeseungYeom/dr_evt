@@ -582,10 +582,10 @@ def write_summary(stream, statistics, system_ids, decisions):
     metrics = evaluation_metrics(decisions, statistics)
     print(
         f"overall: jobs={len(decisions)} "
-        f"average_turnaround_time={metrics['average_turnaround_time']:.6g} "
-        f"average_bounded_slowdown={metrics['average_bounded_slowdown']:.6g} "
-        f"average_run_time={metrics['average_run_time']:.6g} "
-        f"average_speedup={metrics['average_speedup']:.6g}",
+        f"average_turnaround_time={metrics['average_turnaround_time']:.8g} "
+        f"average_bounded_slowdown={metrics['average_bounded_slowdown']:.8g} "
+        f"average_run_time={metrics['average_run_time']:.8g} "
+        f"average_speedup={metrics['average_speedup']:.8g}",
         file=stream,
     )
 

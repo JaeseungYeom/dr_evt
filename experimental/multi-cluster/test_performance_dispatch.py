@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for the Python/gRPC multi-cluster dispatcher policy."""
 
+import io
 import pathlib
 import random
 import tempfile
@@ -432,14 +433,18 @@ class PerformanceDispatchTests(unittest.TestCase):
         ]
         statistics = [
             SimpleNamespace(
+                jobs_submitted=2,
                 jobs_completed=2,
                 avg_turnaround_time=20.0,
                 avg_bounded_slowdown=2.0,
+                makespan=30.0,
             ),
             SimpleNamespace(
+                jobs_submitted=1,
                 jobs_completed=1,
                 avg_turnaround_time=50.0,
                 avg_bounded_slowdown=4.0,
+                makespan=60.0,
             ),
         ]
         metrics = evaluation_metrics(decisions, statistics)
@@ -447,6 +452,10 @@ class PerformanceDispatchTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["average_bounded_slowdown"], 8.0 / 3.0)
         self.assertAlmostEqual(metrics["average_run_time"], 10.0)
         self.assertAlmostEqual(metrics["average_speedup"], 2.0)
+
+        summary = io.StringIO()
+        dispatch.write_summary(summary, statistics, ["first", "second"], decisions)
+        self.assertIn("average_bounded_slowdown=2.6666667", summary.getvalue())
 
         with self.assertRaisesRegex(ValueError, "does not match dispatched"):
             evaluation_metrics(decisions[:2], statistics)

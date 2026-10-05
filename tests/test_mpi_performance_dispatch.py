@@ -2,6 +2,7 @@
 """End-to-end regression test for the native MPI multi-cluster dispatcher."""
 
 import csv
+import math
 import os
 import re
 import subprocess
@@ -124,17 +125,19 @@ def main():
         with first.open(newline="") as stream:
             rows = list(csv.DictReader(stream))
         assert len(rows) == expected_jobs
-        assert abs(
-            metrics["average_run_time"]
-            - sum(float(row["actual_duration"]) for row in rows) / expected_jobs
-        ) < 1e-5
-        assert abs(
-            metrics["average_speedup"]
-            - sum(
+        assert math.isclose(
+            metrics["average_run_time"],
+            sum(float(row["actual_duration"]) for row in rows) / expected_jobs,
+            rel_tol=1e-7,
+        )
+        assert math.isclose(
+            metrics["average_speedup"],
+            sum(
                 float(row["ground_truth_relative_performance"]) for row in rows
             )
-            / expected_jobs
-        ) < 1e-5
+            / expected_jobs,
+            rel_tol=1e-7,
+        )
         assert {row["App"] for row in rows} == set(requirements)
         for row in rows:
             original_nodes = int(row["num_nodes"])

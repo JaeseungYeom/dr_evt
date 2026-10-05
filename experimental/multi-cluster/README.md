@@ -129,20 +129,6 @@ needed. Quartz data is not required. In `merged.txt`, the unsuffixed `matrix`,
 `tioga`, and `tuolumne` measurements represent their GPU modes; their `-cpu`
 rows represent CPU modes.
 
-Plot actual (x-axis) against predicted (y-axis) relative performance for every
-configured machine/execution-mode column (for example, `dane`, `mammoth`,
-`matrix-cpu`, or `matrix-gpu`), with a consistent color for each application.
-Here, execution mode identifies the CPU or GPU implementation on a machine; it
-does not refer to the simulator's `run_time_mode` option:
-
-```bash
-source docs/venv/bin/activate
-python3 experimental/multi-cluster/plot_relative_performance.py \
-  --ground-truth multi-cluster/ground_truth.csv \
-  --prediction multi-cluster/prediction.csv \
-  --output multi-cluster/relative-performance.png
-```
-
 Generate two interchangeable prediction baselines:
 
 ```bash
@@ -160,6 +146,22 @@ machine-level value to every workload where the mode is available. Repeated
 kernel names remain distinct positional samples. The application-average
 baseline assigns the arithmetic mean ground-truth speedup for each
 `(App, Ranks, execution mode)` group.
+
+#### Optional plotting
+
+Plot actual (x-axis) against predicted (y-axis) relative performance for every
+configured machine/execution-mode column (for example, `dane`, `mammoth`,
+`matrix-cpu`, or `matrix-gpu`), with a consistent color for each application.
+Here, execution mode identifies the CPU or GPU implementation on a machine; it
+does not refer to the simulator's `run_time_mode` option:
+
+```bash
+source docs/venv/bin/activate
+python3 experimental/multi-cluster/plot_relative_performance.py \
+  --ground-truth multi-cluster/ground_truth.csv \
+  --prediction multi-cluster/prediction.csv \
+  --output multi-cluster/relative-performance.png
+```
 
 The default logarithmic axes make both sub-unit and large speedups visible.
 Use `--linear` for linear axes or `--systems tuolumne tuolumne-cpu dane` to
