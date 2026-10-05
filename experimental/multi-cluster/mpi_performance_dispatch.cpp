@@ -164,6 +164,7 @@ struct Options {
   std::optional<std::string> output;
   std::uint64_t seed = 0;
   double prediction_utilization = 1.0;
+  double max_time_limit = std::numeric_limits<double>::infinity();
 };
 
 [[noreturn]] void usage(const char *program, const std::string &error = {}) {
@@ -177,6 +178,8 @@ struct Options {
             << "  --systems PATH\n"
             << "  --seed INTEGER            sampling seed (default: 0)\n"
             << "  --prediction-utilization U  value in [0,1] (default: 1)\n"
+            << "  --max-time-limit SECONDS  maximum submitted wall time "
+               "(default: unlimited)\n"
             << "  --output PATH             decision CSV (default: stdout)\n";
   throw std::invalid_argument(error.empty() ? "help requested" : error);
 }
@@ -207,6 +210,8 @@ Options parse_options(int argc, char **argv) {
     else if (arg == "--prediction-utilization")
       options.prediction_utilization =
           std::stod(option_value(i, argc, argv, arg));
+    else if (arg == "--max-time-limit")
+      options.max_time_limit = std::stod(option_value(i, argc, argv, arg));
     else if (arg == "--output")
       options.output = option_value(i, argc, argv, arg);
     else if (arg == "--help" || arg == "-h")
@@ -223,6 +228,8 @@ Options parse_options(int argc, char **argv) {
       options.prediction_utilization < 0.0 ||
       options.prediction_utilization > 1.0)
     usage(argv[0], "--prediction-utilization must be in [0,1]");
+  if (std::isnan(options.max_time_limit) || options.max_time_limit <= 0.0)
+    usage(argv[0], "--max-time-limit must be positive");
   return options;
 }
 
@@ -507,10 +514,7 @@ read_performance_pair(const std::vector<std::string> &row,
   const auto ground_truth = read_performance(row, header, column, context);
   const auto predicted = read_performance(prediction_row, prediction_header,
                                           column, context);
-  if (ground_truth.has_value() != predicted.has_value())
-    throw std::runtime_error(context + ": incomplete " + column +
-                             " ground-truth/prediction pair");
-  if (!ground_truth)
+  if (!ground_truth || !predicted)
     return std::nullopt;
   return PerformancePair{*ground_truth, *predicted};
 }
@@ -519,7 +523,8 @@ read_performance_pair(const std::vector<std::string> &row,
  * @param[in] ground_truth_path Measured-speedup CSV.
  * @param[in] prediction_path Predicted-speedup CSV.
  * @param[in] systems Configured systems and their execution-mode columns.
- * @param[in] requirements Application compatibility requirements.
+ * @param[in] requirements Application allowlist and compatibility requirements;
+ * performance rows for absent applications are ignored.
  * @return Valid runnable workloads grouped by application.
  * @throws std::runtime_error if either table is malformed or identities differ.
  */
@@ -575,6 +580,8 @@ WorkloadCatalog read_workloads(
         field(row, prediction_header, predicted_identity[1]),
         static_cast<std::uint32_t>(
             std::stoul(field(row, prediction_header, predicted_identity[2])))};
+    if (!requirements.contains(std::get<0>(key)))
+      continue;
     if (!predictions.emplace(std::move(key), std::move(row)).second)
       throw std::runtime_error(prediction_path +
                                ": duplicate workload identity");
@@ -594,6 +601,9 @@ WorkloadCatalog read_workloads(
     const Identity workload_identity{
         app, field(row, header, identity[1]),
         static_cast<std::uint32_t>(std::stoul(field(row, header, identity[2])))};
+    const auto requirement = requirements.find(app);
+    if (requirement == requirements.end())
+      continue;
     if (!identities.insert(workload_identity).second)
       throw std::runtime_error(ground_truth_path +
                                ": duplicate workload at row " +
@@ -603,10 +613,6 @@ WorkloadCatalog read_workloads(
       throw std::runtime_error(prediction_path +
                                ": missing workload found in ground truth");
     const auto &prediction_row = prediction->second;
-    const auto requirement = requirements.find(app);
-    if (requirement == requirements.end())
-      throw std::runtime_error(ground_truth_path +
-                               ": no sys_requirement for App " + app);
     Workload workload{
         app, field(row, header, identity[1]),
         static_cast<std::uint32_t>(std::stoul(field(row, header, identity[2]))),
@@ -709,12 +715,46 @@ struct Choice {
   double actual_duration;
   double predicted_time_limit;
   double actual_time_limit;
+  double submitted_time_limit;
+  std::uint32_t time_limit_doublings;
   double predicted_turnaround;
 };
 
-Choice choose_system(const Job &job, const Workload &workload,
-                     const std::vector<System> &systems,
-                     const std::vector<Response> &snapshots) {
+/** Increase a predicted wall-time limit enough to admit the known runtime.
+ *
+ * This models a user correcting the request before the successful submission;
+ * failed attempts consume no simulated resources.
+ *
+ * @param[in] predicted_limit Initial performance-scaled limit.
+ * @param[in] actual_duration Ground-truth runtime on the candidate system.
+ * @param[in] maximum_limit Largest permitted wall-time request.
+ * @return Final capped limit and the number of doublings performed.
+ */
+std::pair<double, std::uint32_t>
+adjust_time_limit(double predicted_limit, double actual_duration,
+                  double maximum_limit) {
+  double limit = std::min(predicted_limit, maximum_limit);
+  std::uint32_t doublings = 0;
+  while (limit < actual_duration && limit < maximum_limit) {
+    limit = std::min(limit * 2.0, maximum_limit);
+    ++doublings;
+  }
+  return {limit, doublings};
+}
+
+/** Select the system with the smallest predicted turnaround.
+ * @param[in] job Job request with its effective node count.
+ * @param[in] workload Sampled application workload.
+ * @param[in] systems Configured execution systems.
+ * @param[in] snapshots Current scheduler state for each system.
+ * @param[in] max_time_limit Maximum permitted submitted wall-time limit.
+ * @return Best compatible system that can finish within the maximum, or no
+ * choice if none can do so.
+ */
+std::optional<Choice>
+choose_system(const Job &job, const Workload &workload,
+              const std::vector<System> &systems,
+              const std::vector<Response> &snapshots, double max_time_limit) {
   std::optional<Choice> best;
   for (std::size_t i = 0; i < systems.size(); ++i) {
     if (job.num_nodes > systems[i].physical_nodes)
@@ -731,8 +771,13 @@ Choice choose_system(const Job &job, const Workload &workload,
     } else if (!systems[i].gpu_enabled) {
       performance = workload.performance[i].cpu;
     } else {
-      performance = workload.performance[i].cpu;
+      if (workload.performance[i].cpu &&
+          job.duration / workload.performance[i].cpu->ground_truth <=
+              max_time_limit)
+        performance = workload.performance[i].cpu;
       if (workload.performance[i].gpu &&
+          job.duration / workload.performance[i].gpu->ground_truth <=
+              max_time_limit &&
           (!performance || workload.performance[i].gpu->predicted >
                                performance->predicted)) {
         performance = workload.performance[i].gpu;
@@ -743,10 +788,14 @@ Choice choose_system(const Job &job, const Workload &workload,
       continue;
     const double predicted_duration = job.duration / performance->predicted;
     const double actual_duration = job.duration / performance->ground_truth;
+    if (actual_duration > max_time_limit)
+      continue;
     const double predicted_limit = job.limit_time / performance->predicted;
     const double actual_limit = job.limit_time / performance->ground_truth;
+    const auto [submitted_limit, doublings] = adjust_time_limit(
+        predicted_limit, actual_duration, max_time_limit);
     const double wait =
-        estimate_wait(snapshots[i].window, job.num_nodes, predicted_limit,
+        estimate_wait(snapshots[i].window, job.num_nodes, submitted_limit,
                       snapshots[i].prediction_horizon);
     if (!std::isfinite(wait))
       continue;
@@ -759,6 +808,8 @@ Choice choose_system(const Job &job, const Workload &workload,
                   actual_duration,
                   predicted_limit,
                   actual_limit,
+                  submitted_limit,
+                  doublings,
                   wait + predicted_duration};
     if (!best ||
         std::tie(choice.predicted_turnaround, choice.estimated_wait,
@@ -766,11 +817,7 @@ Choice choose_system(const Job &job, const Workload &workload,
                                           best->estimated_wait, best->index))
       best = choice;
   }
-  if (!best)
-    throw std::runtime_error("job " + job.id + " sampled workload " +
-                             workload.app +
-                             " but no compatible system can run it");
-  return *best;
+  return best;
 }
 
 Response handle_request(dr_evt::Simulation &simulation,
@@ -886,12 +933,15 @@ void controller(const Options &options, const std::vector<System> &systems,
              "ground_truth_relative_performance,"
              "predicted_relative_performance,"
              "estimated_wait,estimated_duration,actual_duration,"
-             "predicted_time_limit,actual_time_limit,"
+             "predicted_time_limit,actual_time_limit,submitted_time_limit,"
+             "time_limit_doublings,"
              "predicted_turnaround,job_idx\n";
   *output << std::setprecision(17);
 
   double total_run_time = 0.0;
   double total_speedup = 0.0;
+  std::uint64_t dispatched_jobs = 0;
+  std::uint64_t dropped_jobs = 0;
 
   for (const auto &job : jobs) {
     Job dispatch_job = job;
@@ -903,15 +953,25 @@ void controller(const Options &options, const std::vector<System> &systems,
     snapshot.prediction_utilization = options.prediction_utilization;
     const auto snapshots = call_all(snapshot, worker_count);
     const auto &workload = sample_workload(catalog, generator);
-    const Choice choice =
-        choose_system(dispatch_job, workload, systems, snapshots);
+    const auto selected =
+        choose_system(dispatch_job, workload, systems, snapshots,
+                      options.max_time_limit);
+    if (!selected) {
+      ++dropped_jobs;
+      std::cerr << "dropped: job_id=" << job.id << " app=" << workload.app
+                << " reason=no_system_within_max_time_limit"
+                << " max_time_limit=" << options.max_time_limit << '\n';
+      continue;
+    }
+    const Choice &choice = *selected;
+    ++dispatched_jobs;
     total_run_time += choice.actual_duration;
     total_speedup += choice.ground_truth_relative_performance;
 
     Request append;
     append.operation = Operation::Append;
     append.job = {job.submit_time, dispatch_job.num_nodes, job.queue,
-                  choice.actual_duration, choice.actual_time_limit};
+                  choice.actual_duration, choice.submitted_time_limit};
     send_serialized(append, static_cast<int>(choice.index) + 1);
     const Response response =
         receive_serialized<Response>(static_cast<int>(choice.index) + 1);
@@ -930,6 +990,8 @@ void controller(const Options &options, const std::vector<System> &systems,
             << choice.estimated_wait << ',' << choice.estimated_duration << ','
             << choice.actual_duration << ',' << choice.predicted_time_limit
             << ',' << choice.actual_time_limit << ','
+            << choice.submitted_time_limit << ','
+            << choice.time_limit_doublings << ','
             << choice.predicted_turnaround << ',' << response.job_idx << '\n';
   }
 
@@ -949,19 +1011,22 @@ void controller(const Options &options, const std::vector<System> &systems,
               << " completed=" << stats.jobs_completed
               << " makespan=" << stats.makespan << '\n';
   }
-  if (completed_jobs != jobs.size())
+  if (completed_jobs != dispatched_jobs)
     throw std::runtime_error("completed job count does not match dispatched "
                              "job count");
-  const double denominator = static_cast<double>(jobs.size());
-  std::cerr << std::setprecision(8) << "overall: jobs=" << jobs.size()
+  const double denominator = static_cast<double>(dispatched_jobs);
+  std::cerr << std::setprecision(8) << "overall: jobs=" << dispatched_jobs
+            << " dropped_jobs=" << dropped_jobs
             << " average_turnaround_time="
-            << (jobs.empty() ? 0.0 : total_turnaround / denominator)
+            << (dispatched_jobs == 0 ? 0.0 : total_turnaround / denominator)
             << " average_bounded_slowdown="
-            << (jobs.empty() ? 0.0 : total_bounded_slowdown / denominator)
+            << (dispatched_jobs == 0 ? 0.0
+                                     : total_bounded_slowdown / denominator)
             << " average_run_time="
-            << (jobs.empty() ? 0.0 : total_run_time / denominator)
+            << (dispatched_jobs == 0 ? 0.0 : total_run_time / denominator)
             << " average_speedup="
-            << (jobs.empty() ? 0.0 : total_speedup / denominator) << '\n';
+            << (dispatched_jobs == 0 ? 0.0 : total_speedup / denominator)
+            << '\n';
 }
 
 } // namespace

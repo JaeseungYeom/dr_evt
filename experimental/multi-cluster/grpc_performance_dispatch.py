@@ -179,7 +179,7 @@ def read_performance_table(path, columns):
 
 
 def read_workloads(ground_truth_path, prediction_path, systems, requirements):
-    """Read, validate, and group unique runnable workloads by application."""
+    """Read runnable workloads whose applications are in the requirements map."""
     columns = []
     for system in systems:
         columns.append(system["cpu_column"])
@@ -187,6 +187,16 @@ def read_workloads(ground_truth_path, prediction_path, systems, requirements):
             columns.append(system["gpu_column"])
     ground_truth = read_performance_table(ground_truth_path, columns)
     prediction = read_performance_table(prediction_path, columns)
+    ground_truth = {
+        identity: values
+        for identity, values in ground_truth.items()
+        if identity[0] in requirements
+    }
+    prediction = {
+        identity: values
+        for identity, values in prediction.items()
+        if identity[0] in requirements
+    }
     if ground_truth.keys() != prediction.keys():
         missing_prediction = ground_truth.keys() - prediction.keys()
         missing_truth = prediction.keys() - ground_truth.keys()
@@ -199,10 +209,6 @@ def read_workloads(ground_truth_path, prediction_path, systems, requirements):
     unavailable_rows = 0
     for identity, truth_values in ground_truth.items():
         app, workload_args, ranks = identity
-        if app not in requirements:
-            raise ValueError(
-                f"{ground_truth_path}: no sys_requirement for app {app}"
-            )
         workload = {
             "app": app,
             "args": workload_args,
@@ -222,13 +228,9 @@ def read_workloads(ground_truth_path, prediction_path, systems, requirements):
                     continue
                 actual = truth_values[column]
                 predicted = prediction[identity][column]
-                if (actual is None) != (predicted is None):
-                    raise ValueError(
-                        f"incomplete {column} pair for workload {identity}"
-                    )
                 performance[mode] = (
                     None
-                    if actual is None
+                    if actual is None or predicted is None
                     else {"ground_truth": actual, "predicted": predicted}
                 )
             if workload["sys_requirement"] == "CPU-only":
@@ -289,8 +291,10 @@ def estimate_wait(window, required_nodes, runtime, prediction_horizon):
     return window.shadow_time - window.current_time + prediction_horizon
 
 
-def execution_performance(workload, system, index):
-    """Return the compatible execution mode and performance pair."""
+def execution_performance(
+    workload, system, index, duration=0.0, max_time_limit=math.inf
+):
+    """Return the fastest predicted compatible mode that meets the runtime cap."""
     performance = workload["performance"][index]
     requirement = workload["sys_requirement"]
     if requirement == "CPU-only":
@@ -306,11 +310,24 @@ def execution_performance(workload, system, index):
         (mode, performance[mode])
         for mode in ("CPU", "GPU")
         if performance[mode] is not None
+        and duration / performance[mode]["ground_truth"] <= max_time_limit
     ]
     return max(candidates, key=lambda item: item[1]["predicted"], default=None)
 
 
-def choose_system(job, workload, systems, windows, horizons):
+def adjusted_time_limit(predicted_limit, actual_duration, maximum_limit):
+    """Double a predicted limit until it admits the known runtime or hits the cap."""
+    limit = min(predicted_limit, maximum_limit)
+    doublings = 0
+    while limit < actual_duration and limit < maximum_limit:
+        limit = min(limit * 2, maximum_limit)
+        doublings += 1
+    return limit, doublings
+
+
+def choose_system(
+    job, workload, systems, windows, horizons, max_time_limit=math.inf
+):
     """Choose the compatible system with minimum predicted turnaround."""
     candidates = []
     for index, (system, window, horizon) in enumerate(
@@ -318,7 +335,9 @@ def choose_system(job, workload, systems, windows, horizons):
     ):
         if job["num_nodes"] > system["capacity"]:
             continue
-        execution = execution_performance(workload, system, index)
+        execution = execution_performance(
+            workload, system, index, job["duration"], max_time_limit
+        )
         if execution is None:
             continue
         mode, performance = execution
@@ -326,9 +345,14 @@ def choose_system(job, workload, systems, windows, horizons):
         ground_truth_speedup = performance["ground_truth"]
         predicted_duration = job["duration"] / predicted_speedup
         actual_duration = job["duration"] / ground_truth_speedup
+        if actual_duration > max_time_limit:
+            continue
         predicted_limit = job["limit_time"] / predicted_speedup
         actual_limit = job["limit_time"] / ground_truth_speedup
-        wait = estimate_wait(window, job["num_nodes"], predicted_limit, horizon)
+        submitted_limit, doublings = adjusted_time_limit(
+            predicted_limit, actual_duration, max_time_limit
+        )
+        wait = estimate_wait(window, job["num_nodes"], submitted_limit, horizon)
         if math.isfinite(wait):
             candidates.append(
                 {
@@ -342,14 +366,11 @@ def choose_system(job, workload, systems, windows, horizons):
                     "actual_duration": actual_duration,
                     "predicted_time_limit": predicted_limit,
                     "actual_time_limit": actual_limit,
+                    "submitted_time_limit": submitted_limit,
+                    "time_limit_doublings": doublings,
                     "predicted_turnaround": wait + predicted_duration,
                 }
             )
-    if not candidates:
-        raise ValueError(
-            f"job {job['job_id']} sampled workload {workload['app']} "
-            "but no compatible system can run it"
-        )
     return min(
         candidates,
         key=lambda item: (
@@ -357,6 +378,7 @@ def choose_system(job, workload, systems, windows, horizons):
             item["estimated_wait"],
             item["index"],
         ),
+        default=None,
     )
 
 
@@ -381,6 +403,7 @@ def run_experiment(args, grpc, pb, service):
     largest_system = max(system["capacity"] for system in systems)
     sessions = [ServerSession(address, grpc, pb, service) for address in args.server]
     decisions = []
+    dropped_jobs = []
     try:
         with ThreadPoolExecutor(max_workers=len(sessions)) as executor:
             init_futures = []
@@ -436,14 +459,31 @@ def run_experiment(args, grpc, pb, service):
                     for response in horizon_responses
                 ]
                 workload = sample_workload(workloads, generator)
-                choice = choose_system(job, workload, systems, windows, horizons)
+                choice = choose_system(
+                    job,
+                    workload,
+                    systems,
+                    windows,
+                    horizons,
+                    args.max_time_limit,
+                )
+                if choice is None:
+                    dropped_jobs.append(
+                        {
+                            "job_id": original_job["job_id"],
+                            "app": workload["app"],
+                            "reason": "no_system_within_max_time_limit",
+                            "max_time_limit": args.max_time_limit,
+                        }
+                    )
+                    continue
                 append = pb.AppendJobsRequest(
                     requests=[
                         pb.JobAppendData(
                             submit_time=job["submit_time"],
                             num_nodes=job["num_nodes"],
                             queue=job["queue"],
-                            limit_time=choice["actual_time_limit"],
+                            limit_time=choice["submitted_time_limit"],
                             actual_run_time=choice["actual_duration"],
                         )
                     ]
@@ -480,6 +520,8 @@ def run_experiment(args, grpc, pb, service):
                                 "actual_duration",
                                 "predicted_time_limit",
                                 "actual_time_limit",
+                                "submitted_time_limit",
+                                "time_limit_doublings",
                                 "predicted_turnaround",
                             )
                         },
@@ -496,7 +538,7 @@ def run_experiment(args, grpc, pb, service):
             )
         return decisions, [
             response.finish_simulation.statistics for response in finish_responses
-        ], [system["system_id"] for system in systems]
+        ], [system["system_id"] for system in systems], dropped_jobs
     finally:
         for session in sessions:
             session.close()
@@ -524,6 +566,8 @@ def write_results(stream, decisions):
         "actual_duration",
         "predicted_time_limit",
         "actual_time_limit",
+        "submitted_time_limit",
+        "time_limit_doublings",
         "predicted_turnaround",
         "job_idx",
     )
@@ -571,7 +615,7 @@ def evaluation_metrics(decisions, statistics):
     }
 
 
-def write_summary(stream, statistics, system_ids, decisions):
+def write_summary(stream, statistics, system_ids, decisions, dropped_jobs=()):
     """Print per-system completion data and overall evaluation metrics."""
     for system_id, stats in zip(system_ids, statistics):
         print(
@@ -579,9 +623,16 @@ def write_summary(stream, statistics, system_ids, decisions):
             f"completed={stats.jobs_completed} makespan={stats.makespan:.6g}",
             file=stream,
         )
+    for job in dropped_jobs:
+        print(
+            f"dropped: job_id={job['job_id']} app={job['app']} "
+            f"reason={job['reason']} "
+            f"max_time_limit={job['max_time_limit']:.8g}",
+            file=stream,
+        )
     metrics = evaluation_metrics(decisions, statistics)
     print(
-        f"overall: jobs={len(decisions)} "
+        f"overall: jobs={len(decisions)} dropped_jobs={len(dropped_jobs)} "
         f"average_turnaround_time={metrics['average_turnaround_time']:.8g} "
         f"average_bounded_slowdown={metrics['average_bounded_slowdown']:.8g} "
         f"average_run_time={metrics['average_run_time']:.8g} "
@@ -612,10 +663,18 @@ def main():
         default=1.0,
         help="usable-capacity factor for queue horizon (0..1)",
     )
+    parser.add_argument(
+        "--max-time-limit",
+        type=float,
+        default=math.inf,
+        help="maximum submitted wall time (default: unlimited)",
+    )
     parser.add_argument("--session-name", default="performance-dispatch")
     args = parser.parse_args()
     if not 0.0 <= args.prediction_utilization <= 1.0:
         parser.error("--prediction-utilization must be in [0, 1]")
+    if math.isnan(args.max_time_limit) or args.max_time_limit <= 0:
+        parser.error("--max-time-limit must be positive")
     if args.backfill_policy.lower() != "easy":
         parser.error("performance dispatch requires --backfill-policy easy")
     if args.priority_policy.lower() not in {"fcfs", "fcfs_alt"}:
@@ -625,13 +684,15 @@ def main():
     repo_root = pathlib.Path(__file__).resolve().parents[2]
     grpc, pb, service, generated_dir = load_stubs(repo_root)
     try:
-        decisions, statistics, system_ids = run_experiment(args, grpc, pb, service)
+        decisions, statistics, system_ids, dropped_jobs = run_experiment(
+            args, grpc, pb, service
+        )
         if args.output:
             with args.output.open("w", newline="") as stream:
                 write_results(stream, decisions)
         else:
             write_results(sys.stdout, decisions)
-        write_summary(sys.stderr, statistics, system_ids, decisions)
+        write_summary(sys.stderr, statistics, system_ids, decisions, dropped_jobs)
     finally:
         generated_dir.cleanup()
 

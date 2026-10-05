@@ -66,16 +66,11 @@ def rajaperf_speedups(path, modes, reference="borax"):
 
 
 def rajaperf_rows(ground_truth, modes, speedups):
-    """Assign one machine-level RAJAPerf prediction to every available mode."""
+    """Assign one machine-level RAJAPerf prediction to every system mode."""
     rows = []
     for actual in ground_truth:
         row = {name: actual[name] for name in IDENTITY}
-        row.update(
-            {
-                mode: format(speedups[mode], ".17g") if actual[mode].strip() else ""
-                for mode in modes
-            }
-        )
+        row.update({mode: format(speedups[mode], ".17g") for mode in modes})
         rows.append(row)
     return rows
 

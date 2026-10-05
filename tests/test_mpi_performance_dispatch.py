@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 
 
-def run_dispatch(command, output, expected_jobs):
+def run_dispatch(command, output, expected_jobs, expected_dropped=0):
     result = subprocess.run(
         command + ["--output", str(output)],
         check=False,
@@ -46,8 +46,10 @@ def run_dispatch(command, output, expected_jobs):
         for name, value in re.findall(r"([a-z_]+)=([0-9.eE+-]+)", overall_lines[0])
     }
     assert int(metrics["jobs"]) == expected_jobs
-    assert metrics["average_turnaround_time"] >= metrics["average_run_time"]
-    assert metrics["average_bounded_slowdown"] >= 1.0
+    assert int(metrics["dropped_jobs"]) == expected_dropped
+    if expected_jobs:
+        assert metrics["average_turnaround_time"] >= metrics["average_run_time"]
+        assert metrics["average_bounded_slowdown"] >= 1.0
     return output.read_bytes(), metrics
 
 
@@ -62,7 +64,7 @@ def main():
     if Path(mpiexec).name == "srun" and "SLURM_JOB_ID" not in os.environ:
         print("SKIP: srun requires an active Slurm allocation")
         return 77
-    fixture_dir = Path(source_dir) / "experimental" / "multi-cluster"
+    fixture_dir = Path(source_dir) / "experimental" / "multi-cluster" / "testdata"
     requirements = {
         "cpu-solver": "CPU-only",
         "gpu-trainer": "GPU-only",
@@ -159,13 +161,44 @@ def main():
             actual = float(row["actual_duration"])
             predicted_limit = float(row["predicted_time_limit"])
             actual_limit = float(row["actual_time_limit"])
+            submitted_limit = float(row["submitted_time_limit"])
             turnaround = float(row["predicted_turnaround"])
             wait = float(row["estimated_wait"])
             assert abs(estimated - duration / predicted) < 1e-9
             assert abs(actual - duration / ground_truth) < 1e-9
             assert abs(predicted_limit - limit / predicted) < 1e-9
             assert abs(actual_limit - limit / ground_truth) < 1e-9
+            assert submitted_limit >= actual
+            assert int(row["time_limit_doublings"]) >= 0
             assert abs(turnaround - (wait + estimated)) < 1e-9
+
+        allowed_applications = temp_dir / "allowed-applications.csv"
+        with allowed_applications.open("w", newline="") as stream:
+            writer = csv.writer(stream)
+            writer.writerow(("app", "sys_requirement"))
+            for app, requirement in requirements.items():
+                if app != "gpu-trainer":
+                    writer.writerow((app, requirement))
+        allowlist_command = list(command)
+        allowlist_command[allowlist_command.index("--applications") + 1] = str(
+            allowed_applications
+        )
+        allowlist_output = temp_dir / "allowlist.csv"
+        run_dispatch(allowlist_command, allowlist_output, expected_jobs)
+        with allowlist_output.open(newline="") as stream:
+            allowlist_rows = list(csv.DictReader(stream))
+        assert {row["App"] for row in allowlist_rows} == {
+            "cpu-solver",
+            "portable-md",
+        }
+
+        dropped_output = temp_dir / "dropped.csv"
+        dropped_command = command + ["--max-time-limit", "1"]
+        dropped_bytes, dropped_metrics = run_dispatch(
+            dropped_command, dropped_output, 0, expected_jobs
+        )
+        assert dropped_bytes.count(b"\n") == 1
+        assert dropped_metrics["average_run_time"] == 0
 
 
 if __name__ == "__main__":
