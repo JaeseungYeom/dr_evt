@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Run and summarize the multi-cluster prediction-baseline study.
+"""Run and summarize the multi-cluster prediction-policy study.
 
 The study uses ten Lassen synthetic job streams and compares ideal,
-application-average, and RAJAPerf predictions.  A model-based case can be
-added later by passing ``--model-prediction``.
+application-average, and RAJAPerf predictions under the turnaround-aware and
+IPDPS24 dispatch policies.  Each combination is run with corrected predicted
+wall times and with wall time set to actual duration.  A model-based case can
+be added by passing ``--model-prediction``.
 """
 
 import argparse
@@ -22,6 +24,8 @@ METRICS = (
     "average_run_time",
     "average_speedup",
 )
+DISPATCH_POLICIES = ("turnaround", "IPDPS24")
+WALL_TIME_POLICIES = ("corrected-prediction", "actual-duration")
 OVERALL_RE = re.compile(
     r"^overall: jobs=(?P<jobs>\d+) dropped_jobs=(?P<dropped_jobs>\d+) "
     + r" ".join(rf"{name}=(?P<{name}>[-+0-9.eE]+)" for name in METRICS)
@@ -82,14 +86,32 @@ def validate_inputs(root, executable, cases):
     return traces
 
 
-def run_case(args, root, case, prediction, trace, run_number):
+def run_case(
+    args,
+    root,
+    dispatch_policy,
+    wall_time_policy,
+    case,
+    prediction,
+    trace,
+    run_number,
+):
     """Run one case unless its validated completion marker already exists."""
-    stem = f"{case}.run_{run_number:02d}"
+    stem = f"{dispatch_policy}.{wall_time_policy}.{case}.run_{run_number:02d}"
     dispatch = args.output_dir / f"{stem}.dispatch.csv"
     log = args.output_dir / f"{stem}.log"
     marker = args.output_dir / f"{stem}.complete"
+    marker_text = (
+        f"dispatch_policy={dispatch_policy}\n"
+        f"wall_time_policy={wall_time_policy}\n"
+    )
 
-    if marker.is_file() and dispatch.is_file() and log.is_file():
+    if (
+        marker.is_file()
+        and marker.read_text(encoding="utf-8") == marker_text
+        and dispatch.is_file()
+        and log.is_file()
+    ):
         try:
             record = parse_overall(log.read_text(encoding="utf-8"))
             with dispatch.open(encoding="utf-8") as stream:
@@ -123,6 +145,10 @@ def run_case(args, root, case, prediction, trace, run_number):
         str(args.seed),
         "--max-time-limit",
         str(args.max_time_limit),
+        "--dispatch-policy",
+        dispatch_policy,
+        "--wall-time-policy",
+        wall_time_policy,
         "--output",
         str(dispatch),
     ]
@@ -141,7 +167,7 @@ def run_case(args, root, case, prediction, trace, run_number):
             f"{stem} is incomplete: dispatch rows={rows}, "
             f"reported jobs={record['jobs']}, dropped={record['dropped_jobs']}"
         )
-    marker.write_text("complete\n", encoding="utf-8")
+    marker.write_text(marker_text, encoding="utf-8")
     return record
 
 
@@ -151,20 +177,42 @@ def write_results(output_dir, records):
     with per_run.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(
             stream,
-            fieldnames=("case", "run", "jobs", "dropped_jobs", *METRICS),
+            fieldnames=(
+                "dispatch_policy",
+                "wall_time_policy",
+                "case",
+                "run",
+                "jobs",
+                "dropped_jobs",
+                *METRICS,
+            ),
+            lineterminator="\n",
         )
         writer.writeheader()
         writer.writerows(records)
 
     grouped = {}
     for record in records:
-        grouped.setdefault(record["case"], []).append(record)
+        key = (
+            record["dispatch_policy"],
+            record["wall_time_policy"],
+            record["case"],
+        )
+        grouped.setdefault(key, []).append(record)
 
     summary_rows = []
-    for case, case_records in grouped.items():
+    for (dispatch_policy, wall_time_policy, case), case_records in grouped.items():
         if len(case_records) != 10:
-            raise ValueError(f"{case} has {len(case_records)} complete runs, expected 10")
-        row = {"case": case, "runs": len(case_records)}
+            raise ValueError(
+                f"{dispatch_policy}/{wall_time_policy}/{case} has "
+                f"{len(case_records)} complete runs, expected 10"
+            )
+        row = {
+            "dispatch_policy": dispatch_policy,
+            "wall_time_policy": wall_time_policy,
+            "case": case,
+            "runs": len(case_records),
+        }
         dropped = [record["dropped_jobs"] for record in case_records]
         row["dropped_jobs_mean"] = statistics.fmean(dropped)
         row["dropped_jobs_stddev"] = statistics.pstdev(dropped)
@@ -175,11 +223,18 @@ def write_results(output_dir, records):
         summary_rows.append(row)
 
     summary_csv = output_dir / "summary.csv"
-    fields = ["case", "runs", "dropped_jobs_mean", "dropped_jobs_stddev"] + [
+    fields = [
+        "dispatch_policy",
+        "wall_time_policy",
+        "case",
+        "runs",
+        "dropped_jobs_mean",
+        "dropped_jobs_stddev",
+    ] + [
         column for metric in METRICS for column in (f"{metric}_mean", f"{metric}_stddev")
     ]
     with summary_csv.open("w", newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=fields)
+        writer = csv.DictWriter(stream, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         writer.writerows(summary_rows)
 
@@ -195,8 +250,8 @@ def write_results(output_dir, records):
         "",
         "Values are the mean ± population standard deviation over 10 job traces.",
         "",
-        "| Prediction | Dropped jobs | Turnaround time | Bounded slowdown | Run time | Speedup |",
-        "|---|---:|---:|---:|---:|---:|",
+        "| Dispatch | Wall time | Prediction | Dropped jobs | Turnaround time | Bounded slowdown | Run time | Speedup |",
+        "|---|---|---|---:|---:|---:|---:|---:|",
     ]
     for row in summary_rows:
         cells = []
@@ -207,11 +262,12 @@ def write_results(output_dir, records):
             f"{row['dropped_jobs_stddev']:.6g}"
         )
         lines.append(
-            f"| {labels[row['case']]} | {dropped} | "
+            f"| {row['dispatch_policy']} | {row['wall_time_policy']} | "
+            f"{labels[row['case']]} | {dropped} | "
             + " | ".join(cells)
             + " |"
         )
-    if "model" not in grouped:
+    if not any(key[2] == "model" for key in grouped):
         lines.extend(
             ["", "Model-based prediction was not run because no model prediction table was supplied."]
         )
@@ -231,19 +287,24 @@ def plot_results(output_dir, summary_rows):
             "matplotlib is required for the plot; tables were still generated"
         ) from error
 
-    labels = [row["case"].replace("_", " ") for row in summary_rows]
+    labels = [
+        f"{row['dispatch_policy']}\n{row['wall_time_policy']}\n"
+        f"{row['case'].replace('_', ' ')}"
+        for row in summary_rows
+    ]
     titles = {
         "average_turnaround_time": "Average turnaround time",
         "average_bounded_slowdown": "Average bounded slowdown",
         "average_run_time": "Average run time",
         "average_speedup": "Average selected speedup",
     }
-    fig, axes = plt.subplots(2, 2, figsize=(11, 8))
+    fig, axes = plt.subplots(2, 2, figsize=(18, 10))
     colors = ["#4C78A8", "#F58518", "#54A24B", "#E45756"]
+    bar_colors = [colors[index % len(colors)] for index in range(len(labels))]
     for axis, metric in zip(axes.flat, METRICS):
         means = [row[f"{metric}_mean"] for row in summary_rows]
         errors = [row[f"{metric}_stddev"] for row in summary_rows]
-        axis.bar(labels, means, yerr=errors, capsize=4, color=colors[: len(labels)])
+        axis.bar(labels, means, yerr=errors, capsize=4, color=bar_colors)
         axis.set_title(titles[metric])
         axis.grid(axis="y", alpha=0.25)
         axis.tick_params(axis="x", rotation=15)
@@ -253,17 +314,36 @@ def plot_results(output_dir, summary_rows):
     plt.close(fig)
 
 
-def load_completed(output_dir, cases):
+def load_completed(output_dir, cases, dispatch_policies, wall_time_policies):
     """Load metrics for aggregate-only mode from validated run artifacts."""
     records = []
-    for case, _ in cases:
-        for run_number in range(1, 11):
-            stem = f"{case}.run_{run_number:02d}"
-            marker = output_dir / f"{stem}.complete"
-            log = output_dir / f"{stem}.log"
-            if not marker.is_file() or not log.is_file():
-                raise FileNotFoundError(f"missing completed run: {stem}")
-            records.append({"case": case, "run": run_number, **parse_overall(log.read_text())})
+    for dispatch_policy in dispatch_policies:
+        for wall_time_policy in wall_time_policies:
+            for case, _ in cases:
+                for run_number in range(1, 11):
+                    stem = (
+                        f"{dispatch_policy}.{wall_time_policy}.{case}."
+                        f"run_{run_number:02d}"
+                    )
+                    marker = output_dir / f"{stem}.complete"
+                    log = output_dir / f"{stem}.log"
+                    if not marker.is_file() or not log.is_file():
+                        raise FileNotFoundError(f"missing completed run: {stem}")
+                    expected_marker = (
+                        f"dispatch_policy={dispatch_policy}\n"
+                        f"wall_time_policy={wall_time_policy}\n"
+                    )
+                    if marker.read_text(encoding="utf-8") != expected_marker:
+                        raise ValueError(f"configuration mismatch for {stem}")
+                    records.append(
+                        {
+                            "dispatch_policy": dispatch_policy,
+                            "wall_time_policy": wall_time_policy,
+                            "case": case,
+                            "run": run_number,
+                            **parse_overall(log.read_text()),
+                        }
+                    )
     return records
 
 
@@ -281,6 +361,18 @@ def main():
     parser.add_argument("--ranks", type=int, default=6)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--max-time-limit", type=float, default=43200.0)
+    parser.add_argument(
+        "--dispatch-policy",
+        action="append",
+        choices=DISPATCH_POLICIES,
+        help="dispatch policy to run; repeat as needed (default: both)",
+    )
+    parser.add_argument(
+        "--wall-time-policy",
+        action="append",
+        choices=WALL_TIME_POLICIES,
+        help="wall-time policy to run; repeat as needed (default: both)",
+    )
     parser.add_argument("--model-prediction", type=Path)
     parser.add_argument("--aggregate-only", action="store_true")
     args = parser.parse_args()
@@ -291,19 +383,42 @@ def main():
     args.output_dir = args.output_dir.resolve()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     cases = prediction_cases(root, args.model_prediction)
+    dispatch_policies = args.dispatch_policy or list(DISPATCH_POLICIES)
+    wall_time_policies = args.wall_time_policy or list(WALL_TIME_POLICIES)
 
     if args.aggregate_only:
-        records = load_completed(args.output_dir, cases)
+        records = load_completed(
+            args.output_dir, cases, dispatch_policies, wall_time_policies
+        )
     else:
         if args.executable is None:
             parser.error("--executable is required unless --aggregate-only is used")
         args.executable = args.executable.resolve()
         traces = validate_inputs(root, args.executable, cases)
         records = []
-        for case, prediction in cases:
-            for run_number, trace in enumerate(traces, start=1):
-                record = run_case(args, root, case, prediction, trace, run_number)
-                records.append({"case": case, "run": run_number, **record})
+        for dispatch_policy in dispatch_policies:
+            for wall_time_policy in wall_time_policies:
+                for case, prediction in cases:
+                    for run_number, trace in enumerate(traces, start=1):
+                        record = run_case(
+                            args,
+                            root,
+                            dispatch_policy,
+                            wall_time_policy,
+                            case,
+                            prediction,
+                            trace,
+                            run_number,
+                        )
+                        records.append(
+                            {
+                                "dispatch_policy": dispatch_policy,
+                                "wall_time_policy": wall_time_policy,
+                                "case": case,
+                                "run": run_number,
+                                **record,
+                            }
+                        )
 
     summary_rows = write_results(args.output_dir, records)
     plot_results(args.output_dir, summary_rows)

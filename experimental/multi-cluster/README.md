@@ -46,7 +46,10 @@ also optional and defaults to Queue1; use `q_id` normally or `queue` with
 ```text
 #app,sys_requirement
 amg,CPU-only
-kripke.exe,GPU-portable
+xsbench,GPU-portable
+laghos,GPU-portable
+minife.x,GPU-portable
+minivite,CPU-only
 testdfft,CPU-only
 ```
 
@@ -77,7 +80,8 @@ host it. With the table above, requests of 27 through 30 nodes can also run on
 Tioga, and requests through 64 nodes can run on Mammoth. Only requests of 65
 through 256 nodes are limited by capacity to Dane and Tuolumne. A request
 larger than the largest configured machine is truncated to that largest size
-so it remains runnable. Both the original and effective node counts are
+so it remains runnable. The dispatcher writes a warning to standard error for
+each truncated request. Both the original and effective node counts are
 recorded in the decision output.
 
 Performance-column names are inferred from the machine rows. A CPU-only
@@ -222,15 +226,31 @@ from simulation statistics. This intentionally optimistic assumption isolates
 placement quality from the cost of discovering a sufficient wall-time limit.
 
 Candidate systems whose ground-truth runtime exceeds `--max-time-limit` are
-discarded before placement, regardless of their waiting time. The smallest
-predicted turnaround among the remaining systems wins; ties use estimated wait
-and then systems-table order. If no measured, capacity-compatible system can
-finish within the maximum, the job is dropped. The wait estimate uses the
-corrected submitted time limit. Only the selected worker receives the job, with
-that limit and the actual duration. Thus prediction error affects placement,
-while the resulting queue state reflects the workload's realized performance.
-The next arrival observes all earlier decisions, so dispatch remains online
-even though inputs are validated before the run.
+discarded before placement, regardless of their waiting time. If no measured,
+capacity-compatible system can finish within the maximum, the job is dropped.
+
+`--dispatch-policy` selects one of two placement rules:
+
+- `turnaround` chooses the smallest predicted turnaround, breaking ties by
+  estimated wait and then systems-table order.
+- `IPDPS24` implements Algorithm 2 from D. Nichols et al., "Predicting
+  Cross-Architecture Performance of Parallel Programs," IEEE IPDPS'24. It
+  chooses the highest predicted relative performance among feasible systems
+  with enough nodes available immediately. If every feasible system is full,
+  it chooses the highest predicted relative performance over all feasible
+  systems and lets that system queue the job. Ties use systems-table order.
+
+`--wall-time-policy corrected-prediction` uses the doubling behavior described
+above. `--wall-time-policy actual-duration` instead submits a time limit exactly
+equal to the selected system's ground-truth runtime. This second policy never
+changes or truncates the runtime; it changes only the requested time limit.
+
+The wait estimate uses the submitted time limit. Only the selected worker
+receives the job, with that limit and the actual duration. Thus prediction
+error affects placement, while the resulting queue state reflects the
+workload's realized performance. The next arrival observes all earlier
+decisions, so dispatch remains online even though inputs are validated before
+the run.
 
 ## Build and run
 
@@ -246,11 +266,40 @@ mpirun -np 6 build/mpi_performance_dispatch \
   --systems experimental/multi-cluster/machines.csv \
   --seed 7 \
   --max-time-limit 43200 \
+  --dispatch-policy IPDPS24 \
+  --wall-time-policy corrected-prediction \
   --output dispatch-decisions.csv
 ```
 
 Use `srun -n 6` instead of `mpirun -np 6` inside an appropriate Slurm
 allocation. MPI and Ser20 are required; gRPC and Python are not.
+
+### Prediction-study matrix
+
+The prediction-study runner executes both dispatch policies (`turnaround` and
+`IPDPS24`) with both wall-time policies (`corrected-prediction` and
+`actual-duration`) for the ideal, application-average, and RAJAPerf prediction
+tables. Each of these 12 configurations runs on all ten synthetic traces, for
+120 runs by default:
+
+```bash
+python experimental/multi-cluster/run_prediction_study.py \
+  --executable "${CMAKE_INSTALL_PREFIX}/bin/mpi_performance_dispatch"
+```
+
+Repeat `--dispatch-policy` or `--wall-time-policy` to select a subset. For
+example, the paper policy with oracle wall times is:
+
+```bash
+python experimental/multi-cluster/run_prediction_study.py \
+  --executable "${CMAKE_INSTALL_PREFIX}/bin/mpi_performance_dispatch" \
+  --dispatch-policy IPDPS24 \
+  --wall-time-policy actual-duration
+```
+
+Output filenames and completion markers include the dispatch and wall-time
+policy names. This prevents results from different configurations from being
+mistaken for one another.
 
 ## Output
 
@@ -273,8 +322,8 @@ recorded in the log instead:
 | `actual_duration` | Ground-truth duration submitted to DR_EVT. |
 | `predicted_time_limit` | Wall-time limit used to estimate the dispatch candidate. |
 | `actual_time_limit` | Ground-truth-scaled wall-time limit retained for comparison. |
-| `submitted_time_limit` | Predicted limit after doubling and applying the configured maximum; this is submitted to DR_EVT. |
-| `time_limit_doublings` | Number of pre-submission doublings needed to cover the known actual runtime. |
+| `submitted_time_limit` | Limit submitted to DR_EVT: the corrected predicted limit or the exact ground-truth runtime, according to `--wall-time-policy`. |
+| `time_limit_doublings` | Number of pre-submission doublings needed by `corrected-prediction`; zero for `actual-duration`. |
 | `predicted_turnaround` | `estimated_wait + estimated_duration`. |
 | `job_idx` | Worker-local DR_EVT job identifier. |
 
@@ -313,6 +362,8 @@ python3 python/grpc_mpi_launcher.py --mpi-ranks 6 \
   --systems experimental/multi-cluster/machines.csv \
   --seed 7 \
   --max-time-limit 43200 \
+  --dispatch-policy IPDPS24 \
+  --wall-time-policy corrected-prediction \
   --output grpc-dispatch-decisions.csv
 ```
 

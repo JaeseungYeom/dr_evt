@@ -13,6 +13,7 @@ import grpc_performance_dispatch as dispatch
 import build_performance_tables as build_table
 import build_prediction_baselines as baselines
 import plot_relative_performance as performance_plot
+import run_prediction_study as prediction_study
 from grpc_performance_dispatch import (
     adjusted_time_limit,
     choose_system,
@@ -450,10 +451,77 @@ class PerformanceDispatchTests(unittest.TestCase):
         self.assertEqual(choice["estimated_duration"], 20)
         self.assertEqual(choice["actual_duration"], 160)
 
+    def test_ipdps24_chooses_fastest_system_that_is_available_now(self):
+        systems = self.systems[:2]
+        workload = {
+            **self.workloads["cpu-solver"][0],
+            "performance": [
+                {"CPU": {"ground_truth": 1.0, "predicted": 4.0}, "GPU": None},
+                {"CPU": {"ground_truth": 1.0, "predicted": 2.0}, "GPU": None},
+            ],
+        }
+        choice = choose_system(
+            {
+                "job_id": "ipdps24-available",
+                "num_nodes": 8,
+                "duration": 80,
+                "limit_time": 100,
+            },
+            workload,
+            systems,
+            [window(0, 0, ((20, 8),)), window(0, systems[1]["capacity"])],
+            [0, 0],
+            dispatch_policy="IPDPS24",
+        )
+        self.assertEqual(choice["system_id"], "mammoth")
+
+    def test_ipdps24_chooses_fastest_system_when_all_are_full(self):
+        systems = self.systems[:2]
+        workload = {
+            **self.workloads["cpu-solver"][0],
+            "performance": [
+                {"CPU": {"ground_truth": 1.0, "predicted": 4.0}, "GPU": None},
+                {"CPU": {"ground_truth": 1.0, "predicted": 2.0}, "GPU": None},
+            ],
+        }
+        choice = choose_system(
+            {
+                "job_id": "ipdps24-full",
+                "num_nodes": 8,
+                "duration": 80,
+                "limit_time": 100,
+            },
+            workload,
+            systems,
+            [window(0, 0, ((20, 8),)), window(0, 0, ((2, 8),))],
+            [0, 0],
+            dispatch_policy="IPDPS24",
+        )
+        self.assertEqual(choice["system_id"], "dane")
+
     def test_predicted_time_limit_is_doubled_and_capped(self):
         self.assertEqual(adjusted_time_limit(10, 35, 100), (40, 2))
         self.assertEqual(adjusted_time_limit(10, 120, 100), (100, 4))
         self.assertEqual(adjusted_time_limit(40, 40, 100), (40, 0))
+
+    def test_actual_duration_wall_time_is_exact(self):
+        system = self.systems[0]
+        choice = choose_system(
+            {
+                "job_id": "actual-duration-limit",
+                "num_nodes": 8,
+                "duration": 80,
+                "limit_time": 10,
+            },
+            self.workloads["cpu-solver"][0],
+            [system],
+            [window(0, system["capacity"])],
+            [0],
+            max_time_limit=1000,
+            wall_time_policy="actual-duration",
+        )
+        self.assertEqual(choice["submitted_time_limit"], choice["actual_duration"])
+        self.assertEqual(choice["time_limit_doublings"], 0)
 
     def test_runtime_limit_filters_systems_before_wait_comparison(self):
         systems = self.systems[:2]
@@ -507,6 +575,8 @@ class PerformanceDispatchTests(unittest.TestCase):
             queue_impl="circular",
             prediction_utilization=1.0,
             max_time_limit=1000.0,
+            dispatch_policy="turnaround",
+            wall_time_policy="corrected-prediction",
             session_name="test",
         )
         FakeSession.instances = []
@@ -561,6 +631,25 @@ class PerformanceDispatchTests(unittest.TestCase):
             all(session.run_time_mode == "actual" for session in FakeSession.instances)
         )
 
+        oversized = dict(dispatch.read_arrivals(args.jobs)[0])
+        oversized["num_nodes"] = 300
+        FakeSession.instances = []
+        warning = io.StringIO()
+        with (
+            patch.object(dispatch, "ServerSession", FakeSession),
+            patch.object(dispatch, "read_arrivals", return_value=[oversized]),
+            patch("sys.stderr", warning),
+        ):
+            oversized_decisions, _, _, _ = dispatch.run_experiment(
+                args, None, FakeMessages, None
+            )
+        self.assertEqual(oversized_decisions[0]["effective_nodes"], 256)
+        self.assertIn(
+            "warning: job_id=job-1 requested_nodes=300 effective_nodes=256 "
+            "reason=exceeds_largest_system",
+            warning.getvalue(),
+        )
+
         args.max_time_limit = 1.0
         FakeSession.instances = []
         with patch.object(dispatch, "ServerSession", FakeSession):
@@ -610,6 +699,45 @@ class PerformanceDispatchTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "does not match dispatched"):
             evaluation_metrics(decisions[:2], statistics)
+
+    def test_prediction_study_aggregates_full_policy_matrix(self):
+        records = []
+        for dispatch_policy in prediction_study.DISPATCH_POLICIES:
+            for wall_time_policy in prediction_study.WALL_TIME_POLICIES:
+                for case in ("ideal", "app_avg", "rajaperf"):
+                    for run in range(1, 11):
+                        records.append(
+                            {
+                                "dispatch_policy": dispatch_policy,
+                                "wall_time_policy": wall_time_policy,
+                                "case": case,
+                                "run": run,
+                                "jobs": 100,
+                                "dropped_jobs": 0,
+                                **{
+                                    metric: float(run)
+                                    for metric in prediction_study.METRICS
+                                },
+                            }
+                        )
+        with tempfile.TemporaryDirectory() as directory:
+            output = pathlib.Path(directory)
+            summary = prediction_study.write_results(output, records)
+            per_run = (output / "metrics_per_run.csv").read_bytes()
+
+        self.assertEqual(len(summary), 12)
+        self.assertNotIn(b"\r\n", per_run)
+        self.assertEqual(
+            {
+                (row["dispatch_policy"], row["wall_time_policy"])
+                for row in summary
+            },
+            {
+                (dispatch_policy, wall_time_policy)
+                for dispatch_policy in prediction_study.DISPATCH_POLICIES
+                for wall_time_policy in prediction_study.WALL_TIME_POLICIES
+            },
+        )
 
 
 if __name__ == "__main__":
