@@ -5,6 +5,7 @@ import argparse
 import csv
 import math
 import pathlib
+import sys
 
 
 IDENTITY_COLUMNS = {"App", "Args", "Ranks", "app", "args", "ranks"}
@@ -45,6 +46,7 @@ def load_points(ground_truth_path, prediction_path, requested_systems=None):
         if len(set(systems)) != len(systems):
             raise ValueError("the requested systems resolve to duplicates")
         points = {system: [] for system in systems}
+        skipped = {system: 0 for system in systems}
         for row_number, (row, predicted_row) in enumerate(
             zip(actual_reader, predicted_reader, strict=True), start=2
         ):
@@ -60,9 +62,8 @@ def load_points(ground_truth_path, prediction_path, requested_systems=None):
                 if not actual_text and not predicted_text:
                     continue
                 if not actual_text or not predicted_text:
-                    raise ValueError(
-                        f"row {row_number}: incomplete {system} pair"
-                    )
+                    skipped[system] += 1
+                    continue
                 actual = float(actual_text)
                 predicted = float(predicted_text)
                 if (
@@ -73,6 +74,15 @@ def load_points(ground_truth_path, prediction_path, requested_systems=None):
                 ):
                     raise ValueError(f"row {row_number}: invalid {system} pair")
                 points[system].append((actual, predicted, app))
+        skipped = {system: count for system, count in skipped.items() if count}
+        if skipped:
+            detail = ", ".join(
+                f"{system}={count}" for system, count in skipped.items()
+            )
+            print(
+                f"warning: skipped unpaired actual/predicted cells: {detail}",
+                file=sys.stderr,
+            )
     return points
 
 
@@ -176,6 +186,8 @@ def plot_points(points, output, logarithmic=True):
     figure.tight_layout(rect=(0, 0.08, 1, 0.96))
     output.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output, dpi=180, bbox_inches="tight")
+    if output.suffix.lower() != ".pdf":
+        figure.savefig(output.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(figure)
 
 

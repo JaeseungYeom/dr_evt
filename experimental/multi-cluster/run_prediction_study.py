@@ -3,7 +3,7 @@
 
 The study uses ten Lassen synthetic job streams and compares ideal,
 application-average, and RAJAPerf predictions under the turnaround-aware and
-IPDPS24 dispatch policies.  Each combination is run with corrected predicted
+IPDPS24 dispatch policies.  Each combination is run with adapted predicted
 wall times and with wall time set to actual duration.  A model-based case can
 be added by passing ``--model-prediction``.
 """
@@ -25,7 +25,8 @@ METRICS = (
     "average_speedup",
 )
 DISPATCH_POLICIES = ("turnaround", "IPDPS24")
-WALL_TIME_POLICIES = ("corrected-prediction", "actual-duration")
+WALL_TIME_POLICIES = ("adapted-prediction", "actual-duration")
+JOBS_PER_TRACE = 100_000
 OVERALL_RE = re.compile(
     r"^overall: jobs=(?P<jobs>\d+) dropped_jobs=(?P<dropped_jobs>\d+) "
     + r" ".join(rf"{name}=(?P<{name}>[-+0-9.eE]+)" for name in METRICS)
@@ -81,8 +82,10 @@ def validate_inputs(root, executable, cases):
     for trace in traces:
         with trace.open(encoding="utf-8") as stream:
             rows = sum(1 for _ in stream) - 1
-        if rows != 100_000:
-            raise ValueError(f"{trace} contains {rows} jobs, expected 100000")
+        if rows != JOBS_PER_TRACE:
+            raise ValueError(
+                f"{trace} contains {rows} jobs, expected {JOBS_PER_TRACE}"
+            )
     return traces
 
 
@@ -118,7 +121,7 @@ def run_case(
                 rows = sum(1 for _ in stream) - 1
             if (
                 rows == record["jobs"]
-                and rows + record["dropped_jobs"] == 100_000
+                and rows + record["dropped_jobs"] == JOBS_PER_TRACE
             ):
                 print(f"skip validated {stem}", flush=True)
                 return record
@@ -162,7 +165,10 @@ def run_case(
     record = parse_overall(combined)
     with dispatch.open(encoding="utf-8") as stream:
         rows = sum(1 for _ in stream) - 1
-    if rows != record["jobs"] or rows + record["dropped_jobs"] != 100_000:
+    if (
+        rows != record["jobs"]
+        or rows + record["dropped_jobs"] != JOBS_PER_TRACE
+    ):
         raise RuntimeError(
             f"{stem} is incomplete: dispatch rows={rows}, "
             f"reported jobs={record['jobs']}, dropped={record['dropped_jobs']}"
@@ -173,23 +179,24 @@ def run_case(
 
 def write_results(output_dir, records):
     """Write per-run data and ten-run aggregate tables."""
-    per_run = output_dir / "metrics_per_run.csv"
-    with per_run.open("w", newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(
-            stream,
-            fieldnames=(
-                "dispatch_policy",
-                "wall_time_policy",
-                "case",
-                "run",
-                "jobs",
-                "dropped_jobs",
-                *METRICS,
-            ),
-            lineterminator="\n",
-        )
-        writer.writeheader()
-        writer.writerows(records)
+    per_run_fields = (
+        "dispatch_policy",
+        "wall_time_policy",
+        "case",
+        "run",
+        "jobs",
+        "dropped_jobs",
+        *METRICS,
+    )
+    for filename in ("summary.csv", "metrics_per_run.csv"):
+        with (output_dir / filename).open(
+            "w", newline="", encoding="utf-8"
+        ) as stream:
+            writer = csv.DictWriter(
+                stream, fieldnames=per_run_fields, lineterminator="\n"
+            )
+            writer.writeheader()
+            writer.writerows(records)
 
     grouped = {}
     for record in records:
@@ -222,7 +229,7 @@ def write_results(output_dir, records):
             row[f"{metric}_stddev"] = statistics.pstdev(values)
         summary_rows.append(row)
 
-    summary_csv = output_dir / "summary.csv"
+    summary_csv = output_dir / "summary_aggregate.csv"
     fields = [
         "dispatch_policy",
         "wall_time_policy",
@@ -250,7 +257,7 @@ def write_results(output_dir, records):
         "",
         "Values are the mean ± population standard deviation over 10 job traces.",
         "",
-        "| Dispatch | Wall time | Prediction | Dropped jobs | Turnaround time | Bounded slowdown | Run time | Speedup |",
+        "| Dispatch | Wall time | Prediction | Dropped jobs | Turnaround time (sec) | Bounded slowdown | Run time (sec) | Speedup |",
         "|---|---|---|---:|---:|---:|---:|---:|",
     ]
     for row in summary_rows:
@@ -287,30 +294,73 @@ def plot_results(output_dir, summary_rows):
             "matplotlib is required for the plot; tables were still generated"
         ) from error
 
-    labels = [
-        f"{row['dispatch_policy']}\n{row['wall_time_policy']}\n"
-        f"{row['case'].replace('_', ' ')}"
+    cases = list(dict.fromkeys(row["case"] for row in summary_rows))
+    configurations = list(
+        dict.fromkeys(
+            (row["dispatch_policy"], row["wall_time_policy"])
+            for row in summary_rows
+        )
+    )
+    indexed = {
+        (row["dispatch_policy"], row["wall_time_policy"], row["case"]): row
         for row in summary_rows
-    ]
-    titles = {
-        "average_turnaround_time": "Average turnaround time",
-        "average_bounded_slowdown": "Average bounded slowdown",
-        "average_run_time": "Average run time",
-        "average_speedup": "Average selected speedup",
     }
-    fig, axes = plt.subplots(2, 2, figsize=(18, 10))
+    case_labels = {
+        "ideal": "Ideal",
+        "model": "Model-based",
+        "app_avg": "Application average",
+        "rajaperf": "RAJAPerf",
+    }
+    configuration_labels = {
+        ("turnaround", "adapted-prediction"): "Turnaround",
+        ("turnaround", "actual-duration"): "Turnaround / limit = duration",
+        ("IPDPS24", "adapted-prediction"): "IPDPS24",
+        ("IPDPS24", "actual-duration"): "IPDPS24 / limit = duration",
+    }
+    titles = {
+        "average_turnaround_time": "Average turnaround time (sec)",
+        "average_bounded_slowdown": "Average bounded slowdown",
+        "average_run_time": "Average run time (sec)",
+        "average_speedup": "Average speedup",
+    }
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
     colors = ["#4C78A8", "#F58518", "#54A24B", "#E45756"]
-    bar_colors = [colors[index % len(colors)] for index in range(len(labels))]
+    x_positions = list(range(len(cases)))
+    width = min(0.18, 0.8 / max(len(configurations), 1))
     for axis, metric in zip(axes.flat, METRICS):
-        means = [row[f"{metric}_mean"] for row in summary_rows]
-        errors = [row[f"{metric}_stddev"] for row in summary_rows]
-        axis.bar(labels, means, yerr=errors, capsize=4, color=bar_colors)
+        for index, configuration in enumerate(configurations):
+            offset = (index - (len(configurations) - 1) / 2) * width
+            positions = [position + offset for position in x_positions]
+            rows = [indexed[(*configuration, case)] for case in cases]
+            axis.bar(
+                positions,
+                [row[f"{metric}_mean"] for row in rows],
+                width,
+                yerr=[row[f"{metric}_stddev"] for row in rows],
+                capsize=3,
+                color=colors[index % len(colors)],
+                label=configuration_labels.get(
+                    configuration, " / ".join(configuration)
+                ),
+            )
         axis.set_title(titles[metric])
+        axis.set_xticks(x_positions)
+        axis.set_xticklabels(
+            [case_labels.get(case, case.replace("_", " ")) for case in cases]
+        )
         axis.grid(axis="y", alpha=0.25)
-        axis.tick_params(axis="x", rotation=15)
     fig.suptitle("Multi-cluster prediction policies (mean ± SD, 10 traces)")
-    fig.tight_layout()
+    handles, labels = axes.flat[0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc="outside lower center",
+        ncol=min(2, len(labels)),
+        frameon=False,
+    )
+    fig.tight_layout(rect=(0, 0.1, 1, 0.96))
     fig.savefig(output_dir / "summary.png", dpi=180)
+    fig.savefig(output_dir / "summary.pdf")
     plt.close(fig)
 
 
@@ -321,27 +371,47 @@ def load_completed(output_dir, cases, dispatch_policies, wall_time_policies):
         for wall_time_policy in wall_time_policies:
             for case, _ in cases:
                 for run_number in range(1, 11):
-                    stem = (
+                    qualified_stem = (
                         f"{dispatch_policy}.{wall_time_policy}.{case}."
                         f"run_{run_number:02d}"
                     )
-                    marker = output_dir / f"{stem}.complete"
-                    log = output_dir / f"{stem}.log"
-                    if not marker.is_file() or not log.is_file():
-                        raise FileNotFoundError(f"missing completed run: {stem}")
                     expected_marker = (
                         f"dispatch_policy={dispatch_policy}\n"
                         f"wall_time_policy={wall_time_policy}\n"
                     )
+                    marker = output_dir / f"{qualified_stem}.complete"
+                    log = output_dir / f"{qualified_stem}.log"
+                    dispatch = output_dir / f"{qualified_stem}.dispatch.csv"
+                    if not (
+                        marker.is_file() and log.is_file() and dispatch.is_file()
+                    ):
+                        raise FileNotFoundError(
+                            f"missing completed run: {qualified_stem}"
+                        )
+
                     if marker.read_text(encoding="utf-8") != expected_marker:
-                        raise ValueError(f"configuration mismatch for {stem}")
+                        raise ValueError(
+                            f"configuration mismatch for {qualified_stem}"
+                        )
+                    record = parse_overall(log.read_text(encoding="utf-8"))
+                    with dispatch.open(encoding="utf-8") as stream:
+                        rows = sum(1 for _ in stream) - 1
+                    if (
+                        rows != record["jobs"]
+                        or rows + record["dropped_jobs"] != JOBS_PER_TRACE
+                    ):
+                        raise ValueError(
+                            f"incomplete run {qualified_stem}: dispatch rows={rows}, "
+                            f"reported jobs={record['jobs']}, "
+                            f"dropped={record['dropped_jobs']}"
+                        )
                     records.append(
                         {
                             "dispatch_policy": dispatch_policy,
                             "wall_time_policy": wall_time_policy,
                             "case": case,
                             "run": run_number,
-                            **parse_overall(log.read_text()),
+                            **record,
                         }
                     )
     return records

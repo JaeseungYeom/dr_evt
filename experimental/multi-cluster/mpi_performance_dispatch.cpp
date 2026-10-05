@@ -58,7 +58,7 @@ constexpr int kPayloadTag = 101;
 enum class Operation : std::uint8_t { Snapshot, Append, Finish };
 enum class DispatchPolicy : std::uint8_t { Turnaround, Ipdps24 };
 enum class WallTimePolicy : std::uint8_t {
-  CorrectedPrediction,
+  AdaptedPrediction,
   ActualDuration
 };
 
@@ -171,7 +171,7 @@ struct Options {
   double prediction_utilization = 1.0;
   double max_time_limit = std::numeric_limits<double>::infinity();
   DispatchPolicy dispatch_policy = DispatchPolicy::Turnaround;
-  WallTimePolicy wall_time_policy = WallTimePolicy::CorrectedPrediction;
+  WallTimePolicy wall_time_policy = WallTimePolicy::AdaptedPrediction;
 };
 
 [[noreturn]] void usage(const char *program, const std::string &error = {}) {
@@ -189,8 +189,8 @@ struct Options {
                "(default: unlimited)\n"
             << "  --dispatch-policy POLICY  turnaround or IPDPS24 "
                "(default: turnaround)\n"
-            << "  --wall-time-policy POLICY corrected-prediction or "
-               "actual-duration (default: corrected-prediction)\n"
+            << "  --wall-time-policy POLICY adapted-prediction or "
+               "actual-duration (default: adapted-prediction)\n"
             << "  --output PATH             decision CSV (default: stdout)\n";
   throw std::invalid_argument(error.empty() ? "help requested" : error);
 }
@@ -233,12 +233,12 @@ Options parse_options(int argc, char **argv) {
         usage(argv[0], "--dispatch-policy must be turnaround or IPDPS24");
     } else if (arg == "--wall-time-policy") {
       const auto value = option_value(i, argc, argv, arg);
-      if (value == "corrected-prediction")
-        options.wall_time_policy = WallTimePolicy::CorrectedPrediction;
+      if (value == "adapted-prediction")
+        options.wall_time_policy = WallTimePolicy::AdaptedPrediction;
       else if (value == "actual-duration")
         options.wall_time_policy = WallTimePolicy::ActualDuration;
       else
-        usage(argv[0], "--wall-time-policy must be corrected-prediction or "
+        usage(argv[0], "--wall-time-policy must be adapted-prediction or "
                        "actual-duration");
     }
     else if (arg == "--output")
@@ -826,11 +826,14 @@ choose_system(const Job &job, const Workload &workload,
       continue;
     const double predicted_limit = job.limit_time / performance->predicted;
     const double actual_limit = job.limit_time / performance->ground_truth;
-    const auto [submitted_limit, doublings] =
+    auto [submitted_limit, doublings] =
         wall_time_policy == WallTimePolicy::ActualDuration
             ? std::pair{actual_duration, std::uint32_t{0}}
             : adjust_time_limit(predicted_limit, actual_duration,
                                 max_time_limit);
+    submitted_limit = std::ceil(submitted_limit);
+    if (submitted_limit > max_time_limit)
+      continue;
     const double wait =
         estimate_wait(snapshots[i].window, job.num_nodes, submitted_limit,
                       snapshots[i].prediction_horizon);

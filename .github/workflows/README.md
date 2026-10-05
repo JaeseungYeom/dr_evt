@@ -32,7 +32,7 @@ This directory contains GitHub Actions workflows for automated testing.
 - Python API tests (18)
 - Market package platform and job-stream tests (12)
 - gRPC client/server tests (2)
-- Append-job tests (20 C++ + 5 optional gRPC checks)
+- Append-job tests (23 C++ + 5 optional gRPC checks)
 - FCFS/EASY backfill-window focused rerun of the five-check gRPC binary
 - Synchronized single-coordinator gRPC test
 - Progressive-loading tests (C++ + CLI)
@@ -90,7 +90,7 @@ Total tests referenced by the full suite:
 | Python API | 18 | CI runner |
 | Market package | 12 | CI runner; platforms, jobs and trace preparation |
 | gRPC client/server | 2 | CI runner |
-| Append-job | 25: 20 C++ + 5 optional gRPC checks | CI runner |
+| Append-job | 28: 23 C++ + 5 optional gRPC checks | CI runner |
 | FCFS/EASY backfill-window gRPC | 5 repeated checks; 1 targeted | CI runner |
 | Single-coordinator gRPC | 1 | CI runner; synchronized independent systems |
 | Progressive loading | 11 C++ + 5 CLI | CI runner |

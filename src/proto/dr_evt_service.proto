@@ -121,7 +121,7 @@ message AppendJobRequest {
     // Numeric queue ID by default (e.g. "1" for Queue1), or a legacy queue
     // name (e.g. "pbatch") when DR_EVT_LEGACY_QUEUE_INPUT is enabled.
     string queue = 3;
-    double limit_time = 4;  // user-estimated time limit, in seconds
+    double limit_time = 4;  // positive whole-second time limit
     optional double actual_run_time = 5; // known execution time, if available
 }
 
@@ -132,7 +132,7 @@ message JobAppendData {
     uint32 num_nodes = 2;
     // Uses the same compile-time queue representation as AppendJobRequest.
     string queue = 3;
-    double limit_time = 4;
+    double limit_time = 4;  // positive whole-second time limit
     optional double actual_run_time = 5;
 }
 

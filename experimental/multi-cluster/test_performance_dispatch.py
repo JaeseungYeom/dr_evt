@@ -2,6 +2,7 @@
 """Unit tests for the Python/gRPC multi-cluster dispatcher policy."""
 
 import io
+import math
 import pathlib
 import random
 import tempfile
@@ -287,6 +288,22 @@ class PerformanceDispatchTests(unittest.TestCase):
             points = performance_plot.load_points(actual, predicted, ["tuolumne"])
         self.assertEqual(points, {"tuolumne-gpu": [(1.25, 1.5, "solver")]})
 
+    def test_plot_skips_unpaired_prediction_cells(self):
+        with tempfile.TemporaryDirectory() as directory:
+            actual = pathlib.Path(directory) / "actual.csv"
+            predicted = pathlib.Path(directory) / "predicted.csv"
+            actual.write_text(
+                "App,Args,Ranks,dane\nsolver,x,8,\n", encoding="utf-8"
+            )
+            predicted.write_text(
+                "App,Args,Ranks,dane\nsolver,x,8,1.5\n", encoding="utf-8"
+            )
+            with patch("sys.stderr", new=io.StringIO()) as errors:
+                points = performance_plot.load_points(actual, predicted)
+
+        self.assertEqual(points, {"dane": []})
+        self.assertIn("dane=1", errors.getvalue())
+
     def test_application_average_baseline_groups_by_app_rank_and_mode(self):
         rows = [
             {"App": "a", "Args": "x", "Ranks": "4", "dane": "1"},
@@ -504,13 +521,13 @@ class PerformanceDispatchTests(unittest.TestCase):
         self.assertEqual(adjusted_time_limit(10, 120, 100), (100, 4))
         self.assertEqual(adjusted_time_limit(40, 40, 100), (40, 0))
 
-    def test_actual_duration_wall_time_is_exact(self):
+    def test_actual_duration_wall_time_is_rounded_up(self):
         system = self.systems[0]
         choice = choose_system(
             {
                 "job_id": "actual-duration-limit",
                 "num_nodes": 8,
-                "duration": 80,
+                "duration": 80.25,
                 "limit_time": 10,
             },
             self.workloads["cpu-solver"][0],
@@ -520,7 +537,12 @@ class PerformanceDispatchTests(unittest.TestCase):
             max_time_limit=1000,
             wall_time_policy="actual-duration",
         )
-        self.assertEqual(choice["submitted_time_limit"], choice["actual_duration"])
+        self.assertEqual(
+            choice["submitted_time_limit"], math.ceil(choice["actual_duration"])
+        )
+        self.assertGreaterEqual(
+            choice["submitted_time_limit"], choice["actual_duration"]
+        )
         self.assertEqual(choice["time_limit_doublings"], 0)
 
     def test_runtime_limit_filters_systems_before_wait_comparison(self):
@@ -576,7 +598,7 @@ class PerformanceDispatchTests(unittest.TestCase):
             prediction_utilization=1.0,
             max_time_limit=1000.0,
             dispatch_policy="turnaround",
-            wall_time_policy="corrected-prediction",
+            wall_time_policy="adapted-prediction",
             session_name="test",
         )
         FakeSession.instances = []
@@ -724,9 +746,14 @@ class PerformanceDispatchTests(unittest.TestCase):
             output = pathlib.Path(directory)
             summary = prediction_study.write_results(output, records)
             per_run = (output / "metrics_per_run.csv").read_bytes()
+            complete_summary = (output / "summary.csv").read_bytes()
+            aggregate_summary = (output / "summary_aggregate.csv").read_text()
 
         self.assertEqual(len(summary), 12)
         self.assertNotIn(b"\r\n", per_run)
+        self.assertEqual(complete_summary, per_run)
+        self.assertEqual(len(complete_summary.splitlines()), 121)
+        self.assertEqual(len(aggregate_summary.splitlines()), 13)
         self.assertEqual(
             {
                 (row["dispatch_policy"], row["wall_time_policy"])
@@ -738,7 +765,6 @@ class PerformanceDispatchTests(unittest.TestCase):
                 for wall_time_policy in prediction_study.WALL_TIME_POLICIES
             },
         )
-
 
 if __name__ == "__main__":
     unittest.main()
