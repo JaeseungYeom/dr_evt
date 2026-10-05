@@ -580,7 +580,9 @@ public:
      */
     double utilization;
     tdiff_t avg_wait_time;       ///< Mean completed-job wait duration.
+    tdiff_t avg_run_time;        ///< Mean completed-job execution duration.
     tdiff_t avg_turnaround_time; ///< Mean completed-job submit-to-end duration.
+    double avg_bounded_slowdown; ///< Mean bounded slowdown (10-second bound).
     sim_time_t makespan;         ///< Latest completion time in the trace.
   };
 

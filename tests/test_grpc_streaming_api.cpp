@@ -465,7 +465,9 @@ bool test_warm_start(const std::string &server_address,
         std::fabs(stats.resource_area() - 51.0) < 1e-12 &&
         std::fabs(stats.utilization() - 0.85) < 1e-12 &&
         std::fabs(stats.avg_wait_time() - 1.5) < 1e-12 &&
+        std::fabs(stats.avg_run_time() - 3.0) < 1e-12 &&
         std::fabs(stats.avg_turnaround_time() - 4.5) < 1e-12 &&
+        std::fabs(stats.avg_bounded_slowdown() - 1.0) < 1e-12 &&
         std::fabs(stats.makespan() - 16.0) < 1e-12;
     if (!correct) {
       std::cerr << "  FAIL: warm-start statistics did not match native run\n";

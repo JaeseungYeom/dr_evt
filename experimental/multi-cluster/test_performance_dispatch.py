@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for the Python/gRPC multi-cluster dispatcher policy."""
 
+import io
 import pathlib
 import random
 import tempfile
@@ -14,6 +15,7 @@ import build_prediction_baselines as baselines
 import plot_relative_performance as performance_plot
 from grpc_performance_dispatch import (
     choose_system,
+    evaluation_metrics,
     estimate_release_wait,
     estimate_wait,
     read_applications,
@@ -91,10 +93,15 @@ class FakeSession:
             )
         if hasattr(request, "finish_simulation"):
             count = len(self.submitted)
+            total_run_time = sum(job.actual_run_time for job in self.submitted)
             return SimpleNamespace(
                 finish_simulation=SimpleNamespace(
                     statistics=SimpleNamespace(
-                        jobs_submitted=count, jobs_completed=count, makespan=0
+                        jobs_submitted=count,
+                        jobs_completed=count,
+                        avg_turnaround_time=(total_run_time / count if count else 0),
+                        avg_bounded_slowdown=(1.0 if count else 0.0),
+                        makespan=0,
                     )
                 )
             )
@@ -417,6 +424,41 @@ class PerformanceDispatchTests(unittest.TestCase):
         self.assertTrue(
             all(session.run_time_mode == "actual" for session in FakeSession.instances)
         )
+
+    def test_evaluation_metrics_are_job_weighted(self):
+        decisions = [
+            {"actual_duration": 5.0, "ground_truth_relative_performance": 1.0},
+            {"actual_duration": 10.0, "ground_truth_relative_performance": 2.0},
+            {"actual_duration": 15.0, "ground_truth_relative_performance": 3.0},
+        ]
+        statistics = [
+            SimpleNamespace(
+                jobs_submitted=2,
+                jobs_completed=2,
+                avg_turnaround_time=20.0,
+                avg_bounded_slowdown=2.0,
+                makespan=30.0,
+            ),
+            SimpleNamespace(
+                jobs_submitted=1,
+                jobs_completed=1,
+                avg_turnaround_time=50.0,
+                avg_bounded_slowdown=4.0,
+                makespan=60.0,
+            ),
+        ]
+        metrics = evaluation_metrics(decisions, statistics)
+        self.assertAlmostEqual(metrics["average_turnaround_time"], 30.0)
+        self.assertAlmostEqual(metrics["average_bounded_slowdown"], 8.0 / 3.0)
+        self.assertAlmostEqual(metrics["average_run_time"], 10.0)
+        self.assertAlmostEqual(metrics["average_speedup"], 2.0)
+
+        summary = io.StringIO()
+        dispatch.write_summary(summary, statistics, ["first", "second"], decisions)
+        self.assertIn("average_bounded_slowdown=2.6666667", summary.getvalue())
+
+        with self.assertRaisesRegex(ValueError, "does not match dispatched"):
+            evaluation_metrics(decisions[:2], statistics)
 
 
 if __name__ == "__main__":

@@ -103,10 +103,13 @@ struct WindowMessage {
 struct StatisticsMessage {
   std::uint64_t jobs_submitted = 0;
   std::uint64_t jobs_completed = 0;
+  double avg_turnaround_time = 0.0;
+  double avg_bounded_slowdown = 0.0;
   double makespan = 0.0;
 
   template <class Archive> void serialize(Archive &archive) {
-    archive(jobs_submitted, jobs_completed, makespan);
+    archive(jobs_submitted, jobs_completed, avg_turnaround_time,
+            avg_bounded_slowdown, makespan);
   }
 };
 
@@ -795,6 +798,8 @@ Response handle_request(dr_evt::Simulation &simulation,
       const auto stats = simulation.get_statistics();
       response.statistics = {static_cast<std::uint64_t>(stats.jobs_submitted),
                              static_cast<std::uint64_t>(stats.jobs_completed),
+                             stats.avg_turnaround_time,
+                             stats.avg_bounded_slowdown,
                              stats.makespan};
     }
   } catch (const std::exception &error) {
@@ -885,6 +890,9 @@ void controller(const Options &options, const std::vector<System> &systems,
              "predicted_turnaround,job_idx\n";
   *output << std::setprecision(17);
 
+  double total_run_time = 0.0;
+  double total_speedup = 0.0;
+
   for (const auto &job : jobs) {
     Job dispatch_job = job;
     dispatch_job.num_nodes =
@@ -897,6 +905,8 @@ void controller(const Options &options, const std::vector<System> &systems,
     const auto &workload = sample_workload(catalog, generator);
     const Choice choice =
         choose_system(dispatch_job, workload, systems, snapshots);
+    total_run_time += choice.actual_duration;
+    total_speedup += choice.ground_truth_relative_performance;
 
     Request append;
     append.operation = Operation::Append;
@@ -926,12 +936,32 @@ void controller(const Options &options, const std::vector<System> &systems,
   Request finish;
   finish.operation = Operation::Finish;
   const auto responses = call_all(finish, worker_count);
+  std::uint64_t completed_jobs = 0;
+  double total_turnaround = 0.0;
+  double total_bounded_slowdown = 0.0;
   for (std::size_t i = 0; i < responses.size(); ++i) {
     const auto &stats = responses[i].statistics;
+    completed_jobs += stats.jobs_completed;
+    total_turnaround += stats.avg_turnaround_time * stats.jobs_completed;
+    total_bounded_slowdown +=
+        stats.avg_bounded_slowdown * stats.jobs_completed;
     std::cerr << systems[i].id << ": submitted=" << stats.jobs_submitted
               << " completed=" << stats.jobs_completed
               << " makespan=" << stats.makespan << '\n';
   }
+  if (completed_jobs != jobs.size())
+    throw std::runtime_error("completed job count does not match dispatched "
+                             "job count");
+  const double denominator = static_cast<double>(jobs.size());
+  std::cerr << std::setprecision(8) << "overall: jobs=" << jobs.size()
+            << " average_turnaround_time="
+            << (jobs.empty() ? 0.0 : total_turnaround / denominator)
+            << " average_bounded_slowdown="
+            << (jobs.empty() ? 0.0 : total_bounded_slowdown / denominator)
+            << " average_run_time="
+            << (jobs.empty() ? 0.0 : total_run_time / denominator)
+            << " average_speedup="
+            << (jobs.empty() ? 0.0 : total_speedup / denominator) << '\n';
 }
 
 } // namespace
