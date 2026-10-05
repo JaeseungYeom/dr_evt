@@ -326,9 +326,20 @@ def adjusted_time_limit(predicted_limit, actual_duration, maximum_limit):
 
 
 def choose_system(
-    job, workload, systems, windows, horizons, max_time_limit=math.inf
+    job,
+    workload,
+    systems,
+    windows,
+    horizons,
+    max_time_limit=math.inf,
+    dispatch_policy="turnaround",
+    wall_time_policy="corrected-prediction",
 ):
-    """Choose the compatible system with minimum predicted turnaround."""
+    """Choose a feasible system using turnaround or paper Algorithm 2."""
+    if dispatch_policy not in {"turnaround", "IPDPS24"}:
+        raise ValueError(f"unknown dispatch policy: {dispatch_policy}")
+    if wall_time_policy not in {"corrected-prediction", "actual-duration"}:
+        raise ValueError(f"unknown wall-time policy: {wall_time_policy}")
     candidates = []
     for index, (system, window, horizon) in enumerate(
         zip(systems, windows, horizons)
@@ -349,11 +360,14 @@ def choose_system(
             continue
         predicted_limit = job["limit_time"] / predicted_speedup
         actual_limit = job["limit_time"] / ground_truth_speedup
-        submitted_limit, doublings = adjusted_time_limit(
-            predicted_limit, actual_duration, max_time_limit
-        )
+        if wall_time_policy == "actual-duration":
+            submitted_limit, doublings = actual_duration, 0
+        else:
+            submitted_limit, doublings = adjusted_time_limit(
+                predicted_limit, actual_duration, max_time_limit
+            )
         wait = estimate_wait(window, job["num_nodes"], submitted_limit, horizon)
-        if math.isfinite(wait):
+        if math.isfinite(wait) or dispatch_policy == "IPDPS24":
             candidates.append(
                 {
                     "index": index,
@@ -369,8 +383,20 @@ def choose_system(
                     "submitted_time_limit": submitted_limit,
                     "time_limit_doublings": doublings,
                     "predicted_turnaround": wait + predicted_duration,
+                    "available_now": window.available_nodes >= job["num_nodes"],
                 }
             )
+    if dispatch_policy == "IPDPS24":
+        available = [candidate for candidate in candidates if candidate["available_now"]]
+        pool = available or candidates
+        return max(
+            pool,
+            key=lambda item: (
+                item["predicted_relative_performance"],
+                -item["index"],
+            ),
+            default=None,
+        )
     return min(
         candidates,
         key=lambda item: (
@@ -428,6 +454,14 @@ def run_experiment(args, grpc, pb, service):
             for original_job in jobs:
                 job = dict(original_job)
                 job["num_nodes"] = min(original_job["num_nodes"], largest_system)
+                if job["num_nodes"] != original_job["num_nodes"]:
+                    print(
+                        f"warning: job_id={original_job['job_id']} "
+                        f"requested_nodes={original_job['num_nodes']} "
+                        f"effective_nodes={job['num_nodes']} "
+                        "reason=exceeds_largest_system",
+                        file=sys.stderr,
+                    )
                 call_all(
                     executor,
                     sessions,
@@ -466,6 +500,8 @@ def run_experiment(args, grpc, pb, service):
                     windows,
                     horizons,
                     args.max_time_limit,
+                    args.dispatch_policy,
+                    args.wall_time_policy,
                 )
                 if choice is None:
                     dropped_jobs.append(
@@ -668,6 +704,24 @@ def main():
         type=float,
         default=math.inf,
         help="maximum submitted wall time (default: unlimited)",
+    )
+    parser.add_argument(
+        "--dispatch-policy",
+        choices=("turnaround", "IPDPS24"),
+        default="turnaround",
+        help=(
+            "system selection policy: minimum predicted turnaround or "
+            "IPDPS24 Algorithm 2 (default: turnaround)"
+        ),
+    )
+    parser.add_argument(
+        "--wall-time-policy",
+        choices=("corrected-prediction", "actual-duration"),
+        default="corrected-prediction",
+        help=(
+            "submit a corrected predicted limit or the ground-truth runtime "
+            "(default: corrected-prediction)"
+        ),
     )
     parser.add_argument("--session-name", default="performance-dispatch")
     args = parser.parse_args()

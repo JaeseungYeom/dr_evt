@@ -56,6 +56,11 @@ constexpr int kSizeTag = 100;
 constexpr int kPayloadTag = 101;
 
 enum class Operation : std::uint8_t { Snapshot, Append, Finish };
+enum class DispatchPolicy : std::uint8_t { Turnaround, Ipdps24 };
+enum class WallTimePolicy : std::uint8_t {
+  CorrectedPrediction,
+  ActualDuration
+};
 
 struct JobMessage {
   double submit_time = 0.0;
@@ -165,6 +170,8 @@ struct Options {
   std::uint64_t seed = 0;
   double prediction_utilization = 1.0;
   double max_time_limit = std::numeric_limits<double>::infinity();
+  DispatchPolicy dispatch_policy = DispatchPolicy::Turnaround;
+  WallTimePolicy wall_time_policy = WallTimePolicy::CorrectedPrediction;
 };
 
 [[noreturn]] void usage(const char *program, const std::string &error = {}) {
@@ -180,6 +187,10 @@ struct Options {
             << "  --prediction-utilization U  value in [0,1] (default: 1)\n"
             << "  --max-time-limit SECONDS  maximum submitted wall time "
                "(default: unlimited)\n"
+            << "  --dispatch-policy POLICY  turnaround or IPDPS24 "
+               "(default: turnaround)\n"
+            << "  --wall-time-policy POLICY corrected-prediction or "
+               "actual-duration (default: corrected-prediction)\n"
             << "  --output PATH             decision CSV (default: stdout)\n";
   throw std::invalid_argument(error.empty() ? "help requested" : error);
 }
@@ -212,6 +223,24 @@ Options parse_options(int argc, char **argv) {
           std::stod(option_value(i, argc, argv, arg));
     else if (arg == "--max-time-limit")
       options.max_time_limit = std::stod(option_value(i, argc, argv, arg));
+    else if (arg == "--dispatch-policy") {
+      const auto value = option_value(i, argc, argv, arg);
+      if (value == "turnaround")
+        options.dispatch_policy = DispatchPolicy::Turnaround;
+      else if (value == "IPDPS24")
+        options.dispatch_policy = DispatchPolicy::Ipdps24;
+      else
+        usage(argv[0], "--dispatch-policy must be turnaround or IPDPS24");
+    } else if (arg == "--wall-time-policy") {
+      const auto value = option_value(i, argc, argv, arg);
+      if (value == "corrected-prediction")
+        options.wall_time_policy = WallTimePolicy::CorrectedPrediction;
+      else if (value == "actual-duration")
+        options.wall_time_policy = WallTimePolicy::ActualDuration;
+      else
+        usage(argv[0], "--wall-time-policy must be corrected-prediction or "
+                       "actual-duration");
+    }
     else if (arg == "--output")
       options.output = option_value(i, argc, argv, arg);
     else if (arg == "--help" || arg == "-h")
@@ -742,20 +771,25 @@ adjust_time_limit(double predicted_limit, double actual_duration,
   return {limit, doublings};
 }
 
-/** Select the system with the smallest predicted turnaround.
+/** Select a feasible system using predicted turnaround or paper Algorithm 2.
  * @param[in] job Job request with its effective node count.
  * @param[in] workload Sampled application workload.
  * @param[in] systems Configured execution systems.
  * @param[in] snapshots Current scheduler state for each system.
  * @param[in] max_time_limit Maximum permitted submitted wall-time limit.
+ * @param[in] dispatch_policy System-selection policy.
+ * @param[in] wall_time_policy Submitted wall-time calculation policy.
  * @return Best compatible system that can finish within the maximum, or no
  * choice if none can do so.
  */
 std::optional<Choice>
 choose_system(const Job &job, const Workload &workload,
               const std::vector<System> &systems,
-              const std::vector<Response> &snapshots, double max_time_limit) {
+              const std::vector<Response> &snapshots, double max_time_limit,
+              DispatchPolicy dispatch_policy,
+              WallTimePolicy wall_time_policy) {
   std::optional<Choice> best;
+  bool best_available_now = false;
   for (std::size_t i = 0; i < systems.size(); ++i) {
     if (job.num_nodes > systems[i].physical_nodes)
       continue;
@@ -792,12 +826,15 @@ choose_system(const Job &job, const Workload &workload,
       continue;
     const double predicted_limit = job.limit_time / performance->predicted;
     const double actual_limit = job.limit_time / performance->ground_truth;
-    const auto [submitted_limit, doublings] = adjust_time_limit(
-        predicted_limit, actual_duration, max_time_limit);
+    const auto [submitted_limit, doublings] =
+        wall_time_policy == WallTimePolicy::ActualDuration
+            ? std::pair{actual_duration, std::uint32_t{0}}
+            : adjust_time_limit(predicted_limit, actual_duration,
+                                max_time_limit);
     const double wait =
         estimate_wait(snapshots[i].window, job.num_nodes, submitted_limit,
                       snapshots[i].prediction_horizon);
-    if (!std::isfinite(wait))
+    if (dispatch_policy == DispatchPolicy::Turnaround && !std::isfinite(wait))
       continue;
     Choice choice{i,
                   execution_mode,
@@ -811,11 +848,27 @@ choose_system(const Job &job, const Workload &workload,
                   submitted_limit,
                   doublings,
                   wait + predicted_duration};
-    if (!best ||
-        std::tie(choice.predicted_turnaround, choice.estimated_wait,
-                 choice.index) < std::tie(best->predicted_turnaround,
-                                          best->estimated_wait, best->index))
+    const bool available_now =
+        snapshots[i].window.available_nodes >= job.num_nodes;
+    const bool ipdps24_better =
+        dispatch_policy == DispatchPolicy::Ipdps24 &&
+        (!best || (available_now && !best_available_now) ||
+         (available_now == best_available_now &&
+          (choice.predicted_relative_performance >
+               best->predicted_relative_performance ||
+           (choice.predicted_relative_performance ==
+                best->predicted_relative_performance &&
+            choice.index < best->index))));
+    const bool turnaround_better =
+        dispatch_policy == DispatchPolicy::Turnaround &&
+        (!best || std::tie(choice.predicted_turnaround, choice.estimated_wait,
+                          choice.index) <
+                     std::tie(best->predicted_turnaround,
+                              best->estimated_wait, best->index));
+    if (ipdps24_better || turnaround_better) {
       best = choice;
+      best_available_now = available_now;
+    }
   }
   return best;
 }
@@ -947,6 +1000,11 @@ void controller(const Options &options, const std::vector<System> &systems,
     Job dispatch_job = job;
     dispatch_job.num_nodes =
         std::min(job.num_nodes, largest_system->physical_nodes);
+    if (dispatch_job.num_nodes != job.num_nodes)
+      std::cerr << "warning: job_id=" << job.id
+                << " requested_nodes=" << job.num_nodes
+                << " effective_nodes=" << dispatch_job.num_nodes
+                << " reason=exceeds_largest_system\n";
     Request snapshot;
     snapshot.operation = Operation::Snapshot;
     snapshot.target_time = job.submit_time;
@@ -955,7 +1013,8 @@ void controller(const Options &options, const std::vector<System> &systems,
     const auto &workload = sample_workload(catalog, generator);
     const auto selected =
         choose_system(dispatch_job, workload, systems, snapshots,
-                      options.max_time_limit);
+                      options.max_time_limit, options.dispatch_policy,
+                      options.wall_time_policy);
     if (!selected) {
       ++dropped_jobs;
       std::cerr << "dropped: job_id=" << job.id << " app=" << workload.app

@@ -47,6 +47,16 @@ def run_dispatch(command, output, expected_jobs, expected_dropped=0):
     }
     assert int(metrics["jobs"]) == expected_jobs
     assert int(metrics["dropped_jobs"]) == expected_dropped
+    truncation_warnings = [
+        line
+        for line in result.stderr.splitlines()
+        if line.startswith("warning:") and "reason=exceeds_largest_system" in line
+    ]
+    assert len(truncation_warnings) == 7, result.stderr
+    assert all(
+        "requested_nodes=300 effective_nodes=256" in line
+        for line in truncation_warnings
+    )
     if expected_jobs:
         assert metrics["average_turnaround_time"] >= metrics["average_run_time"]
         assert metrics["average_bounded_slowdown"] >= 1.0
@@ -123,6 +133,26 @@ def main():
         second_output, second_metrics = run_dispatch(command, second, expected_jobs)
         assert first_output == second_output
         assert metrics == second_metrics
+
+        ipdps24_output = temp_dir / "ipdps24.csv"
+        run_dispatch(
+            command + ["--dispatch-policy", "IPDPS24"],
+            ipdps24_output,
+            expected_jobs,
+        )
+
+        actual_duration_output = temp_dir / "actual-duration.csv"
+        run_dispatch(
+            command + ["--wall-time-policy", "actual-duration"],
+            actual_duration_output,
+            expected_jobs,
+        )
+        with actual_duration_output.open(newline="") as stream:
+            for row in csv.DictReader(stream):
+                assert float(row["submitted_time_limit"]) == float(
+                    row["actual_duration"]
+                )
+                assert int(row["time_limit_doublings"]) == 0
 
         with first.open(newline="") as stream:
             rows = list(csv.DictReader(stream))
