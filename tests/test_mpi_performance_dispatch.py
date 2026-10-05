@@ -149,8 +149,8 @@ def main():
         )
         with actual_duration_output.open(newline="") as stream:
             for row in csv.DictReader(stream):
-                assert float(row["submitted_time_limit"]) == float(
-                    row["actual_duration"]
+                assert float(row["submitted_time_limit"]) == math.ceil(
+                    float(row["actual_duration"])
                 )
                 assert int(row["time_limit_doublings"]) == 0
 

@@ -265,8 +265,9 @@ public:
    * @param[in] actual_run_time Known execution time, or empty to use
    *        limit_time as the streaming execution duration.
    * @return New Trace job identifier as job_no_t.
-   * @throws std::invalid_argument if actual_run_time is non-positive or
-   *         greater than limit_time.
+   * @throws std::invalid_argument if limit_time is not a positive,
+   *         representable whole number of seconds, or if actual_run_time is
+   *         non-positive, non-finite, or greater than limit_time.
    * @see submit_job()
    * @see SchedulerBase::insert_job()
    */
@@ -290,6 +291,9 @@ public:
    *        Trace::append_jobs() for why - this function forwards
    *        requests as-is, so pass them there already sorted).
    * @return New Trace job identifiers in the same order as requests.
+   * @throws std::invalid_argument if any limit_time is not a positive,
+   *         representable whole number of seconds, or if an actual_run_time
+   *         is invalid or exceeds its limit_time.
    * @see append_job()
    * @see submit_job()
    */

@@ -70,7 +70,8 @@ job_no_t append_job(sim_time_t submit_time, num_nodes_t num_nodes,
 - `num_nodes`: Number of nodes the job requests
 - `queue`: Numeric queue ID (for example, `"1"`) in the default build, or a
   queue name (for example, `"pbatch"`) with `DR_EVT_LEGACY_QUEUE_INPUT`
-- `limit_time`: User-estimated time limit, in seconds
+- `limit_time`: Positive whole-number time limit, in seconds. Fractional,
+  non-finite, zero, and negative values are rejected.
 - `actual_run_time`: Optional known execution duration. It must be positive
   and no greater than `limit_time`. When omitted, streaming jobs retain the
   existing behavior of running for `limit_time`.
@@ -93,6 +94,7 @@ jobs are already known together (e.g. several arrivals collected in one
 polling interval), not just a loop over `append_job()`. All-or-nothing:
 requests must already be sorted by `submit_time` (non-decreasing), and
 either the whole batch is appended or, on any failure (unsorted input,
+an invalid or fractional `limit_time`,
 `--job_store_overflow=abort` with no room even after reclaiming, or
 `--check_memory_pressure` refusing the batch under real memory
 pressure - see [Command-Line Options](../user-guide/command-line.md)),

@@ -24,10 +24,12 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <queue>
 #include <sstream>
 #include <type_traits>
@@ -38,6 +40,22 @@ namespace dr_evt {
 namespace {
 
 constexpr tdiff_t bounded_slowdown_threshold = 10.0;
+
+/** Validate and convert a streaming wall-time request.
+ * @param[in] limit_time Requested wall time in seconds.
+ * @return The equivalent integral scheduler limit.
+ * @throws std::invalid_argument if limit_time is non-positive, non-finite,
+ * fractional, or outside the range of timeout_t.
+ */
+timeout_t checked_streaming_limit(tdiff_t limit_time) {
+  if (!std::isfinite(limit_time) || limit_time <= 0.0 ||
+      std::trunc(limit_time) != limit_time ||
+      limit_time > static_cast<double>(std::numeric_limits<timeout_t>::max())) {
+    throw std::invalid_argument(
+        "limit_time must be a positive whole number of seconds");
+  }
+  return static_cast<timeout_t>(limit_time);
+}
 
 #if defined(DR_EVT_HAS_SER20)
 
@@ -1755,9 +1773,10 @@ job_no_t BasicSimulation<TraceType>::append_job(sim_time_t submit_time,
         std::to_string(submit_time) +
         " but current_time=" + std::to_string(m_current_time));
   }
+  const timeout_t stored_limit = checked_streaming_limit(limit_time);
   if (actual_run_time &&
       (!std::isfinite(*actual_run_time) || *actual_run_time <= 0.0 ||
-       *actual_run_time > limit_time)) {
+       *actual_run_time > static_cast<tdiff_t>(stored_limit))) {
     throw std::invalid_argument(
         "actual_run_time must be positive and no greater than limit_time");
   }
@@ -1784,10 +1803,9 @@ job_no_t BasicSimulation<TraceType>::append_job(sim_time_t submit_time,
 #endif
 
   job_no_t job_idx = m_trace.append_job(m_current_time, submit_epoch, num_nodes,
-                                        q, static_cast<timeout_t>(limit_time),
-                                        actual_run_time);
+                                        q, stored_limit, actual_run_time);
   submit_job(job_idx, submit_time);
-  record_appended_job(job_idx, submit_time, num_nodes, limit_time);
+  record_appended_job(job_idx, submit_time, num_nodes, stored_limit);
   return job_idx;
 }
 
@@ -1816,10 +1834,12 @@ std::vector<job_no_t> BasicSimulation<TraceType>::append_jobs(
           " has submit_time=" + std::to_string(requests[i].submit_time) +
           " but current_time=" + std::to_string(m_current_time));
     }
+    const timeout_t stored_limit =
+        checked_streaming_limit(requests[i].limit_time);
     if (requests[i].actual_run_time &&
         (!std::isfinite(*requests[i].actual_run_time) ||
          *requests[i].actual_run_time <= 0.0 ||
-         *requests[i].actual_run_time > requests[i].limit_time)) {
+         *requests[i].actual_run_time > static_cast<tdiff_t>(stored_limit))) {
       throw std::invalid_argument(
           "request " + std::to_string(i) +
           " actual_run_time must be positive and no greater than limit_time");
@@ -1848,7 +1868,8 @@ std::vector<job_no_t> BasicSimulation<TraceType>::append_jobs(
   for (size_t i = 0; i < job_idxs.size(); ++i) {
     submit_job(job_idxs[i], requests[i].submit_time);
     record_appended_job(job_idxs[i], requests[i].submit_time,
-                        requests[i].num_nodes, requests[i].limit_time);
+                        requests[i].num_nodes,
+                        static_cast<timeout_t>(requests[i].limit_time));
   }
   return job_idxs;
 }

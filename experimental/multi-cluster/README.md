@@ -34,7 +34,7 @@ submit_time,num_nodes,time_limit,duration
 |---|---|
 | `submit_time` | Arrival time in simulation seconds. Rows must be in nondecreasing order. The legacy alias `job_submit_time` is accepted. |
 | `num_nodes` | Positive node request. |
-| `time_limit` | Positive requested wall-time limit. |
+| `time_limit` | Positive whole-number wall-time limit in seconds; fractional values are rejected. |
 | `duration` | Positive reference duration, no greater than `time_limit`. The legacy alias `actual_run_time` is accepted. |
 
 `job_id` is optional and defaults to the zero-based row number. The queue is
@@ -173,6 +173,9 @@ python3 experimental/multi-cluster/plot_relative_performance.py \
 The default logarithmic axes make both sub-unit and large speedups visible.
 Use `--linear` for linear axes or `--systems tuolumne tuolumne-cpu dane` to
 select panels. Unsuffixed GPU-machine names resolve to their `-gpu` columns.
+Cells lacking either an actual or predicted value are reported and omitted
+because they cannot form an actual-versus-predicted point. When `--output`
+does not already name a PDF, the plotter also writes a PDF with the same stem.
 
 ## Sampling
 
@@ -218,7 +221,7 @@ The experiment assumes that the submitting user can correct an underestimated
 wall-time request using the known ground-truth runtime before the successful
 submission. Starting from `predicted_time_limit`, it doubles the request until
 it is at least `actual_duration`, without simulating or charging resources for
-the failed attempts. `--max-time-limit` caps the corrected request; the
+the failed attempts. `--max-time-limit` caps the adapted request; the
 prediction study defaults to Lassen's 43,200-second maximum. If
 `actual_duration` exceeds that maximum, the experiment writes a `dropped:`
 record to standard error and does not submit the job. Dropped jobs are excluded
@@ -240,10 +243,11 @@ capacity-compatible system can finish within the maximum, the job is dropped.
   it chooses the highest predicted relative performance over all feasible
   systems and lets that system queue the job. Ties use systems-table order.
 
-`--wall-time-policy corrected-prediction` uses the doubling behavior described
-above. `--wall-time-policy actual-duration` instead submits a time limit exactly
-equal to the selected system's ground-truth runtime. This second policy never
-changes or truncates the runtime; it changes only the requested time limit.
+`--wall-time-policy adapted-limit` uses the doubling behavior described
+above. `--wall-time-policy actual-duration` instead submits the smallest
+whole-second time limit that covers the selected system's ground-truth runtime.
+This second policy never changes or truncates the runtime; it changes only the
+requested time limit.
 
 The wait estimate uses the submitted time limit. Only the selected worker
 receives the job, with that limit and the actual duration. Thus prediction
@@ -267,7 +271,7 @@ mpirun -np 6 build/mpi_performance_dispatch \
   --seed 7 \
   --max-time-limit 43200 \
   --dispatch-policy IPDPS24 \
-  --wall-time-policy corrected-prediction \
+  --wall-time-policy adapted-limit \
   --output dispatch-decisions.csv
 ```
 
@@ -277,7 +281,7 @@ allocation. MPI and Ser20 are required; gRPC and Python are not.
 ### Prediction-study matrix
 
 The prediction-study runner executes both dispatch policies (`turnaround` and
-`IPDPS24`) with both wall-time policies (`corrected-prediction` and
+`IPDPS24`) with both wall-time policies (`adapted-limit` and
 `actual-duration`) for the ideal, application-average, and RAJAPerf prediction
 tables. Each of these 12 configurations runs on all ten synthetic traces, for
 120 runs by default:
@@ -301,6 +305,13 @@ Output filenames and completion markers include the dispatch and wall-time
 policy names. This prevents results from different configurations from being
 mistaken for one another.
 
+After all configurations are available, `summary.csv` contains one row for
+each of the 120 runs, while `summary_aggregate.csv` and `summary.md` contain
+the 12 ten-trace mean/standard-deviation records. `summary.png` plots those
+aggregate metrics in four panels, and `summary.pdf` contains the same figure
+in vector form. `metrics_per_run.csv` is retained as a compatibility copy of
+`summary.csv`.
+
 ## Output
 
 Rank 0 writes one CSV row per successfully dispatched job; dropped jobs are
@@ -322,8 +333,8 @@ recorded in the log instead:
 | `actual_duration` | Ground-truth duration submitted to DR_EVT. |
 | `predicted_time_limit` | Wall-time limit used to estimate the dispatch candidate. |
 | `actual_time_limit` | Ground-truth-scaled wall-time limit retained for comparison. |
-| `submitted_time_limit` | Limit submitted to DR_EVT: the corrected predicted limit or the exact ground-truth runtime, according to `--wall-time-policy`. |
-| `time_limit_doublings` | Number of pre-submission doublings needed by `corrected-prediction`; zero for `actual-duration`. |
+| `submitted_time_limit` | Whole-second limit submitted to DR_EVT: the upward-rounded adapted predicted limit or ground-truth runtime, according to `--wall-time-policy`. |
+| `time_limit_doublings` | Number of pre-submission doublings needed by the adapted predicted-limit policy; zero for `actual-duration`. |
 | `predicted_turnaround` | `estimated_wait + estimated_duration`. |
 | `job_idx` | Worker-local DR_EVT job identifier. |
 
@@ -363,7 +374,7 @@ python3 python/grpc_mpi_launcher.py --mpi-ranks 6 \
   --seed 7 \
   --max-time-limit 43200 \
   --dispatch-policy IPDPS24 \
-  --wall-time-policy corrected-prediction \
+  --wall-time-policy adapted-limit \
   --output grpc-dispatch-decisions.csv
 ```
 

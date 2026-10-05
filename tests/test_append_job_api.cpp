@@ -1076,6 +1076,54 @@ void test_append_with_known_actual_runtime() {
   std::cout << "  PASSED" << std::endl;
 }
 
+void test_fractional_streaming_limits_validate_stored_value() {
+  std::cout << "\n=== Fractional limits validate the stored value ==="
+            << std::endl;
+  Simulation sim(make_params());
+  sim.get_trace().load_data(0);
+
+  bool rejected = false;
+  try {
+    (void)sim.append_job(0.0, 1, kTestQueueInput, 10.25);
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  assert(rejected);
+  assert(sim.get_trace().data().empty());
+
+  const auto single = sim.append_job(0.0, 1, kTestQueueInput, 11, 10.25);
+  assert(sim.get_trace().job_at(single).get_limit_time() == 11);
+  assert(approx_equal(sim.get_trace().job_at(single).get_actual_run_time(),
+                      10.25));
+
+  const std::vector<Simulation::Job_Append_Request> invalid_batch = {
+      {1.0, 1, kTestQueueInput, 21, 20.01},
+      {2.0, 1, kTestQueueInput, 30.99},
+  };
+  rejected = false;
+  try {
+    (void)sim.append_jobs(invalid_batch);
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  assert(rejected);
+  assert(sim.get_trace().data().size() == 1);
+
+  const std::vector<Simulation::Job_Append_Request> batch = {
+      {1.0, 1, kTestQueueInput, 21, 20.01},
+      {2.0, 1, kTestQueueInput, 31, 30.99},
+  };
+  const auto jobs = sim.append_jobs(batch);
+  assert(sim.get_trace().job_at(jobs[0]).get_limit_time() == 21);
+  assert(sim.get_trace().job_at(jobs[1]).get_limit_time() == 31);
+  assert(approx_equal(sim.get_trace().job_at(jobs[0]).get_actual_run_time(),
+                      20.01));
+  assert(approx_equal(sim.get_trace().job_at(jobs[1]).get_actual_run_time(),
+                      30.99));
+
+  std::cout << "  PASSED" << std::endl;
+}
+
 int main() {
   std::cout << "====================================" << std::endl;
   std::cout << "Append-Job Test Suite" << std::endl;
@@ -1106,6 +1154,7 @@ int main() {
     test_resource_area_and_time_accounted_utilization();
     test_prediction_horizon();
     test_append_with_known_actual_runtime();
+    test_fractional_streaming_limits_validate_stored_value();
 
     std::cout << "\n====================================" << std::endl;
     std::cout << "ALL APPEND_JOB TESTS PASSED" << std::endl;

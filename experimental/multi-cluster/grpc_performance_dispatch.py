@@ -333,12 +333,12 @@ def choose_system(
     horizons,
     max_time_limit=math.inf,
     dispatch_policy="turnaround",
-    wall_time_policy="corrected-prediction",
+    wall_time_policy="adapted-limit",
 ):
     """Choose a feasible system using turnaround or paper Algorithm 2."""
     if dispatch_policy not in {"turnaround", "IPDPS24"}:
         raise ValueError(f"unknown dispatch policy: {dispatch_policy}")
-    if wall_time_policy not in {"corrected-prediction", "actual-duration"}:
+    if wall_time_policy not in {"adapted-limit", "actual-duration"}:
         raise ValueError(f"unknown wall-time policy: {wall_time_policy}")
     candidates = []
     for index, (system, window, horizon) in enumerate(
@@ -366,6 +366,9 @@ def choose_system(
             submitted_limit, doublings = adjusted_time_limit(
                 predicted_limit, actual_duration, max_time_limit
             )
+        submitted_limit = math.ceil(submitted_limit)
+        if submitted_limit > max_time_limit:
+            continue
         wait = estimate_wait(window, job["num_nodes"], submitted_limit, horizon)
         if math.isfinite(wait) or dispatch_policy == "IPDPS24":
             candidates.append(
@@ -716,11 +719,11 @@ def main():
     )
     parser.add_argument(
         "--wall-time-policy",
-        choices=("corrected-prediction", "actual-duration"),
-        default="corrected-prediction",
+        choices=("adapted-limit", "actual-duration"),
+        default="adapted-limit",
         help=(
-            "submit a corrected predicted limit or the ground-truth runtime "
-            "(default: corrected-prediction)"
+            "submit an adapted predicted limit or the ground-truth runtime "
+            "(default: adapted-limit)"
         ),
     )
     parser.add_argument("--session-name", default="performance-dispatch")

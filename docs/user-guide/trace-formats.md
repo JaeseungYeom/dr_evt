@@ -92,7 +92,7 @@ determines simulation vs replay mode (see below).
 | `job_submit_time` | When the job arrives/submits. Accepted alias: `submit_time` | Both modes |
 | `num_nodes` | Number of nodes requested | Both modes |
 | `q_id` | Optional one-based queue ID. If absent, the job uses `1` (`Queue1`). | Both modes |
-| `time_limit` | User-provided time limit (seconds). Accepted column-name aliases: `time_limit`, `timelimit`, `walltime` | Both modes |
+| `time_limit` | Positive whole-number time limit (seconds); fractional values are rejected. Accepted column-name aliases: `time_limit`, `timelimit`, `walltime` | Both modes |
 | `begin_time` | Historical start time of this individual job; distinct from the global `--sim_start_time` boundary | Replay mode only; must appear together with `end_time` |
 | `end_time` | Historical end time from trace | Replay mode only; must appear together with `begin_time` |
 | `avgpcon` | Average power usage associated with the job | Required only with `--trace_type pcon`; ignored in standard mode |
