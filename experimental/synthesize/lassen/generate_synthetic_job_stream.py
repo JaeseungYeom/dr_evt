@@ -199,7 +199,9 @@ def main():
         raise SystemExit(f"error: {exc}") from exc
 
     with open(args.output_csv, "w", newline="", encoding="utf-8") as destination:
-        writer = csv.DictWriter(destination, fieldnames=OUTPUT_COLUMNS)
+        writer = csv.DictWriter(
+            destination, fieldnames=OUTPUT_COLUMNS, lineterminator="\n"
+        )
         writer.writeheader()
         writer.writerows(synthetic)
 

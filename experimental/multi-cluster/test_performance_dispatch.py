@@ -14,6 +14,7 @@ import build_performance_tables as build_table
 import build_prediction_baselines as baselines
 import plot_relative_performance as performance_plot
 from grpc_performance_dispatch import (
+    adjusted_time_limit,
     choose_system,
     evaluation_metrics,
     estimate_release_wait,
@@ -26,7 +27,7 @@ from grpc_performance_dispatch import (
 )
 
 
-_FIXTURES = pathlib.Path(__file__).resolve().parent
+_FIXTURES = pathlib.Path(__file__).resolve().parent / "testdata"
 
 
 def window(now, available, releases=(), shadow=-1):
@@ -154,17 +155,37 @@ class PerformanceDispatchTests(unittest.TestCase):
             counts[sample_workload(self.workloads, generator)["app"]] += 1
         self.assertTrue(all(1800 < count < 2200 for count in counts.values()))
 
-    def test_workload_requires_ground_truth_prediction_pairs(self):
+    def test_applications_table_is_sampling_allowlist(self):
+        requirements = read_applications(_FIXTURES / "applications.csv")
+        requirements.pop("gpu-trainer")
+        prediction = (_FIXTURES / "prediction.csv").read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "prediction.csv"
+            path.write_text(
+                "\n".join(
+                    line
+                    for line in prediction.splitlines()
+                    if not line.startswith("gpu-trainer,")
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            workloads = read_workloads(
+                _FIXTURES / "ground_truth.csv", path, self.systems, requirements
+            )
+        self.assertEqual(set(workloads), {"cpu-solver", "portable-md"})
+
+    def test_workload_ignores_modes_without_a_prediction(self):
         requirements = read_applications(_FIXTURES / "applications.csv")
         contents = (_FIXTURES / "prediction.csv").read_text(encoding="utf-8")
         contents = contents.replace("0.9,1.3", ",1.3", 1)
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "prediction.csv"
             path.write_text(contents, encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "incomplete dane pair"):
-                read_workloads(
-                    _FIXTURES / "ground_truth.csv", path, self.systems, requirements
-                )
+            workloads = read_workloads(
+                _FIXTURES / "ground_truth.csv", path, self.systems, requirements
+            )
+        self.assertIsNone(workloads["cpu-solver"][0]["performance"][0]["CPU"])
 
     def test_workload_builder_normalizes_quoted_comma_arguments(self):
         identity = build_table.normalized_identity(
@@ -209,6 +230,46 @@ class PerformanceDispatchTests(unittest.TestCase):
         self.assertEqual(float(ground_truth[0]["mammoth"]), 2.0)
         self.assertEqual(float(predicted[0]["mammoth"]), 4.0)
 
+    def test_workload_builder_keeps_measured_modes_without_model_predictions(self):
+        identity = ("solver", "--size8", 4)
+        predictions = {
+            identity: [
+                {
+                    "app": "solver",
+                    "args": "--size8",
+                    "ranks": "4",
+                    "borax": "1",
+                    "dane": "",
+                    "mammoth": "4",
+                }
+            ]
+        }
+        measurements = {
+            identity: {"borax": 50.0, "dane": 100.0, "mammoth": 25.0}
+        }
+        ground_truth, predicted, skipped = build_table.build_rows(
+            predictions,
+            measurements,
+            {"solver": "CPU-only"},
+            ["dane", "mammoth"],
+            ["borax", "dane", "mammoth"],
+        )
+        self.assertEqual(skipped, 0)
+        self.assertEqual(float(ground_truth[0]["dane"]), 0.5)
+        self.assertEqual(float(ground_truth[0]["mammoth"]), 2.0)
+        self.assertEqual(predicted[0]["dane"], "")
+        self.assertEqual(float(predicted[0]["mammoth"]), 4.0)
+
+    def test_workload_builder_uses_requirements_as_allowlist(self):
+        excluded = ("excluded", "--case", 1)
+        ground_truth, predicted, skipped = build_table.build_rows(
+            {excluded: [{"dane": "1"}]},
+            {excluded: {"dane": 1.0}},
+            {},
+            ["dane"],
+        )
+        self.assertEqual((ground_truth, predicted, skipped), ([], [], 0))
+
     def test_plot_system_alias_and_point_loading(self):
         with tempfile.TemporaryDirectory() as directory:
             actual = pathlib.Path(directory) / "actual.csv"
@@ -243,6 +304,11 @@ class PerformanceDispatchTests(unittest.TestCase):
             )
             values = baselines.rajaperf_speedups(path, ["dane"])
         self.assertEqual(values["dane"], 3.0)
+
+    def test_rajaperf_baseline_predicts_modes_without_measurements(self):
+        rows = [{"App": "a", "Args": "x", "Ranks": "1", "dane": ""}]
+        predicted = baselines.rajaperf_rows(rows, ["dane"], {"dane": 2.0})
+        self.assertEqual(float(predicted[0]["dane"]), 2.0)
 
     def test_wait_uses_cumulative_releases(self):
         snapshot = window(10, 2, ((15, 3), (21, 4)))
@@ -333,6 +399,32 @@ class PerformanceDispatchTests(unittest.TestCase):
         self.assertAlmostEqual(choice["predicted_time_limit"], 120 / 1.5)
         self.assertAlmostEqual(choice["actual_time_limit"], 120 / 1.3)
 
+    def test_gpu_portable_uses_feasible_mode_when_faster_mode_exceeds_limit(self):
+        workload = {
+            **self.workloads["portable-md"][0],
+            "performance": [
+                {
+                    "CPU": {"ground_truth": 1.0, "predicted": 1.0},
+                    "GPU": {"ground_truth": 0.5, "predicted": 4.0},
+                }
+            ],
+        }
+        system = self.systems[-1]
+        choice = choose_system(
+            {
+                "job_id": "mode-cap",
+                "num_nodes": 1,
+                "duration": 80,
+                "limit_time": 40,
+            },
+            workload,
+            [system],
+            [window(0, system["capacity"])],
+            [0],
+            max_time_limit=100,
+        )
+        self.assertEqual(choice["execution_mode"], "CPU")
+
     def test_prediction_drives_choice_but_ground_truth_drives_runtime(self):
         systems = self.systems[:2]
         workload = {
@@ -358,6 +450,48 @@ class PerformanceDispatchTests(unittest.TestCase):
         self.assertEqual(choice["estimated_duration"], 20)
         self.assertEqual(choice["actual_duration"], 160)
 
+    def test_predicted_time_limit_is_doubled_and_capped(self):
+        self.assertEqual(adjusted_time_limit(10, 35, 100), (40, 2))
+        self.assertEqual(adjusted_time_limit(10, 120, 100), (100, 4))
+        self.assertEqual(adjusted_time_limit(40, 40, 100), (40, 0))
+
+    def test_runtime_limit_filters_systems_before_wait_comparison(self):
+        systems = self.systems[:2]
+        workload = {
+            **self.workloads["cpu-solver"][0],
+            "performance": [
+                {"CPU": {"ground_truth": 0.5, "predicted": 4.0}, "GPU": None},
+                {"CPU": {"ground_truth": 1.0, "predicted": 1.0}, "GPU": None},
+            ],
+        }
+        job = {
+            "job_id": "runtime-limit",
+            "num_nodes": 8,
+            "duration": 80,
+            "limit_time": 20,
+        }
+        choice = choose_system(
+            job,
+            workload,
+            systems,
+            [window(0, system["capacity"]) for system in systems],
+            [0, 0],
+            max_time_limit=100,
+        )
+        self.assertEqual(choice["system_id"], "mammoth")
+        self.assertEqual(choice["submitted_time_limit"], 80)
+        self.assertEqual(choice["time_limit_doublings"], 2)
+        self.assertIsNone(
+            choose_system(
+                job,
+                workload,
+                systems,
+                [window(0, system["capacity"]) for system in systems],
+                [0, 0],
+                max_time_limit=50,
+            )
+        )
+
     def test_controller_uses_same_inputs_and_submits_both_scaled_times(self):
         args = SimpleNamespace(
             server=[f"server-{index}" for index in range(5)],
@@ -372,15 +506,17 @@ class PerformanceDispatchTests(unittest.TestCase):
             priority_policy="fcfs",
             queue_impl="circular",
             prediction_utilization=1.0,
+            max_time_limit=1000.0,
             session_name="test",
         )
         FakeSession.instances = []
         with patch.object(dispatch, "ServerSession", FakeSession):
-            decisions, statistics, system_ids = dispatch.run_experiment(
+            decisions, statistics, system_ids, dropped_jobs = dispatch.run_experiment(
                 args, None, FakeMessages, None
             )
 
         self.assertEqual(len(decisions), 4)
+        self.assertEqual(dropped_jobs, [])
         self.assertEqual(sum(stat.jobs_submitted for stat in statistics), 4)
         self.assertEqual(
             system_ids, [system["system_id"] for system in self.systems]
@@ -401,7 +537,7 @@ class PerformanceDispatchTests(unittest.TestCase):
         )
         self.assertCountEqual(
             [job.limit_time for job in submitted],
-            [decision["actual_time_limit"] for decision in decisions],
+            [decision["submitted_time_limit"] for decision in decisions],
         )
         for decision in decisions:
             self.assertAlmostEqual(
@@ -423,6 +559,21 @@ class PerformanceDispatchTests(unittest.TestCase):
         )
         self.assertTrue(
             all(session.run_time_mode == "actual" for session in FakeSession.instances)
+        )
+
+        args.max_time_limit = 1.0
+        FakeSession.instances = []
+        with patch.object(dispatch, "ServerSession", FakeSession):
+            dropped_decisions, dropped_statistics, _, dropped_jobs = (
+                dispatch.run_experiment(args, None, FakeMessages, None)
+            )
+        self.assertEqual(dropped_decisions, [])
+        self.assertEqual(len(dropped_jobs), 4)
+        self.assertEqual(
+            sum(stat.jobs_submitted for stat in dropped_statistics), 0
+        )
+        self.assertTrue(
+            all(not session.submitted for session in FakeSession.instances)
         )
 
     def test_evaluation_metrics_are_job_weighted(self):

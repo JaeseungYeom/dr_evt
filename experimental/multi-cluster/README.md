@@ -52,7 +52,7 @@ testdfft,CPU-only
 
 The accepted values are `CPU-only`, `GPU-only`, and `GPU-portable`. Every
 application in the performance tables must occur exactly once. The requirement is
-application-specific, not job-stream-specific. `multi-cluster/apps.csv` is a
+application-specific, not job-stream-specific. `experimental/multi-cluster/apps.csv` is a
 runtime input; the `#` prefix on its first header is accepted.
 
 ### Systems
@@ -66,7 +66,7 @@ tuolumne,256,GPU-enabled
 matrix,26,GPU-enabled
 ```
 
-`multi-cluster/machines.csv` is a runtime input. Its columns are machine name,
+`experimental/multi-cluster/machines.csv` is a runtime input. Its columns are machine name,
 physical node count, and machine type (`CPU-only` or `GPU-enabled`); the `#`
 prefix on the first header is accepted. The size is the worker simulation's
 schedulable capacity. Because background jobs are not modeled, this represents
@@ -97,12 +97,15 @@ amg,-problem1-p442-n12812864,32,0.9821,1.0446,1.0943,,1.2496,,2.2508,
 `--ground-truth` supplies measured speedups and `--prediction` supplies values
 available to the dispatch policy. Values are positive, dimensionless speedups
 relative to the job stream's `duration`: a speedup of `2.0` means half that
-duration. The two files must have identical `(App, Args, Ranks)` identities and
-missing-value patterns. They need no named Quartz column, but must use the same
-duration reference.
+duration. The two files must have identical `(App, Args, Ranks)` identities,
+but their missing-value patterns may differ. A mode is dispatchable only when
+both its ground-truth and prediction cells are present. They need no named
+Quartz column, but must use the same duration reference.
 
 Rows without a usable measurement for any configured compatible system are
 reported and omitted. Duplicate `(app, args, ranks)` rows are rejected.
+Applications absent from the application-to-requirement table are omitted,
+allowing that table to act as an application sampling allowlist.
 
 Generate the production table by joining the prediction matrix to measured
 target runtimes:
@@ -112,40 +115,40 @@ source docs/venv/bin/activate
 python3 experimental/multi-cluster/build_performance_tables.py \
   --predictions multi-cluster/relative_runtime_matrix_quartz_new.csv \
   --measurements multi-cluster/merged.txt \
-  --applications multi-cluster/apps.csv \
-  --systems multi-cluster/machines.csv \
-  --ground-truth-output multi-cluster/ground_truth.csv \
-  --prediction-output multi-cluster/prediction.csv
+  --applications experimental/multi-cluster/apps.csv \
+  --systems experimental/multi-cluster/machines.csv \
+  --ground-truth-output experimental/multi-cluster/ground_truth.csv \
+  --prediction-output experimental/multi-cluster/prediction.csv
 ```
 
 The join key is `(app, args, ranks)` after lowercasing the application and
 removing whitespace and case differences from `args`; commas inside quoted
-argument fields remain part of the argument. For each workload, the converter
-uses a prediction row containing all available target modes and prefers the row
-with the most measured reference systems. It normalizes measured runtimes and
-predictions to the first measured non-dispatch reference available in table
-order (normally Borax), falling back to a compatible target mode only when
-needed. Quartz data is not required. In `merged.txt`, the unsuffixed `matrix`,
-`tioga`, and `tuolumne` measurements represent their GPU modes; their `-cpu`
-rows represent CPU modes.
+argument fields remain part of the argument. Ground truth retains every
+compatible target-mode measurement and normalizes it to the first measured
+non-dispatch reference in table order (normally Borax), falling back to a
+compatible target mode only when needed. Model predictions are emitted only
+when they can use that same reference, so missing model coverage never removes
+ground-truth measurements. Quartz data is not required. In `merged.txt`, the
+unsuffixed `matrix`, `tioga`, and `tuolumne` measurements represent their GPU
+modes; their `-cpu` rows represent CPU modes.
 
 Generate two interchangeable prediction baselines:
 
 ```bash
 source docs/venv/bin/activate
 python3 experimental/multi-cluster/build_prediction_baselines.py \
-  --ground-truth multi-cluster/ground_truth.csv \
+  --ground-truth experimental/multi-cluster/ground_truth.csv \
   --machine-rep multi-cluster/machine_rep.txt \
-  --rajaperf-output multi-cluster/prediction.rajaperf.csv \
-  --app-avg-output multi-cluster/prediction.app_avg.csv
+  --rajaperf-output experimental/multi-cluster/prediction.rajaperf.csv \
+  --app-avg-output experimental/multi-cluster/prediction.app_avg.csv
 ```
 
 The RAJAPerf baseline computes `borax_time / machine_time` for every shared
 kernel position, averages those ratios per execution mode, and assigns that
-machine-level value to every workload where the mode is available. Repeated
-kernel names remain distinct positional samples. The application-average
-baseline assigns the arithmetic mean ground-truth speedup for each
-`(App, Ranks, execution mode)` group.
+machine-level value to every workload and system mode. Repeated kernel names
+remain distinct positional samples. The application-average baseline assigns
+the arithmetic mean ground-truth speedup for each `(App, Ranks, execution
+mode)` group and retains the workload's measured-mode coverage.
 
 #### Optional plotting
 
@@ -158,9 +161,9 @@ does not refer to the simulator's `run_time_mode` option:
 ```bash
 source docs/venv/bin/activate
 python3 experimental/multi-cluster/plot_relative_performance.py \
-  --ground-truth multi-cluster/ground_truth.csv \
-  --prediction multi-cluster/prediction.csv \
-  --output multi-cluster/relative-performance.png
+  --ground-truth experimental/multi-cluster/ground_truth.csv \
+  --prediction experimental/multi-cluster/prediction.csv \
+  --output experimental/multi-cluster/relative-performance.png
 ```
 
 The default logarithmic axes make both sub-unit and large speedups visible.
@@ -207,13 +210,27 @@ actual_time_limit    = time_limit      / ground_truth_relative_performance
 predicted_turnaround = estimated_wait  + estimated_duration
 ```
 
-The smallest predicted turnaround wins; ties use estimated wait and then
-systems-table order. The wait estimate uses the predicted time limit. Only the
-selected worker receives the job, with its ground-truth-scaled time limit and
-actual duration. Thus prediction error affects placement, while the resulting
-queue state reflects the workload's realized performance. The next arrival
-observes all earlier decisions, so dispatch remains online even though inputs
-are validated before the run.
+The experiment assumes that the submitting user can correct an underestimated
+wall-time request using the known ground-truth runtime before the successful
+submission. Starting from `predicted_time_limit`, it doubles the request until
+it is at least `actual_duration`, without simulating or charging resources for
+the failed attempts. `--max-time-limit` caps the corrected request; the
+prediction study defaults to Lassen's 43,200-second maximum. If
+`actual_duration` exceeds that maximum, the experiment writes a `dropped:`
+record to standard error and does not submit the job. Dropped jobs are excluded
+from simulation statistics. This intentionally optimistic assumption isolates
+placement quality from the cost of discovering a sufficient wall-time limit.
+
+Candidate systems whose ground-truth runtime exceeds `--max-time-limit` are
+discarded before placement, regardless of their waiting time. The smallest
+predicted turnaround among the remaining systems wins; ties use estimated wait
+and then systems-table order. If no measured, capacity-compatible system can
+finish within the maximum, the job is dropped. The wait estimate uses the
+corrected submitted time limit. Only the selected worker receives the job, with
+that limit and the actual duration. Thus prediction error affects placement,
+while the resulting queue state reflects the workload's realized performance.
+The next arrival observes all earlier decisions, so dispatch remains online
+even though inputs are validated before the run.
 
 ## Build and run
 
@@ -223,11 +240,12 @@ cmake --build build --target mpi_performance_dispatch-bin
 
 mpirun -np 6 build/mpi_performance_dispatch \
   --jobs multi-cluster/job_stream.csv \
-  --ground-truth multi-cluster/ground_truth.csv \
-  --prediction multi-cluster/prediction.csv \
-  --applications multi-cluster/apps.csv \
-  --systems multi-cluster/machines.csv \
+  --ground-truth experimental/multi-cluster/ground_truth.csv \
+  --prediction experimental/multi-cluster/prediction.csv \
+  --applications experimental/multi-cluster/apps.csv \
+  --systems experimental/multi-cluster/machines.csv \
   --seed 7 \
+  --max-time-limit 43200 \
   --output dispatch-decisions.csv
 ```
 
@@ -236,7 +254,8 @@ allocation. MPI and Ser20 are required; gRPC and Python are not.
 
 ## Output
 
-Rank 0 writes one CSV row per job-stream row:
+Rank 0 writes one CSV row per successfully dispatched job; dropped jobs are
+recorded in the log instead:
 
 | Column | Meaning |
 |---|---|
@@ -253,7 +272,9 @@ Rank 0 writes one CSV row per job-stream row:
 | `estimated_duration` | Duration predicted for the dispatch decision. |
 | `actual_duration` | Ground-truth duration submitted to DR_EVT. |
 | `predicted_time_limit` | Wall-time limit used to estimate the dispatch candidate. |
-| `actual_time_limit` | Ground-truth-scaled wall-time limit submitted to DR_EVT. |
+| `actual_time_limit` | Ground-truth-scaled wall-time limit retained for comparison. |
+| `submitted_time_limit` | Predicted limit after doubling and applying the configured maximum; this is submitted to DR_EVT. |
+| `time_limit_doublings` | Number of pre-submission doublings needed to cover the known actual runtime. |
 | `predicted_turnaround` | `estimated_wait + estimated_duration`. |
 | `job_idx` | Worker-local DR_EVT job identifier. |
 
@@ -271,7 +292,9 @@ these evaluation metrics:
 Turnaround and bounded slowdown are weighted by each system's completed-job
 count when combined. A mismatch between the completed and dispatched counts is
 reported as an error rather than producing partial metrics. The Python/gRPC
-implementation prints the same summary schema.
+implementation prints the same summary schema. The summary reports
+`dropped_jobs` separately, and standard error contains one detailed record for
+each dropped job.
 
 ## Python/gRPC implementation
 
@@ -284,11 +307,12 @@ python3 python/grpc_mpi_launcher.py --mpi-ranks 6 \
   --server-binary build/dr_evt_server \
   --client-script experimental/multi-cluster/grpc_performance_dispatch.py -- \
   --jobs multi-cluster/job_stream.csv \
-  --ground-truth multi-cluster/ground_truth.csv \
-  --prediction multi-cluster/prediction.csv \
-  --applications multi-cluster/apps.csv \
-  --systems multi-cluster/machines.csv \
+  --ground-truth experimental/multi-cluster/ground_truth.csv \
+  --prediction experimental/multi-cluster/prediction.csv \
+  --applications experimental/multi-cluster/apps.csv \
+  --systems experimental/multi-cluster/machines.csv \
   --seed 7 \
+  --max-time-limit 43200 \
   --output grpc-dispatch-decisions.csv
 ```
 

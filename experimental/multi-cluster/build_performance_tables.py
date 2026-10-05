@@ -140,68 +140,55 @@ def build_rows(
     for identity, candidates in prediction_groups.items():
         app = identity[0]
         if app not in requirements:
-            raise ValueError(f"no sys_requirement for app {app}")
-        predicted_modes = {
-            mode for mode in mode_order if any(row[mode].strip() for row in candidates)
-        }
-        complete = [
-            row
-            for row in candidates
-            if all(row[mode].strip() for mode in predicted_modes)
-        ]
-        if not complete:
-            raise ValueError(
-                f"no single complete prediction row for workload {identity}"
-            )
-        prediction = max(
-            complete,
-            key=lambda row: sum(
-                bool(row[column].strip()) and column in measurements.get(identity, {})
-                for column in reference_order
-            ),
-        )
-
-        paired = [
-            mode
-            for mode in mode_order
-            if mode in predicted_modes and mode in measurements.get(identity, {})
-        ]
-        usable = [
+            continue
+        measured = measurements.get(identity, {})
+        actual_modes = [
             mode
             for mode in compatible_modes(requirements[app], mode_order)
-            if mode in paired
+            if mode in measured
         ]
-        if not usable:
+        if not actual_modes:
             skipped += 1
             continue
 
         external_references = [
             column
             for column in reference_order
-            if column not in mode_order
-            and prediction[column].strip()
-            and column in measurements.get(identity, {})
+            if column not in mode_order and column in measured
         ]
-        reference = external_references[0] if external_references else usable[0]
-        reference_runtime = measurements[identity][reference]
-        reference_prediction = float(prediction[reference])
+        reference = external_references[0] if external_references else actual_modes[0]
+        reference_runtime = measured[reference]
+        prediction_candidates = [row for row in candidates if row[reference].strip()]
+        prediction = (
+            max(
+                prediction_candidates,
+                key=lambda row: sum(
+                    bool(row[mode].strip()) and mode in measured
+                    for mode in mode_order
+                ),
+            )
+            if prediction_candidates
+            else None
+        )
         identity_values = {
-            "App": prediction["app"],
-            "Args": prediction["args"],
-            "Ranks": prediction["ranks"],
+            "App": candidates[0]["app"],
+            "Args": candidates[0]["args"],
+            "Ranks": candidates[0]["ranks"],
         }
         ground_truth = dict(identity_values)
         predicted = dict(identity_values)
         for mode in mode_order:
-            if mode not in paired:
-                ground_truth[mode] = ""
-                predicted[mode] = ""
-                continue
-            ground_truth[mode] = format(
-                reference_runtime / measurements[identity][mode], ".17g"
+            ground_truth[mode] = (
+                format(reference_runtime / measured[mode], ".17g")
+                if mode in actual_modes
+                else ""
             )
-            predicted[mode] = format(
-                float(prediction[mode]) / reference_prediction, ".17g"
+            predicted[mode] = (
+                format(float(prediction[mode]) / float(prediction[reference]), ".17g")
+                if prediction is not None
+                and mode in actual_modes
+                and prediction[mode].strip()
+                else ""
             )
         ground_truth_rows.append(ground_truth)
         prediction_rows.append(predicted)

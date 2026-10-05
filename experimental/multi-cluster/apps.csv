@@ -1,0 +1,7 @@
+#app,sys_requirement
+amg,CPU-only
+xsbench,GPU-portable
+laghos,GPU-portable
+minife.x,GPU-portable
+minivite,CPU-only
+testdfft,CPU-only
