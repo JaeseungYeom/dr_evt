@@ -381,6 +381,10 @@ is reached, the remaining area is converted to time using
 `GetPredictionHorizonRequest` exposes the same calculation.
 
 **Get scheduling statistics** (wait times, turnaround, utilization):
+
+The returned statistics also include mean execution time and mean bounded
+slowdown. Bounded slowdown is computed per completed job as
+`max(1, turnaround / max(run_time, 10 seconds))`.
 ```cpp
 Simulation::Statistics get_statistics() const;
 ```

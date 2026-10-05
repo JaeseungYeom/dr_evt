@@ -159,9 +159,14 @@ PYBIND11_MODULE(dr_evt, m) {
                     "post-hoc schedule utilization otherwise.")
       .def_readonly("avg_wait_time", &Simulation::Statistics::avg_wait_time,
                     "float: Mean completed-job wait time.")
+      .def_readonly("avg_run_time", &Simulation::Statistics::avg_run_time,
+                    "float: Mean completed-job execution time.")
       .def_readonly("avg_turnaround_time",
                     &Simulation::Statistics::avg_turnaround_time,
                     "float: Mean completed-job turnaround time.")
+      .def_readonly("avg_bounded_slowdown",
+                    &Simulation::Statistics::avg_bounded_slowdown,
+                    "float: Mean bounded slowdown using a 10-second bound.")
       .def_readonly("makespan", &Simulation::Statistics::makespan,
                     "float: Time from first submission to final completion.")
       .def("__repr__", [](const Simulation::Statistics &s) {

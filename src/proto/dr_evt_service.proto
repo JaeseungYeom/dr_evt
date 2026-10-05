@@ -358,6 +358,9 @@ message GetStatisticsResponse {
     // Scheduled-job resource area for the server's standard scheduler, in
     // node-seconds.
     double resource_area = 13;
+    double avg_run_time = 14;
+    // Mean max(1, turnaround / max(run_time, 10 seconds)).
+    double avg_bounded_slowdown = 15;
 }
 
 message GetTraceSizeResponse {

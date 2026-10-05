@@ -699,7 +699,9 @@ def test_warm_start_batch_mode(result):
         assert abs(stats.resource_area - 51.0) < 1e-12
         assert abs(stats.utilization - 0.85) < 1e-12
         assert abs(stats.avg_wait_time - 1.5) < 1e-12
+        assert abs(stats.avg_run_time - 3.0) < 1e-12
         assert abs(stats.avg_turnaround_time - 4.5) < 1e-12
+        assert abs(stats.avg_bounded_slowdown - 1.0) < 1e-12
         assert abs(stats.makespan - 16.0) < 1e-12
         result.record_pass("Native replay warm start")
     except Exception as e:

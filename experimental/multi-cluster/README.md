@@ -1,16 +1,21 @@
 # Online multi-cluster workload dispatch
 
-`mpi_performance_dispatch` models one controller and one independent DR_EVT
-simulation per system. It combines a chronological job stream with sampled
-application workloads and dispatches every arrival using current simulated
-queue state and predicted relative performance. Ground-truth relative
-performance determines how long the selected job actually runs. The decision
-is online: no routing plan is computed before the run.
+`mpi_performance_dispatch` models one dispatcher and multiple cluster systems,
+with one independent DR_EVT simulation per system. For each arriving workload,
+the dispatcher selects a compatible system using the workload's predicted
+relative performance and the systems' current simulated queue states.
+Ground-truth relative performance determines how long the workload actually
+runs on the selected system. Dispatch is online so that each decision accounts
+for the latest estimated queue wait; the policy minimizes predicted turnaround,
+which combines that wait with predicted run time.
 
-The native implementation uses MPI and Ser20, but not gRPC or Python. Rank 0
-owns the input tables, random-number generator, and dispatch policy. Each
-other rank owns one `Simulation`; worker-rank order matches systems-table row
-order.
+The native implementation uses MPI, with Ser20 serialization for message
+packing; it does not require gRPC or Python. Rank 0 owns the input tables,
+random-number generator, and dispatch policy. Each other rank owns one
+`Simulation`, and worker-rank order matches systems-table row order. The
+corresponding Python implementation uses gRPC for dispatcher-worker
+communication, while MPI starts the worker processes that host the gRPC
+servers.
 
 ## Input model
 
@@ -125,7 +130,10 @@ needed. Quartz data is not required. In `merged.txt`, the unsuffixed `matrix`,
 rows represent CPU modes.
 
 Plot actual (x-axis) against predicted (y-axis) relative performance for every
-mode, with a consistent color for each application:
+configured machine/execution-mode column (for example, `dane`, `mammoth`,
+`matrix-cpu`, or `matrix-gpu`), with a consistent color for each application.
+Here, execution mode identifies the CPU or GPU implementation on a machine; it
+does not refer to the simulator's `run_time_mode` option:
 
 ```bash
 source docs/venv/bin/activate
@@ -248,7 +256,20 @@ Rank 0 writes one CSV row per job-stream row:
 | `job_idx` | Worker-local DR_EVT job identifier. |
 
 After draining all workers, rank 0 prints submitted/completed counts and
-makespan per system to standard error.
+makespan per system to standard error, followed by an `overall` line containing
+these evaluation metrics:
+
+| Metric | Definition |
+|---|---|
+| `average_turnaround_time` | Sum of actual submit-to-completion times divided by completed jobs. |
+| `average_bounded_slowdown` | Mean of `max(1, turnaround / max(actual run time, 10 seconds))`. |
+| `average_run_time` | Sum of ground-truth-scaled run times divided by dispatched jobs. |
+| `average_speedup` | Sum of selected ground-truth workload speedups divided by dispatched jobs. |
+
+Turnaround and bounded slowdown are weighted by each system's completed-job
+count when combined. A mismatch between the completed and dispatched counts is
+reported as an error rather than producing partial metrics. The Python/gRPC
+implementation prints the same summary schema.
 
 ## Python/gRPC implementation
 

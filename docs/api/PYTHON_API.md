@@ -160,8 +160,11 @@ contains `time` and `nodes_released`.
   `jobs_waiting`;
 - `current_time`, `total_nodes`, `nodes_in_use`, and
   `nodes_available`; and
-- `resource_area`, `utilization`, `avg_wait_time`, `avg_turnaround_time`, and
-  `makespan`.
+- `resource_area`, `utilization`, `avg_wait_time`, `avg_run_time`,
+  `avg_turnaround_time`, `avg_bounded_slowdown`, and `makespan`.
+
+`avg_bounded_slowdown` is the mean of
+`max(1, turnaround / max(run_time, 10 seconds))` over completed jobs.
 
 For simulations constructed with Custom-FCFS callbacks, `resource_area` is
 accumulated as `nodes_in_use * interval` between settled scheduling times.

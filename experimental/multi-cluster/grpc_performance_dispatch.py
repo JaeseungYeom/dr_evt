@@ -532,14 +532,62 @@ def write_results(stream, decisions):
     writer.writerows(decisions)
 
 
-def write_summary(stream, statistics, system_ids):
-    """Print one completion summary per simulation server."""
+def evaluation_metrics(decisions, statistics):
+    """Return completion-weighted metrics for the dispatched workload."""
+    job_count = len(decisions)
+    completed = sum(stats.jobs_completed for stats in statistics)
+    if completed != job_count:
+        raise ValueError(
+            f"completed job count {completed} does not match dispatched "
+            f"job count {job_count}"
+        )
+    if job_count == 0:
+        return {
+            "average_turnaround_time": 0.0,
+            "average_bounded_slowdown": 0.0,
+            "average_run_time": 0.0,
+            "average_speedup": 0.0,
+        }
+    return {
+        "average_turnaround_time": sum(
+            stats.avg_turnaround_time * stats.jobs_completed
+            for stats in statistics
+        )
+        / completed,
+        "average_bounded_slowdown": sum(
+            stats.avg_bounded_slowdown * stats.jobs_completed
+            for stats in statistics
+        )
+        / completed,
+        "average_run_time": sum(
+            decision["actual_duration"] for decision in decisions
+        )
+        / job_count,
+        "average_speedup": sum(
+            decision["ground_truth_relative_performance"]
+            for decision in decisions
+        )
+        / job_count,
+    }
+
+
+def write_summary(stream, statistics, system_ids, decisions):
+    """Print per-system completion data and overall evaluation metrics."""
     for system_id, stats in zip(system_ids, statistics):
         print(
             f"{system_id}: submitted={stats.jobs_submitted} "
             f"completed={stats.jobs_completed} makespan={stats.makespan:.6g}",
             file=stream,
         )
+    metrics = evaluation_metrics(decisions, statistics)
+    print(
+        f"overall: jobs={len(decisions)} "
+        f"average_turnaround_time={metrics['average_turnaround_time']:.6g} "
+        f"average_bounded_slowdown={metrics['average_bounded_slowdown']:.6g} "
+        f"average_run_time={metrics['average_run_time']:.6g} "
+        f"average_speedup={metrics['average_speedup']:.6g}",
+        file=stream,
+    )
 
 
 def main():
@@ -583,7 +631,7 @@ def main():
                 write_results(stream, decisions)
         else:
             write_results(sys.stdout, decisions)
-        write_summary(sys.stderr, statistics, system_ids)
+        write_summary(sys.stderr, statistics, system_ids, decisions)
     finally:
         generated_dir.cleanup()
 

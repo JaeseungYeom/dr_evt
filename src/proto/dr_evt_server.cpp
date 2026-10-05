@@ -89,7 +89,9 @@ void copy_statistics(const dr_evt::Simulation::Statistics &statistics,
   response->set_nodes_available(statistics.nodes_available);
   response->set_utilization(statistics.utilization);
   response->set_avg_wait_time(statistics.avg_wait_time);
+  response->set_avg_run_time(statistics.avg_run_time);
   response->set_avg_turnaround_time(statistics.avg_turnaround_time);
+  response->set_avg_bounded_slowdown(statistics.avg_bounded_slowdown);
   response->set_makespan(statistics.makespan);
   response->set_resource_area(statistics.resource_area);
 }
@@ -116,8 +118,11 @@ void write_statistics_file(const std::string &filename,
          << "  \"resource_area\": " << statistics.resource_area << ",\n"
          << "  \"utilization\": " << statistics.utilization << ",\n"
          << "  \"avg_wait_time\": " << statistics.avg_wait_time << ",\n"
+         << "  \"avg_run_time\": " << statistics.avg_run_time << ",\n"
          << "  \"avg_turnaround_time\": " << statistics.avg_turnaround_time
          << ",\n"
+         << "  \"avg_bounded_slowdown\": "
+         << statistics.avg_bounded_slowdown << ",\n"
          << "  \"makespan\": " << statistics.makespan << "\n"
          << "}\n";
   if (!output) {

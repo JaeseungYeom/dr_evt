@@ -37,6 +37,8 @@ namespace dr_evt {
 
 namespace {
 
+constexpr tdiff_t bounded_slowdown_threshold = 10.0;
+
 #if defined(DR_EVT_HAS_SER20)
 
 constexpr std::array<char, 8> checkpoint_magic{'D', 'R', 'E', 'V',
@@ -2531,7 +2533,9 @@ BasicSimulation<TraceType>::get_statistics() const {
 
   // Calculate wait times and turnaround times
   tdiff_t total_wait = 0.0;
+  tdiff_t total_run_time = 0.0;
   tdiff_t total_turnaround = 0.0;
+  double total_bounded_slowdown = 0.0;
   sim_time_t max_completion = 0.0;
   sim_time_t max_scheduled_completion = 0.0;
   num_jobs_t completed_count = 0;
@@ -2559,7 +2563,11 @@ BasicSimulation<TraceType>::get_statistics() const {
       tdiff_t exec = job.get_actual_run_time();
 
       total_wait += wait;
+      total_run_time += exec;
       total_turnaround += (wait + exec);
+      total_bounded_slowdown +=
+          std::max(1.0, (wait + exec) /
+                            std::max(exec, bounded_slowdown_threshold));
       max_completion = std::max(max_completion, completion);
       completed_count++;
     }
@@ -2567,8 +2575,12 @@ BasicSimulation<TraceType>::get_statistics() const {
 
   stats.avg_wait_time =
       (completed_count > 0) ? total_wait / completed_count : 0.0;
+  stats.avg_run_time =
+      (completed_count > 0) ? total_run_time / completed_count : 0.0;
   stats.avg_turnaround_time =
       (completed_count > 0) ? total_turnaround / completed_count : 0.0;
+  stats.avg_bounded_slowdown =
+      (completed_count > 0) ? total_bounded_slowdown / completed_count : 0.0;
   stats.makespan = max_completion;
 
   if (m_custom_scheduler != nullptr) {

@@ -36,7 +36,18 @@ def run_dispatch(command, output, expected_jobs):
         assert submitted == completed
         total += submitted
     assert total == expected_jobs
-    return output.read_bytes()
+    overall_lines = [
+        line for line in result.stderr.splitlines() if line.startswith("overall:")
+    ]
+    assert len(overall_lines) == 1, result.stderr
+    metrics = {
+        name: float(value)
+        for name, value in re.findall(r"([a-z_]+)=([0-9.eE+-]+)", overall_lines[0])
+    }
+    assert int(metrics["jobs"]) == expected_jobs
+    assert metrics["average_turnaround_time"] >= metrics["average_run_time"]
+    assert metrics["average_bounded_slowdown"] >= 1.0
+    return output.read_bytes(), metrics
 
 
 def main():
@@ -105,13 +116,25 @@ def main():
         first = temp_dir / "first.csv"
         second = temp_dir / "second.csv"
         expected_jobs = 63
-        assert run_dispatch(command, first, expected_jobs) == run_dispatch(
-            command, second, expected_jobs
-        )
+        first_output, metrics = run_dispatch(command, first, expected_jobs)
+        second_output, second_metrics = run_dispatch(command, second, expected_jobs)
+        assert first_output == second_output
+        assert metrics == second_metrics
 
         with first.open(newline="") as stream:
             rows = list(csv.DictReader(stream))
         assert len(rows) == expected_jobs
+        assert abs(
+            metrics["average_run_time"]
+            - sum(float(row["actual_duration"]) for row in rows) / expected_jobs
+        ) < 1e-5
+        assert abs(
+            metrics["average_speedup"]
+            - sum(
+                float(row["ground_truth_relative_performance"]) for row in rows
+            )
+            / expected_jobs
+        ) < 1e-5
         assert {row["App"] for row in rows} == set(requirements)
         for row in rows:
             original_nodes = int(row["num_nodes"])

@@ -205,7 +205,9 @@ void test_boundary_classification_and_statistics() {
   expect_close(stats.resource_area, 51.0);
   expect_close(stats.utilization, 0.85);
   expect_close(stats.avg_wait_time, 1.5);
+  expect_close(stats.avg_run_time, 3.0);
   expect_close(stats.avg_turnaround_time, 4.5);
+  expect_close(stats.avg_bounded_slowdown, 1.0);
   expect_close(stats.makespan, 16.0);
 
   const std::map<double, unsigned> expected = {
