@@ -443,7 +443,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("experimental/multi-cluster/prediction-study-results"),
+        default=Path("experimental/multi-cluster/dispatch-exp-results"),
     )
     parser.add_argument(
         "--launcher", nargs="+", default=["srun"], help="MPI launcher prefix (default: srun)"

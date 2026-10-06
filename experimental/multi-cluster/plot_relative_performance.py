@@ -95,7 +95,7 @@ def display_name(system):
     return system
 
 
-def plot_points(points, output, logarithmic=True):
+def plot_points(points, output, logarithmic=True, prediction_label=None):
     """Create a multi-panel actual-versus-predicted scatter plot."""
     import matplotlib
 
@@ -182,7 +182,10 @@ def plot_points(points, output, logarithmic=True):
         ncol=min(4, len(applications)),
         frameon=False,
     )
-    figure.suptitle("Actual vs. predicted relative performance")
+    title = "Actual vs. predicted relative performance"
+    if prediction_label:
+        title += f" ({prediction_label})"
+    figure.suptitle(title)
     figure.tight_layout(rect=(0, 0.08, 1, 0.96))
     output.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output, dpi=180, bbox_inches="tight")
@@ -204,9 +207,18 @@ def main():
     parser.add_argument(
         "--linear", action="store_true", help="use linear instead of log axes"
     )
+    parser.add_argument(
+        "--prediction-label",
+        help="optional prediction-method label included in the figure title",
+    )
     args = parser.parse_args()
     points = load_points(args.ground_truth, args.prediction, args.systems)
-    plot_points(points, args.output, logarithmic=not args.linear)
+    plot_points(
+        points,
+        args.output,
+        logarithmic=not args.linear,
+        prediction_label=args.prediction_label,
+    )
 
 
 if __name__ == "__main__":
