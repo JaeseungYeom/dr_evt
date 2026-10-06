@@ -319,6 +319,31 @@ aggregate metrics in four panels, and `summary.pdf` contains the same figure
 in vector form. `metrics_per_run.csv` is retained as a compatibility copy of
 `summary.csv`.
 
+### Turnaround-estimation error
+
+For a completed prediction-utilization study, replay the recorded placements
+and compare each dispatch-time turnaround prediction with its realized
+submit-to-completion time:
+
+```bash
+CMAKE_INSTALL_PREFIX=/path/to/install \
+python experimental/multi-cluster/analyze_turnaround_estimation.py
+```
+
+The script resolves the installed Python module beneath
+`CMAKE_INSTALL_PREFIX`, using `CMAKE_INSTALL_LIBDIR` when it is exported and
+otherwise checking both `lib` and `lib64`. By default it analyzes utilization
+values 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, and 1.0 in
+`prediction-utilization-study`. It writes
+`turnaround-estimation-error.csv`, `.png`, and `.pdf` there. Use
+`--study-dir`, `--systems`, `--utilizations`, or `--output-prefix` to override
+those defaults.
+
+MAPE and SMAPE are calculated per job. The CSV retains both the mean derived
+from replayed per-job timestamps and the aggregate mean reported by the
+original run. The script warns if those means differ, so an inconsistency is
+not hidden by the summary plot.
+
 ## Output
 
 Rank 0 writes one CSV row per successfully dispatched job; dropped jobs are
