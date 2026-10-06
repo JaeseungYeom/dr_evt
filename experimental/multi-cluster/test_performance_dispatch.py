@@ -582,6 +582,33 @@ class PerformanceDispatchTests(unittest.TestCase):
             )
         )
 
+    def test_runtime_limit_filters_predicted_duration(self):
+        systems = self.systems[:2]
+        workload = {
+            **self.workloads["cpu-solver"][0],
+            "performance": [
+                {"CPU": {"ground_truth": 2.0, "predicted": 0.5}, "GPU": None},
+                {"CPU": {"ground_truth": 1.0, "predicted": 1.0}, "GPU": None},
+            ],
+        }
+        job = {
+            "job_id": "predicted-runtime-limit",
+            "num_nodes": 8,
+            "duration": 80,
+            "limit_time": 20,
+        }
+        choice = choose_system(
+            job,
+            workload,
+            systems,
+            [window(0, system["capacity"]) for system in systems],
+            [0, 0],
+            max_time_limit=100,
+        )
+
+        self.assertEqual(choice["system_id"], "mammoth")
+        self.assertEqual(choice["estimated_duration"], 80)
+
     def test_controller_uses_same_inputs_and_submits_both_scaled_times(self):
         args = SimpleNamespace(
             server=[f"server-{index}" for index in range(5)],
@@ -765,6 +792,28 @@ class PerformanceDispatchTests(unittest.TestCase):
                 for wall_time_policy in prediction_study.WALL_TIME_POLICIES
             },
         )
+
+    def test_prediction_study_command_uses_selected_systems(self):
+        args = SimpleNamespace(
+            launcher=["srun"],
+            ranks=6,
+            executable=pathlib.Path("/install/bin/mpi_performance_dispatch"),
+            systems=pathlib.Path("/inputs/custom-machines.csv"),
+            seed=7,
+            max_time_limit=43200.0,
+        )
+        command = prediction_study.build_command(
+            args,
+            pathlib.Path("/source"),
+            "turnaround",
+            "adapted-limit",
+            pathlib.Path("/inputs/prediction.csv"),
+            pathlib.Path("/inputs/jobs.csv"),
+            pathlib.Path("/outputs/dispatch.csv"),
+        )
+
+        systems_index = command.index("--systems")
+        self.assertEqual(command[systems_index + 1], "/inputs/custom-machines.csv")
 
 if __name__ == "__main__":
     unittest.main()

@@ -779,8 +779,8 @@ adjust_time_limit(double predicted_limit, double actual_duration,
  * @param[in] max_time_limit Maximum permitted submitted wall-time limit.
  * @param[in] dispatch_policy System-selection policy.
  * @param[in] wall_time_policy Submitted wall-time calculation policy.
- * @return Best compatible system that can finish within the maximum, or no
- * choice if none can do so.
+ * @return Best compatible system whose predicted and ground-truth runtimes
+ * are within the maximum, or no choice if none qualifies.
  */
 std::optional<Choice>
 choose_system(const Job &job, const Workload &workload,
@@ -822,7 +822,8 @@ choose_system(const Job &job, const Workload &workload,
       continue;
     const double predicted_duration = job.duration / performance->predicted;
     const double actual_duration = job.duration / performance->ground_truth;
-    if (actual_duration > max_time_limit)
+    if (predicted_duration > max_time_limit ||
+        actual_duration > max_time_limit)
       continue;
     const double predicted_limit = job.limit_time / performance->predicted;
     const double actual_limit = job.limit_time / performance->ground_truth;

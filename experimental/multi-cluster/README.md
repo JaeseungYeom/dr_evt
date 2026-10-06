@@ -62,10 +62,10 @@ runtime input; the `#` prefix on its first header is accepted.
 
 ```text
 #machine,size,GPU
-dane,256,CPU-only
+dane,514,CPU-only
 mammoth,64,CPU-only
 tioga,30,GPU-enabled
-tuolumne,256,GPU-enabled
+tuolumne,384,GPU-enabled
 matrix,26,GPU-enabled
 ```
 
@@ -78,7 +78,8 @@ an otherwise idle machine and therefore overstates real-world availability.
 A job is considered for every compatible machine whose configured size can
 host it. With the table above, requests of 27 through 30 nodes can also run on
 Tioga, and requests through 64 nodes can run on Mammoth. Only requests of 65
-through 256 nodes are limited by capacity to Dane and Tuolumne. A request
+through 384 nodes are limited by capacity to Dane and Tuolumne, while larger
+requests can run only on Dane. A request
 larger than the largest configured machine is truncated to that largest size
 so it remains runnable. The dispatcher writes a warning to standard error for
 each truncated request. Both the original and effective node counts are
@@ -228,9 +229,10 @@ record to standard error and does not submit the job. Dropped jobs are excluded
 from simulation statistics. This intentionally optimistic assumption isolates
 placement quality from the cost of discovering a sufficient wall-time limit.
 
-Candidate systems whose ground-truth runtime exceeds `--max-time-limit` are
-discarded before placement, regardless of their waiting time. If no measured,
-capacity-compatible system can finish within the maximum, the job is dropped.
+Candidate systems whose predicted or ground-truth runtime exceeds
+`--max-time-limit` are discarded before placement, regardless of their waiting
+time. If no measured, capacity-compatible system has both durations within the
+maximum, the job is dropped.
 
 `--dispatch-policy` selects one of two placement rules:
 
@@ -288,8 +290,13 @@ tables. Each of these 12 configurations runs on all ten synthetic traces, for
 
 ```bash
 python experimental/multi-cluster/run_prediction_study.py \
-  --executable "${CMAKE_INSTALL_PREFIX}/bin/mpi_performance_dispatch"
+  --executable "${CMAKE_INSTALL_PREFIX}/bin/mpi_performance_dispatch" \
+  --systems experimental/multi-cluster/machines.csv
 ```
+
+Use `--systems` to run the whole matrix with another machine configuration,
+The MPI rank count must be one dispatcher plus one rank for each machine row;
+`--ranks` defaults to six.
 
 Repeat `--dispatch-policy` or `--wall-time-policy` to select a subset. For
 example, the paper policy with oracle wall times is:

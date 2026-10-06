@@ -82,4 +82,5 @@ python/dr_evt_market/lc_traces/
 # Local multi-cluster experiment inputs and generated results
 /multi-cluster/
 /experimental/synthesize/lassen/synthetic_traces/
+/experimental/synthesize/lassen/simulations/
 /experimental/multi-cluster/prediction-study-results/

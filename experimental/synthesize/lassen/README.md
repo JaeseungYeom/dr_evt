@@ -1,6 +1,6 @@
 # Job trace conversion and synthetic trace generation
 
-This directory contains two scripts:
+This directory is supported by four scripts:
 
 1. `convert_job_stream_to_epoch.py` extracts Lassen `pbatch` jobs from the raw
    CSM allocation history, converts local timestamps to Unix epoch seconds,
@@ -9,8 +9,52 @@ This directory contains two scripts:
    trace and generates a synthetic trace by sampling arrival times and job
    size/runtime pairs separately, then sampling each time limit conditionally
    on the selected runtime.
+3. `../analyze_job_stream.py` calculates capacity and scheduling metrics from
+   any completed trace containing submit, begin, end, and node-count columns.
+4. `../convert_completed_trace_to_simulation.sh` converts such a completed
+   trace into four-column DR_EVT simulation input.
 
-Both scripts use Python's standard library and require Python 3.9 or newer.
+All four scripts use Python's standard library and require Python 3.9 or
+newer.
+
+## Convert a completed trace to simulation input
+
+The input and output locations are explicit arguments and are not hardcoded:
+
+```bash
+../convert_completed_trace_to_simulation.sh \
+  /path/to/lassen_pbatch_job_stream_epoch.csv \
+  /path/to/lassen_pbatch_simulation.csv
+```
+
+The output columns are `submit_time,num_nodes,time_limit,duration`, where
+`duration` is `end_time - begin_time`. DR_EVT requires duration not to exceed
+the submitted time limit, so the converter preserves observed duration and
+sets an insufficient time limit to `ceil(duration)`.
+
+## Analyze a completed trace
+
+Pass the input path explicitly; the analysis script does not assume that a
+trace exists at a repository-relative location:
+
+```bash
+python ../analyze_job_stream.py /path/to/lassen_pbatch_job_stream_epoch.csv
+```
+
+The script reports the largest single job and the peak number of concurrently
+running nodes. By default, the peak concurrent value is used as the inferred
+operational capacity. When an authoritative machine capacity is known, pass
+it explicitly:
+
+```bash
+python ../analyze_job_stream.py /path/to/trace.csv --total-nodes 792
+```
+
+Utilization is total node-seconds divided by operational nodes times the
+interval from the first submission through the final completion. Turnaround
+is `end_time - submit_time`, duration is `end_time - begin_time`, and bounded
+slowdown is `max(1, turnaround / max(duration, 10 seconds))`. The slowdown
+bound can be changed with `--bounded-slowdown-threshold`.
 
 > **Scope of the two scripts:** `convert_job_stream_to_epoch.py` is a
 > Lassen-specific adapter. It depends on Lassen CSM column names, selects the

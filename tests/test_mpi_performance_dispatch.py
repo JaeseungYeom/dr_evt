@@ -230,6 +230,31 @@ def main():
         assert dropped_bytes.count(b"\n") == 1
         assert dropped_metrics["average_run_time"] == 0
 
+        slow_prediction = temp_dir / "slow-prediction.csv"
+        with (fixture_dir / "prediction.csv").open(newline="") as source:
+            reader = csv.DictReader(source)
+            fieldnames = reader.fieldnames
+            rows = list(reader)
+        for row in rows:
+            for field in fieldnames[3:]:
+                if row[field]:
+                    row[field] = "0.5"
+        with slow_prediction.open("w", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+        predicted_cap_command = list(command)
+        predicted_cap_command[predicted_cap_command.index("--prediction") + 1] = str(
+            slow_prediction
+        )
+        predicted_cap_output = temp_dir / "predicted-cap.csv"
+        run_dispatch(
+            predicted_cap_command + ["--max-time-limit", "100"],
+            predicted_cap_output,
+            0,
+            expected_jobs,
+        )
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

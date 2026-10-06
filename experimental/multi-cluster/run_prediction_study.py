@@ -61,12 +61,12 @@ def prediction_cases(root, model_prediction):
     return cases
 
 
-def validate_inputs(root, executable, cases):
+def validate_inputs(root, executable, systems, cases):
     """Validate all static inputs before consuming an allocation."""
     required = [
         executable,
         root / "experimental/multi-cluster/apps.csv",
-        root / "experimental/multi-cluster/machines.csv",
+        systems,
         *(prediction for _, prediction in cases),
     ]
     traces = sorted(
@@ -129,32 +129,15 @@ def run_case(
             pass
 
     marker.unlink(missing_ok=True)
-    command = [
-        *args.launcher,
-        "-n",
-        str(args.ranks),
-        str(args.executable),
-        "--jobs",
-        str(trace),
-        "--ground-truth",
-        str(root / "experimental/multi-cluster/ground_truth.csv"),
-        "--prediction",
-        str(prediction),
-        "--applications",
-        str(root / "experimental/multi-cluster/apps.csv"),
-        "--systems",
-        str(root / "experimental/multi-cluster/machines.csv"),
-        "--seed",
-        str(args.seed),
-        "--max-time-limit",
-        str(args.max_time_limit),
-        "--dispatch-policy",
+    command = build_command(
+        args,
+        root,
         dispatch_policy,
-        "--wall-time-policy",
         wall_time_policy,
-        "--output",
-        str(dispatch),
-    ]
+        prediction,
+        trace,
+        dispatch,
+    )
     print(f"run {stem}: {' '.join(command)}", flush=True)
     result = subprocess.run(command, cwd=root, text=True, capture_output=True)
     combined = result.stdout + result.stderr
@@ -175,6 +158,38 @@ def run_case(
         )
     marker.write_text(marker_text, encoding="utf-8")
     return record
+
+
+def build_command(
+    args, root, dispatch_policy, wall_time_policy, prediction, trace, dispatch
+):
+    """Build the MPI dispatcher command for one prediction-study run."""
+    return [
+        *args.launcher,
+        "-n",
+        str(args.ranks),
+        str(args.executable),
+        "--jobs",
+        str(trace),
+        "--ground-truth",
+        str(root / "experimental/multi-cluster/ground_truth.csv"),
+        "--prediction",
+        str(prediction),
+        "--applications",
+        str(root / "experimental/multi-cluster/apps.csv"),
+        "--systems",
+        str(args.systems),
+        "--seed",
+        str(args.seed),
+        "--max-time-limit",
+        str(args.max_time_limit),
+        "--dispatch-policy",
+        dispatch_policy,
+        "--wall-time-policy",
+        wall_time_policy,
+        "--output",
+        str(dispatch),
+    ]
 
 
 def write_results(output_dir, records):
@@ -421,6 +436,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--executable", type=Path, help="installed mpi_performance_dispatch")
     parser.add_argument(
+        "--systems",
+        type=Path,
+        help="systems CSV (default: experimental/multi-cluster/machines.csv)",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("experimental/multi-cluster/prediction-study-results"),
@@ -450,6 +470,9 @@ def main():
         parser.error("--max-time-limit must be finite and positive")
 
     root = Path(__file__).resolve().parents[2]
+    args.systems = (
+        args.systems or root / "experimental/multi-cluster/machines.csv"
+    ).resolve()
     args.output_dir = args.output_dir.resolve()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     cases = prediction_cases(root, args.model_prediction)
@@ -464,7 +487,7 @@ def main():
         if args.executable is None:
             parser.error("--executable is required unless --aggregate-only is used")
         args.executable = args.executable.resolve()
-        traces = validate_inputs(root, args.executable, cases)
+        traces = validate_inputs(root, args.executable, args.systems, cases)
         records = []
         for dispatch_policy in dispatch_policies:
             for wall_time_policy in wall_time_policies:

@@ -356,7 +356,10 @@ def choose_system(
         ground_truth_speedup = performance["ground_truth"]
         predicted_duration = job["duration"] / predicted_speedup
         actual_duration = job["duration"] / ground_truth_speedup
-        if actual_duration > max_time_limit:
+        if (
+            predicted_duration > max_time_limit
+            or actual_duration > max_time_limit
+        ):
             continue
         predicted_limit = job["limit_time"] / predicted_speedup
         actual_limit = job["limit_time"] / ground_truth_speedup
