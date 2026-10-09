@@ -63,7 +63,25 @@ set_sim_options(const dr_evt_proto::DR_EVT_Params::Simulation_Params &cfg,
   }
   sp.set_outfile(cfg.outfile());
 
-  // Resource trace file (optional)
+  sp.m_redis_uri = cfg.redis_uri();
+  sp.m_redis_key_prefix = cfg.redis_key_prefix();
+  sp.m_checkpoint_file = cfg.checkpoint_file();
+  sp.m_checkpoint_interval_jobs = cfg.checkpoint_interval_jobs();
+  if (sp.m_checkpoint_file.empty() && sp.m_checkpoint_interval_jobs != 0) {
+    throw std::runtime_error(
+        "checkpoint_interval_jobs requires checkpoint_file");
+  }
+  if (sp.m_redis_uri.empty() != sp.m_redis_key_prefix.empty()) {
+    throw std::runtime_error(
+        "redis_uri and redis_key_prefix must be specified together");
+  }
+#if !defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+  if (!sp.m_redis_uri.empty()) {
+    throw std::runtime_error("Redis output requires DR_EVT_WITH_REDIS=ON");
+  }
+#endif
+
+  // Resource trace file (optional; Redis output redirects it to Redis)
   if (!cfg.resource_trace().empty()) {
     sp.set_resource_trace(cfg.resource_trace());
   }
@@ -84,6 +102,8 @@ set_sim_options(const dr_evt_proto::DR_EVT_Params::Simulation_Params &cfg,
   if (cfg.num_max_candidates() > 0) {
     sp.m_num_max_candidates = cfg.num_max_candidates();
   }
+  sp.m_cap_backfill_power = cfg.cap_backfill_power();
+  sp.m_cap_fcfs_power = cfg.cap_fcfs_power();
 
   // Backfill policy (default: EASY)
   if (!cfg.backfill_policy().empty()) {

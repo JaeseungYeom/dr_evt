@@ -31,13 +31,13 @@ jobs:
             python3 \
             libopenmpi-dev \
             openmpi-bin \
-            gcc-13 \
-            g++-13
+            gcc-14 \
+            g++-14
 
       - name: Configure and Build
         env:
-          CC: gcc-13
-          CXX: g++-13
+          CC: gcc-14
+          CXX: g++-14
         run: |
           mkdir -p build
           cd build
@@ -63,6 +63,14 @@ jobs:
           $GITHUB_WORKSPACE/install/bin/tests/test_progressive_load
           $GITHUB_WORKSPACE/install/bin/tests/test_queue_input
 
+      - name: Run Streaming Append API Tests
+        id: append-job
+        run: $GITHUB_WORKSPACE/install/bin/tests/test_append_job_api
+
+      - name: Validate Capped Monthly Experiment Scripts
+        id: capped-monthly-scripts
+        run: python3 tests/test_monthly_backfill_cap_scripts.py
+
       - name: Run Ser20 Memory Serialization Test
         id: serialization
         run: $GITHUB_WORKSPACE/install/bin/tests/t_state_ser20
@@ -73,6 +81,8 @@ jobs:
           echo "========================================"
           echo "Quick Test Complete"
           echo "Scheduler correctness (34 fixtures): ${{ steps.scheduler-correctness.outcome }}"
+          echo "Streaming append API (23 checks): ${{ steps.append-job.outcome }}"
           echo "Ser20 memory serialization: ${{ steps.serialization.outcome }}"
           echo "Trace schema / progressive-loading API: ${{ steps.trace-schema.outcome }}"
+          echo "Capped monthly experiment scripts: ${{ steps.capped-monthly-scripts.outcome }}"
           echo "========================================"

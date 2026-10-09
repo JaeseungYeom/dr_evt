@@ -3,16 +3,26 @@
 
 set -u
 
-if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 <simulator>" >&2
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
+
+if [ "$#" -gt 1 ]; then
+    echo "Usage: $0 [simulator]" >&2
     exit 2
 fi
 
-SIMULATOR="$1"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$#" -eq 1 ]; then
+    SIMULATOR="$1"
+fi
+source "$SCRIPT_DIR/set_simulator_path.sh"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dr-evt-warm-validation.XXXXXXXX")"
-trap 'rm -rf -- "$WORK_DIR"' EXIT INT TERM
+if ! WORK_DIR="$(mktemp -d \
+    "${TMPDIR:-/tmp}/dr-evt-warm-validation.XXXXXXXX" 2>/dev/null)"; then
+    WORK_DIR="$(mktemp -d "/tmp/dr-evt-warm-validation.XXXXXXXX")"
+fi
+cleanup() { rm -rf -- "$WORK_DIR"; }
+test_report_set_cleanup cleanup
 
 PASS=0
 FAIL=0

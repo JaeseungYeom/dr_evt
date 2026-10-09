@@ -71,6 +71,16 @@ public:
   /** @copydoc SchedulerBase::has_eligible_jobs */
   bool has_eligible_jobs() override { return !m_eligible_jobs.empty(); }
 
+  /** @copydoc SchedulerBase::pending_job_ids */
+  std::vector<job_no_t> pending_job_ids() const override {
+    std::vector<job_no_t> result;
+    result.reserve(m_wait_queue.size());
+    for (const auto &[runtime, job] : m_wait_queue) {
+      result.push_back(job.job_id);
+    }
+    return result;
+  }
+
 protected:
   /** @copydoc SchedulerBase::wait_queue_size */
   size_t wait_queue_size() const override { return m_wait_queue.size(); }

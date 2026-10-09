@@ -3,14 +3,25 @@
 
 set -u
 
-if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 <simulator>" >&2
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
+
+if [ "$#" -gt 1 ]; then
+    echo "Usage: $0 [simulator]" >&2
     exit 2
 fi
 
-SIMULATOR="$1"
-WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dr-evt-max-time.XXXXXXXX")"
-trap 'rm -rf -- "$WORK_DIR"' EXIT INT TERM
+if [ "$#" -eq 1 ]; then
+    SIMULATOR="$1"
+fi
+source "$SCRIPT_DIR/set_simulator_path.sh"
+if ! WORK_DIR="$(mktemp -d \
+    "${TMPDIR:-/tmp}/dr-evt-max-time.XXXXXXXX" 2>/dev/null)"; then
+    WORK_DIR="$(mktemp -d "/tmp/dr-evt-max-time.XXXXXXXX")"
+fi
+cleanup() { rm -rf -- "$WORK_DIR"; }
+test_report_set_cleanup cleanup
 
 fail() {
     echo "max_time test failed: $1" >&2

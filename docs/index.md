@@ -32,8 +32,10 @@ user-guide/command-line
 user-guide/protobuf-config
 user-guide/trace-formats
 user-guide/output-traces
+user-guide/redis-output
 user-guide/grpc-setup
 user-guide/client-server-use-cases
+user-guide/multi-cluster-experiment
 user-guide/maintenance-and-warm-start
 user-guide/fugaku-power-experiment
 ```
@@ -63,6 +65,7 @@ CLIENT_SERVER_GUIDE
 dev/README
 dev/WAIT_QUEUES
 dev/JOB_LIFECYCLE
+dev/PERFORMANCE_ANALYSIS
 dev/design-decisions/README
 dev/READTHEDOCS_SETUP
 ```

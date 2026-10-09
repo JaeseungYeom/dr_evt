@@ -14,12 +14,21 @@
 
 #include "trace/job_record.hpp"
 #include <boost/circular_buffer.hpp>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace dr_evt {
 
 class Data_Columns;
+
+/** Admission limits applied before a parsed job enters the trace store. */
+struct Trace_Admission_Limits {
+  std::optional<num_nodes_t> maximum_nodes;
+  std::optional<double> maximum_job_power;
+  bool report_dropped_jobs = true;
+  std::optional<double> maximum_average_job_power;
+};
 
 /** Values carried by one job in the Pcon experiment. */
 struct Pcon_Values {
@@ -69,7 +78,8 @@ struct Standard_Trace_Policy {
 
   static int load_records(const std::string &fname, const Data_Columns &dcols,
                           std::vector<record_type> &records,
-                          num_jobs_t max_count);
+                          num_jobs_t max_count,
+                          const Trace_Admission_Limits &limits = {});
   static record_type make_record(const epoch_t &submit_time,
                                  num_nodes_t num_nodes, job_queue_t queue,
                                  timeout_t limit_time) {
@@ -84,6 +94,14 @@ struct Standard_Trace_Policy {
   static std::string resource_values(const resource_sample_type &) {
     return "";
   }
+  /** @brief Reset runtime accounting before restoring running jobs. */
+  void reset_runtime_state() {}
+  static std::optional<double> scheduler_power(const record_type &) {
+    return std::nullopt;
+  }
+  static std::optional<double> scheduler_maximum_power(const record_type &) {
+    return std::nullopt;
+  }
   void on_start(const record_type &) {}
   void on_finish(const record_type &) {}
 };
@@ -95,7 +113,8 @@ struct Pcon_Trace_Policy {
 
   static int load_records(const std::string &fname, const Data_Columns &dcols,
                           std::vector<record_type> &records,
-                          num_jobs_t max_count);
+                          num_jobs_t max_count,
+                          const Trace_Admission_Limits &limits = {});
   static record_type make_record(const epoch_t &submit_time,
                                  num_nodes_t num_nodes, job_queue_t queue,
                                  timeout_t limit_time) {
@@ -111,6 +130,15 @@ struct Pcon_Trace_Policy {
     return "," + std::to_string(sample.pcon.avgpcon) + "," +
            std::to_string(sample.pcon.minpcon) + "," +
            std::to_string(sample.pcon.maxpcon);
+  }
+  /** @brief Reset accumulated Pcon values before restoring running jobs. */
+  void reset_runtime_state() { m_current = {}; }
+  static std::optional<double> scheduler_power(const record_type &job) {
+    return job.pcon().avgpcon;
+  }
+  static std::optional<double>
+  scheduler_maximum_power(const record_type &job) {
+    return job.pcon().maxpcon;
   }
   void on_start(const record_type &job) {
     const auto &pcon = job.pcon();

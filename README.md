@@ -23,10 +23,10 @@ Another use case is the [Fugaku Power-Usage Simulation Experiment](https://dr-ev
   normal, lognormal, and uniform distributions with reproducible seeds.
 - **Interfaces:** command-line batch execution, incremental C++ streaming,
   Python bindings, and a gRPC service.
-- **Trace support:** simple CSV and LLNL Lassen inputs; scheduled-job,
-  resource-usage, and optional power-usage outputs.
-- **Implementation choices:** `deque`, `multimap`, `circular`, and `block`
-  wait queues for comparison and scaling studies.
+- **Trace support:** simple CSV and LLNL Lassen inputs; scheduled-job and
+  resource-usage outputs to CSV or Redis, plus optional power-usage output.
+- **Implementation:** based on auto-scaling `circular` buffers
+  for wait queues, job data and resource trace to support streaming.
 
 ## Build and quick start
 
@@ -58,7 +58,8 @@ cmake --install build
 ### Simulation
 
 `simulator` reads job submissions and invokes the selected scheduler. Its
-minimum input fields are `job_submit_time`, `num_nodes`, and `time_limit`.
+minimum input fields are `job_submit_time` (or `submit_time`), `num_nodes`,
+and `time_limit` (also accepted as `timelimit` or `walltime`).
 `time_limit` is always the scheduler's estimate for reservation planning. The
 job's execution duration is selected separately with `--run_time_mode`:
 
@@ -231,6 +232,9 @@ for the optional analysis reports.
   control.
 - Enable the network service with `-DDR_EVT_ENABLE_GRPC=ON`; this also enables
   Protobuf. The server gives each client session an isolated simulation.
+- Enable searchable job and resource-history Redis output with
+  `-DDR_EVT_WITH_REDIS=ON`; see the
+  [Redis output guide](docs/user-guide/redis-output.md).
 - MPI is used only by the optional multi-client/multi-server test harness.
 
 For example, an all-interface build uses:

@@ -15,6 +15,7 @@
 #include <boost/multi_index_container.hpp>
 #include <deque>
 #include <optional>
+#include <stdexcept>
 
 #include "common.hpp"
 
@@ -52,13 +53,16 @@ public:
   /**
    * @brief Insert a waiting job in FCFS order.
    * @details
-   * Appends to the current fixed-size block, creating a block when the
-   * current one is full. Job identifiers are expected to be monotonically
-   * increasing so remove() can locate their block by offset.
+   * Places the job in the fixed ID-range block derived from the first job ID,
+   * creating intervening blocks when IDs contain gaps. Job identifiers must
+   * be monotonically increasing. Removed slots are not reused by later ID
+   * ranges, so remove() can always locate a job directly by ID offset.
    * @param[in] job_id Trace job identifier.
    * @param[in] submit_time Job arrival time.
    * @param[in] run_time_estimate Time-limit estimate used for backfill fitting.
    * @param[in] nodes_requested Nodes requested by the job.
+   * @throws std::invalid_argument If job_id is not strictly greater than the
+   * previously inserted job identifier.
    * @note Amortized complexity is O(1).
    */
   void insert_job(job_no_t job_id, sim_time_t submit_time,
@@ -108,6 +112,12 @@ public:
   /** Return scheduling fields for an active job without removing it. */
   bool get_job_info(job_no_t job_id, tdiff_t &run_time,
                     num_nodes_t &nodes) const;
+
+  /**
+   * Sum node-time for active jobs that have arrived by current_time.
+   * This scans existing queue records only when explicitly queried.
+   */
+  tdiff_t waiting_resource_area(sim_time_t current_time) const;
 
   /**
    * @brief Invoke a callable for every active job in FCFS order.
@@ -236,6 +246,8 @@ private:
   size_t m_current_block_idx;
   /// First inserted job ID, used to compute a block offset.
   job_no_t m_first_job_id;
+  /// Most recently inserted job ID, used to enforce insertion order.
+  job_no_t m_last_job_id;
 
   /// Jobs ever inserted, including entries subsequently removed.
   size_t m_total_jobs;
@@ -249,8 +261,8 @@ private:
 // Template implementation - moved to header for template instantiation
 template <size_t BlockSize>
 BlockWaitQueue<BlockSize>::BlockWaitQueue()
-    : m_current_block_idx(0), m_first_job_id(0), m_total_jobs(0),
-      m_active_count(0), m_stats{} {
+    : m_current_block_idx(0), m_first_job_id(0), m_last_job_id(0),
+      m_total_jobs(0), m_active_count(0), m_stats{} {
   static_assert(BlockSize > 0 && (BlockSize & (BlockSize - 1)) == 0,
                 "BlockSize must be a power of 2");
 }
@@ -262,19 +274,28 @@ void BlockWaitQueue<BlockSize>::insert_job(job_no_t job_id,
                                            num_nodes_t nodes_requested) {
   if (m_total_jobs == 0) {
     m_first_job_id = job_id;
+  } else if (job_id <= m_last_job_id) {
+    throw std::invalid_argument(
+        "BlockWaitQueue requires unique, monotonically increasing job IDs");
   }
 
-  if (m_blocks.empty() ||
-      m_blocks[m_current_block_idx].block.size() >= BlockSize) {
+  constexpr size_t shift = block_size_shift();
+  const size_t block_idx = (job_id - m_first_job_id) >> shift;
+  while (m_blocks.size() <= block_idx) {
     m_blocks.emplace_back();
-    m_current_block_idx = m_blocks.size() - 1;
   }
+  m_current_block_idx = block_idx;
 
   auto &current = m_blocks[m_current_block_idx];
+  if (current.block.size() >= BlockSize) {
+    throw std::invalid_argument(
+        "BlockWaitQueue requires unique, monotonically increasing job IDs");
+  }
   current.block.push_back(
       {job_id, submit_time, run_time_estimate, nodes_requested});
   current.active_count++;
 
+  m_last_job_id = job_id;
   m_total_jobs++;
   m_active_count++;
 }
@@ -381,6 +402,25 @@ bool BlockWaitQueue<BlockSize>::get_job_info(job_no_t job_id, tdiff_t &run_time,
     }
   }
   return false;
+}
+
+template <size_t BlockSize>
+tdiff_t BlockWaitQueue<BlockSize>::waiting_resource_area(
+    sim_time_t current_time) const {
+  tdiff_t area = 0.0;
+  for (const auto &block_info : m_blocks) {
+    if (block_info.active_count == 0) {
+      continue;
+    }
+    const auto &seq = block_info.block.template get<0>();
+    for (const auto &job : seq) {
+      if (job.submit_time <= current_time) {
+        area +=
+            static_cast<tdiff_t>(job.nodes_requested) * job.run_time_estimate;
+      }
+    }
+  }
+  return area;
 }
 
 template <size_t BlockSize>

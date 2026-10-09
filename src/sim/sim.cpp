@@ -16,13 +16,244 @@
 #include "trace/epoch.hpp"
 #include "trace/job_io.hpp"
 #include "trace/parse_utils.hpp"
+#if defined(DR_EVT_HAS_SER20)
+#include "utils/state_io_ser20.hpp"
+#endif
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+#include "utils/redis_output.hpp"
+#endif
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <queue>
 #include <sstream>
+#include <type_traits>
+#include <typeinfo>
 
 namespace dr_evt {
+
+namespace {
+
+constexpr tdiff_t bounded_slowdown_threshold = 10.0;
+
+/** Validate and convert a streaming wall-time request.
+ * @param[in] limit_time Requested wall time in seconds.
+ * @return The equivalent integral scheduler limit.
+ * @throws std::invalid_argument if limit_time is non-positive, non-finite,
+ * fractional, or outside the range of timeout_t.
+ */
+timeout_t checked_streaming_limit(tdiff_t limit_time) {
+  if (!std::isfinite(limit_time) || limit_time <= 0.0 ||
+      std::trunc(limit_time) != limit_time ||
+      limit_time > static_cast<double>(std::numeric_limits<timeout_t>::max())) {
+    throw std::invalid_argument(
+        "limit_time must be a positive whole number of seconds");
+  }
+  return static_cast<timeout_t>(limit_time);
+}
+
+#if defined(DR_EVT_HAS_SER20)
+
+constexpr std::array<char, 8> checkpoint_magic{'D', 'R', 'E', 'V',
+                                               'T', 'C', 'K', 'P'};
+constexpr std::uint32_t checkpoint_version = 6;
+constexpr std::uint64_t checkpoint_collection_limit = 100000000;
+constexpr std::uint64_t checkpoint_string_limit = 64 * 1024 * 1024;
+
+/** Output-only Redis state sampled when a checkpoint is explicitly written. */
+struct CheckpointRedisBoundary {
+  std::uint64_t job_csv_bytes = 0;
+  std::uint64_t resource_csv_bytes = 0;
+  std::uint64_t resource_count = 0;
+  std::vector<std::string> job_ids;
+  bool resource_trace_active = false;
+};
+
+/** Thin typed facade over one Ser20 checkpoint output archive. */
+class CheckpointWriter {
+public:
+  /** @brief Start an archive on a caller-owned output stream. */
+  explicit CheckpointWriter(std::ostream &output) : m_archive(output) {}
+
+  /** @brief Write an exact number of uninterpreted bytes. */
+  void bytes(const void *data, size_t size) {
+    m_archive.saveBinary(data, static_cast<std::streamsize>(size));
+  }
+
+  /** @brief Archive one trivially copyable scalar value. */
+  template <typename T> void value(const T &item) {
+    static_assert(std::is_trivially_copyable_v<T>);
+    m_archive(item);
+  }
+
+  /** @brief Archive one value through its Ser20 serialization contract. */
+  template <typename T> void object(const T &item) { m_archive(item); }
+
+  /** @brief Archive an enumeration through its underlying integer type. */
+  template <typename Enum> void enumeration(Enum item) {
+    using Underlying = std::underlying_type_t<Enum>;
+    value(static_cast<Underlying>(item));
+  }
+
+  /** @brief Archive a bounded-length string and its byte count. */
+  void string(const std::string &text) {
+    value(static_cast<std::uint64_t>(text.size()));
+    bytes(text.data(), text.size());
+  }
+
+private:
+  ser20::BinaryOutputArchive m_archive;
+};
+
+/** Thin validating facade over one Ser20 checkpoint input archive. */
+class CheckpointReader {
+public:
+  /** @brief Start an archive on a caller-owned input stream. */
+  explicit CheckpointReader(std::istream &input) : m_archive(input) {}
+
+  /** @brief Read an exact number of uninterpreted bytes. */
+  void bytes(void *data, size_t size) {
+    m_archive.loadBinary(data, static_cast<std::streamsize>(size));
+  }
+
+  /** @brief Read and return one trivially copyable scalar value. */
+  template <typename T> T value() {
+    static_assert(std::is_trivially_copyable_v<T>);
+    T item{};
+    m_archive(item);
+    return item;
+  }
+
+  /** @brief Restore one value through its Ser20 serialization contract. */
+  template <typename T> void object(T &item) { m_archive(item); }
+
+  /** @brief Read an enumeration through its underlying integer type. */
+  template <typename Enum> Enum enumeration() {
+    using Underlying = std::underlying_type_t<Enum>;
+    return static_cast<Enum>(value<Underlying>());
+  }
+
+  /** @brief Read a collection count after applying the allocation guard. */
+  size_t count() {
+    const auto result = value<std::uint64_t>();
+    if (result > checkpoint_collection_limit ||
+        result > std::numeric_limits<size_t>::max()) {
+      throw std::runtime_error("simulation checkpoint collection is too large");
+    }
+    return static_cast<size_t>(result);
+  }
+
+  /** @brief Read a string after applying the allocation guard. */
+  std::string string() {
+    const auto size = value<std::uint64_t>();
+    if (size > checkpoint_string_limit ||
+        size > std::numeric_limits<size_t>::max()) {
+      throw std::runtime_error("simulation checkpoint string is too large");
+    }
+    std::string result(static_cast<size_t>(size), '\0');
+    bytes(result.data(), result.size());
+    return result;
+  }
+
+private:
+  ser20::BinaryInputArchive m_archive;
+};
+
+/** @brief Archive DR_EVT's whole-second plus fractional-second timestamp. */
+void write_epoch(CheckpointWriter &writer, const epoch_t &time) {
+  writer.value(time.first);
+  writer.value(time.second);
+}
+
+/** @brief Restore DR_EVT's whole-second plus fractional-second timestamp. */
+epoch_t read_epoch(CheckpointReader &reader) {
+  return {reader.value<time_t>(), reader.value<float>()};
+}
+
+/** @brief Reject a checkpoint created with incompatible configuration. */
+template <typename T>
+void require_checkpoint_match(const T &actual, const T &expected,
+                              const char *name) {
+  if (actual != expected) {
+    throw std::runtime_error(
+        std::string("checkpoint configuration mismatch: ") + name);
+  }
+}
+
+/** Return the byte boundary of a flushed checkpoint output stream. */
+std::uint64_t checkpoint_output_bytes(std::ofstream &output,
+                                      const char *description) {
+  const auto position = output.tellp();
+  if (position < 0) {
+    throw std::runtime_error(std::string("cannot determine ") + description +
+                             " checkpoint boundary");
+  }
+  return static_cast<std::uint64_t>(position);
+}
+
+/** Preserve pre-restart output and open a header-only resumed segment. */
+void start_restart_output_segment(const std::string &filename,
+                                  std::uint64_t checkpoint_bytes,
+                                  std::ofstream &output) {
+  namespace fs = std::filesystem;
+  const fs::path active(filename);
+  std::ifstream existing(active, std::ios::binary);
+  if (!existing) {
+    throw std::runtime_error("checkpoint output is missing: " + filename);
+  }
+  std::string header;
+  std::getline(existing, header);
+  header += '\n';
+  existing.close();
+  if (header.size() > checkpoint_bytes ||
+      fs::file_size(active) < checkpoint_bytes) {
+    throw std::runtime_error(
+        "checkpoint output is shorter than its saved boundary: " + filename);
+  }
+
+  fs::path archived;
+  for (std::uint64_t generation = 1;; ++generation) {
+    archived = filename + ".pre-restart." + std::to_string(generation);
+    if (!fs::exists(archived) &&
+        !fs::exists(archived.string() + ".checkpoint-bytes")) {
+      break;
+    }
+  }
+
+  fs::rename(active, archived);
+  try {
+    std::ofstream boundary(archived.string() + ".checkpoint-bytes");
+    boundary << checkpoint_bytes << '\n';
+    boundary.close();
+    if (!boundary) {
+      throw std::runtime_error("cannot record checkpoint boundary for: " +
+                               archived.string());
+    }
+    output.open(active, std::ios::binary | std::ios::trunc);
+    output << header;
+    output.flush();
+    if (!output) {
+      throw std::runtime_error("cannot create post-restart output: " +
+                               filename);
+    }
+  } catch (...) {
+    output.close();
+    std::error_code ignored;
+    fs::remove(active, ignored);
+    fs::remove(archived.string() + ".checkpoint-bytes", ignored);
+    fs::rename(archived, active, ignored);
+    throw;
+  }
+}
+
+#endif
+
+} // namespace
 
 template <typename TraceType>
 BasicSimulation<TraceType>::BasicSimulation(const Sim_Params &params)
@@ -38,9 +269,17 @@ BasicSimulation<TraceType>::BasicSimulation(const Sim_Params &params)
                                                 params.m_total_nodes)),
       m_next_capacity_change(0), m_current_capacity(params.m_total_nodes),
       m_capacity_area(0.0), m_capacity_area_time(0.0), m_jobs_completed(0),
-      m_jobs_submitted(0), m_pre_start_jobs(0), m_warm_resource_area(0.0),
+      m_jobs_submitted(0), m_next_progressive_file(0),
+      m_checkpoint_loaded(false), m_last_automatic_checkpoint_jobs(0),
+      m_has_automatic_checkpoint(false),
+      m_last_automatic_checkpoint_time(0.0),
+      m_pre_start_jobs(0), m_warm_resource_area(0.0),
       m_warm_resource_end(0.0), m_rng(params.m_seed), m_queue_length_sum(0),
       m_queue_length_samples(0), m_queue_length_peak(0) {
+  m_trace.set_admission_limits(
+      params.m_total_nodes,
+      m_scheduler->maximum_job_power_for_admission(), true,
+      m_scheduler->maximum_average_job_power_for_admission());
   reset_capacity_schedule();
 }
 
@@ -61,13 +300,55 @@ BasicSimulation<TraceType>::BasicSimulation(const Sim_Params &params,
                                                 params.m_total_nodes)),
       m_next_capacity_change(0), m_current_capacity(params.m_total_nodes),
       m_capacity_area(0.0), m_capacity_area_time(0.0), m_jobs_completed(0),
-      m_jobs_submitted(0), m_pre_start_jobs(0), m_warm_resource_area(0.0),
+      m_jobs_submitted(0), m_next_progressive_file(0),
+      m_checkpoint_loaded(false), m_last_automatic_checkpoint_jobs(0),
+      m_has_automatic_checkpoint(false),
+      m_last_automatic_checkpoint_time(0.0),
+      m_pre_start_jobs(0), m_warm_resource_area(0.0),
       m_warm_resource_end(0.0), m_rng(params.m_seed), m_queue_length_sum(0),
       m_queue_length_samples(0), m_queue_length_peak(0) {
+  m_trace.set_admission_limits(
+      params.m_total_nodes,
+      m_scheduler->maximum_job_power_for_admission(), true,
+      m_scheduler->maximum_average_job_power_for_admission());
+  reset_capacity_schedule();
+}
+
+template <typename TraceType>
+BasicSimulation<TraceType>::BasicSimulation(
+    const Sim_Params &params, std::unique_ptr<CustomFCFSScheduler> scheduler)
+    : m_params(params), m_trace(params.m_infile, params.m_trace_format,
+                                params.m_timestamp_format, params.m_timezone),
+      m_scheduler(std::move(scheduler)),
+      m_custom_scheduler(static_cast<CustomFCFSScheduler *>(m_scheduler.get())),
+      m_current_time(0.0), m_job_rejection_capacity(params.m_total_nodes),
+      m_capacity_changes(load_capacity_schedule(params.m_capacity_schedule,
+                                                params.m_total_nodes)),
+      m_next_capacity_change(0), m_current_capacity(params.m_total_nodes),
+      m_capacity_area(0.0), m_capacity_area_time(0.0), m_jobs_completed(0),
+      m_jobs_submitted(0), m_next_progressive_file(0),
+      m_checkpoint_loaded(false), m_last_automatic_checkpoint_jobs(0),
+      m_has_automatic_checkpoint(false),
+      m_last_automatic_checkpoint_time(0.0),
+      m_pre_start_jobs(0), m_warm_resource_area(0.0),
+      m_warm_resource_end(0.0), m_rng(params.m_seed), m_queue_length_sum(0),
+      m_queue_length_samples(0), m_queue_length_peak(0) {
+  if (!m_scheduler) {
+    throw std::invalid_argument("custom scheduler must not be null");
+  }
+  m_trace.set_admission_limits(
+      params.m_total_nodes,
+      m_scheduler->maximum_job_power_for_admission(), true,
+      m_scheduler->maximum_average_job_power_for_admission());
   reset_capacity_schedule();
 }
 
 template <typename TraceType> void BasicSimulation<TraceType>::run() {
+  if (m_params.m_checkpoint_file.empty() &&
+      m_params.m_checkpoint_interval_jobs != 0) {
+    throw std::invalid_argument(
+        "checkpoint_interval_jobs requires checkpoint_file");
+  }
   if (m_params.m_verbose) {
     std::cout << "Starting simulation..." << std::endl;
   }
@@ -138,11 +419,12 @@ template <typename TraceType> void BasicSimulation<TraceType>::run() {
     // Open outputs before processing so bounded buffers can flush
     // incrementally. Warm-start opens them later, after discarding pre-boundary
     // samples and installing its nonzero baseline.
+    m_trace.start_simulated_trace(m_params.get_outfile(),
+                                  m_params.m_msec_output, m_params.m_redis_uri,
+                                  m_params.m_redis_key_prefix);
     m_trace.start_resource_trace(m_params.get_resource_trace(),
                                  m_params.m_total_nodes,
                                  m_params.m_msec_output);
-    m_trace.start_simulated_trace(m_params.get_outfile(),
-                                  m_params.m_msec_output);
 
     if (m_trace.dcols().get_trace_mode() == TraceMode::REPLAY) {
       // Replay-format input (begin_time/end_time present): don't consult
@@ -167,7 +449,10 @@ template <typename TraceType> void BasicSimulation<TraceType>::run() {
             ++m_jobs_completed;
           } else if (m_params.m_is_time_set && begin <= run_limit) {
             m_running_jobs[replay_job_no] = {
-                begin, static_cast<tdiff_t>(end - begin), job.get_num_nodes()};
+                begin, static_cast<tdiff_t>(end - begin), job.get_num_nodes(),
+                m_scheduler->scheduling_power(
+                    m_trace.scheduler_power(replay_job_no),
+                    m_trace.scheduler_maximum_power(replay_job_no))};
           }
         }
         ++replay_job_no;
@@ -302,6 +587,8 @@ num_jobs_t BasicSimulation<TraceType>::initialize_trace(num_jobs_t max_jobs) {
   m_pre_start_jobs = 0;
   m_warm_resource_area = 0.0;
   m_warm_resource_end = 0.0;
+  m_first_appended_job_idx = std::numeric_limits<job_no_t>::max();
+  m_appended_job_query_records.clear();
   if (m_custom_scheduler != nullptr) {
     m_custom_scheduler->reset_resource_accounting();
   }
@@ -344,7 +631,10 @@ void BasicSimulation<TraceType>::run_warm_start() {
         // Its departure is fixed historical state, so reservations should
         // use that known end rather than a possibly stale original limit.
         m_running_jobs[job_no] = {begin, job.get_actual_run_time(),
-                                  job.get_num_nodes()};
+                                  job.get_num_nodes(),
+                                  m_scheduler->scheduling_power(
+                                      m_trace.scheduler_power(job_no),
+                                      m_trace.scheduler_maximum_power(job_no))};
         m_warm_resource_area +=
             static_cast<tdiff_t>(job.get_num_nodes()) * (end - sim_start_time);
         m_warm_resource_end = std::max(m_warm_resource_end, end);
@@ -386,9 +676,11 @@ void BasicSimulation<TraceType>::run_warm_start() {
   // This is the accounting/output boundary: retain occupancy and Pcon state,
   // discard every pre-t sample, and establish a baseline at t.
   m_trace.reset_resource_recording(sim_start_time);
+  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output,
+                                m_params.m_redis_uri,
+                                m_params.m_redis_key_prefix);
   m_trace.start_resource_trace(m_params.get_resource_trace(),
                                m_params.m_total_nodes, m_params.m_msec_output);
-  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output);
   if (m_custom_scheduler != nullptr) {
     m_custom_scheduler->reset_resource_accounting(sim_start_time,
                                                   get_available_nodes());
@@ -471,16 +763,22 @@ void BasicSimulation<TraceType>::run_progressive() {
   // Minimal reset, equivalent to initialize_trace()'s own tail - no
   // load_data() call here, since there's no single file to load
   // upfront; each file gets loaded as the driving loop below reaches it.
-  m_trace.data().clear();
-  m_current_time = 0.0;
-  reset_capacity_schedule();
-  m_jobs_submitted = 0;
-  m_jobs_completed = 0;
-  m_pre_start_jobs = 0;
-  m_warm_resource_area = 0.0;
-  m_warm_resource_end = 0.0;
-  if (m_custom_scheduler != nullptr) {
-    m_custom_scheduler->reset_resource_accounting();
+  if (!m_checkpoint_loaded) {
+    m_trace.data().clear();
+    m_current_time = 0.0;
+    reset_capacity_schedule();
+    m_jobs_submitted = 0;
+    m_jobs_completed = 0;
+    m_next_progressive_file = 0;
+    m_last_automatic_checkpoint_jobs = 0;
+    m_has_automatic_checkpoint = false;
+    m_last_automatic_checkpoint_time = 0.0;
+    m_pre_start_jobs = 0;
+    m_warm_resource_area = 0.0;
+    m_warm_resource_end = 0.0;
+    if (m_custom_scheduler != nullptr) {
+      m_custom_scheduler->reset_resource_accounting();
+    }
   }
 
   // Same reasoning as run()'s single-file path: open output files
@@ -488,11 +786,15 @@ void BasicSimulation<TraceType>::run_progressive() {
   // between files here, unlike single-file batch mode) can flush to
   // them incrementally, not only at the very end.
   m_trace.set_resource_history_capacity(m_params.m_resource_history_capacity);
+  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output,
+                                m_params.m_redis_uri,
+                                m_params.m_redis_key_prefix);
   m_trace.start_resource_trace(m_params.get_resource_trace(),
                                m_params.m_total_nodes, m_params.m_msec_output);
-  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output);
 
-  for (const std::string &fname : m_params.m_infile_list_parsed) {
+  for (size_t file_index = m_next_progressive_file;
+       file_index < m_params.m_infile_list_parsed.size(); ++file_index) {
+    const std::string &fname = m_params.m_infile_list_parsed[file_index];
     if (m_params.m_verbose) {
       std::cout << "Loading " + fname + "...\n";
     }
@@ -505,6 +807,8 @@ void BasicSimulation<TraceType>::run_progressive() {
     // comment.
     auto job_nos = m_trace.load_next_file(m_current_time, fname);
     if (job_nos.empty()) {
+      m_next_progressive_file = file_index + 1;
+      maybe_save_automatic_checkpoint(true);
       continue; // an empty file contributes nothing to submit
     }
 
@@ -529,6 +833,11 @@ void BasicSimulation<TraceType>::run_progressive() {
       submit_job(job_no, submit_time);
     }
 
+    // The file is now fully admitted. A periodic checkpoint taken while the
+    // following advance processes completions can therefore resume directly
+    // with the next file.
+    m_next_progressive_file = file_index + 1;
+
     // This file's last job was just added to the wait queue -
     // nothing more from it to submit, so this is the point to let
     // time (and reclaiming) actually progress before the next file
@@ -540,6 +849,7 @@ void BasicSimulation<TraceType>::run_progressive() {
     const sim_time_t run_limit =
         m_params.m_is_time_set ? m_params.m_max_time : last_submit_time;
     advance_to(std::min(last_submit_time, run_limit));
+    maybe_save_automatic_checkpoint(true);
     if (m_params.m_is_time_set && last_submit_time >= m_params.m_max_time) {
       break;
     }
@@ -553,6 +863,37 @@ void BasicSimulation<TraceType>::run_progressive() {
   if (m_current_time < run_limit) {
     advance_to(run_limit);
   }
+  m_checkpoint_loaded = false;
+}
+
+template <typename TraceType>
+void BasicSimulation<TraceType>::maybe_save_automatic_checkpoint(
+    bool file_boundary) {
+  if (m_params.m_checkpoint_file.empty()) {
+    return;
+  }
+#if defined(DR_EVT_HAS_SER20)
+  const bool interval_due =
+      m_params.m_checkpoint_interval_jobs != 0 &&
+      m_jobs_completed - m_last_automatic_checkpoint_jobs >=
+          m_params.m_checkpoint_interval_jobs;
+  if (!file_boundary && !interval_due) {
+    return;
+  }
+  if (file_boundary && m_has_automatic_checkpoint &&
+      m_jobs_completed == m_last_automatic_checkpoint_jobs &&
+      m_current_time == m_last_automatic_checkpoint_time) {
+    return;
+  }
+  m_last_automatic_checkpoint_jobs = m_jobs_completed;
+  m_has_automatic_checkpoint = true;
+  m_last_automatic_checkpoint_time = m_current_time;
+  save_checkpoint(m_params.m_checkpoint_file);
+#else
+  (void)file_boundary;
+  throw std::logic_error(
+      "automatic checkpoints require DR_EVT_WITH_SER20=ON");
+#endif
 }
 
 template <typename TraceType>
@@ -609,11 +950,19 @@ void BasicSimulation<TraceType>::write_simulated_trace() {
   const sim_time_t completed_through =
       m_params.m_is_time_set ? m_params.m_max_time
                              : std::numeric_limits<sim_time_t>::max();
+  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output,
+                                m_params.m_redis_uri,
+                                m_params.m_redis_key_prefix);
   m_trace.write_simulated_trace(m_params.get_outfile(), m_params.m_msec_output,
                                 completed_through);
   if (m_params.m_verbose && !m_params.get_outfile().empty()) {
-    std::cout << "Simulated trace written to: " << m_params.get_outfile()
-              << std::endl;
+    if (m_params.m_redis_uri.empty()) {
+      std::cout << "Simulated trace written to: " << m_params.get_outfile()
+                << std::endl;
+    } else {
+      std::cout << "Simulated trace written to Redis prefix: "
+                << m_params.m_redis_key_prefix << std::endl;
+    }
   }
 }
 
@@ -622,12 +971,792 @@ void BasicSimulation<TraceType>::flush_completed_jobs() {
   m_trace.flush_completed_jobs(m_current_time);
 }
 
+#if defined(DR_EVT_HAS_SER20)
+template <typename TraceType>
+void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
+  if constexpr (std::is_same_v<TraceType, Trace> ||
+                std::is_same_v<TraceType, PconTrace>) {
+    if (m_custom_scheduler != nullptr &&
+        typeid(*m_custom_scheduler) != typeid(CustomFCFSScheduler)) {
+      throw std::logic_error(
+          "checkpointing is not supported for custom scheduler subclasses");
+    }
+    if (m_pre_start_jobs != 0) {
+      throw std::logic_error(
+          "checkpointing is not supported during warm-start replay");
+    }
+    if (m_trace.dcols().get_trace_mode() != TraceMode::SIMULATION) {
+      throw std::logic_error("checkpointing requires simulation-mode input");
+    }
+    const bool redis_output = !m_params.m_redis_uri.empty();
+    bool simulated_output_open = m_trace.m_simulated_trace_ofs.is_open();
+    bool resource_output_open = m_trace.m_resource_trace_ofs.is_open();
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+    simulated_output_open =
+        simulated_output_open || m_trace.m_redis_output != nullptr;
+    resource_output_open =
+        resource_output_open ||
+        (m_trace.m_redis_output != nullptr &&
+         m_trace.m_redis_output->resource_trace_active());
+#endif
+    m_trace.flush_simulated_trace_buffer(true);
+    if (resource_output_open) {
+      m_trace.flush_resource_history();
+      m_trace.m_resource_trace_ofs.flush();
+    }
+    const std::uint64_t simulated_output_bytes =
+        simulated_output_open && !redis_output
+            ? checkpoint_output_bytes(m_trace.m_simulated_trace_ofs,
+                                      "simulated trace output")
+            : 0;
+    const std::uint64_t resource_output_bytes =
+        resource_output_open && !redis_output
+            ? checkpoint_output_bytes(m_trace.m_resource_trace_ofs,
+                                      "resource trace output")
+            : 0;
+    CheckpointRedisBoundary redis_boundary;
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+    if (redis_output && m_trace.m_redis_output != nullptr) {
+      auto captured = m_trace.m_redis_output->checkpoint_boundary();
+      redis_boundary.job_csv_bytes = captured.job_csv_bytes;
+      redis_boundary.resource_csv_bytes = captured.resource_csv_bytes;
+      redis_boundary.resource_count = captured.resource_count;
+      redis_boundary.job_ids = std::move(captured.job_ids);
+      redis_boundary.resource_trace_active = captured.resource_trace_active;
+    }
+#else
+    if (redis_output) {
+      throw std::logic_error("Redis checkpoint requires Redis support");
+    }
+#endif
+
+    CheckpointWriter writer(output);
+    writer.bytes(checkpoint_magic.data(), checkpoint_magic.size());
+    writer.value(checkpoint_version);
+    writer.value(std::is_same_v<TraceType, PconTrace>);
+    writer.value(static_cast<std::uint32_t>(
+        sizeof(typename TraceType::policy_type::record_type)));
+
+    // Configuration remains owned by Sim_Params. Persist the fields that
+    // determine scheduling or output identity so a mismatched destination is
+    // rejected before any state is replaced.
+    writer.value(m_params.m_total_nodes);
+    writer.enumeration(m_params.m_backfill_policy);
+    writer.enumeration(m_params.m_priority_policy);
+    writer.enumeration(m_params.m_queue_impl);
+    writer.value(m_params.m_block_size);
+    writer.value(m_params.m_num_max_candidates);
+    writer.value(m_params.m_wait_queue_capacity);
+    writer.enumeration(m_params.m_wait_queue_overflow);
+    writer.enumeration(m_params.m_run_time_mode);
+    writer.enumeration(m_params.m_run_time_distribution);
+    writer.value(m_params.m_run_time_scale);
+    writer.value(m_params.m_run_time_stddev);
+    writer.string(m_params.get_outfile());
+    writer.string(m_params.get_resource_trace());
+    writer.string(m_params.m_redis_uri);
+    writer.string(m_params.m_redis_key_prefix);
+    writer.value(m_params.m_msec_output);
+    writer.value(m_params.m_checkpoint_interval_jobs);
+    writer.value(static_cast<std::uint64_t>(
+        m_params.m_infile_list_parsed.size()));
+    for (const auto &filename : m_params.m_infile_list_parsed) {
+      writer.string(filename);
+    }
+    writer.value(m_custom_scheduler != nullptr);
+    writer.value(static_cast<std::uint64_t>(m_capacity_changes.size()));
+    for (const auto &change : m_capacity_changes) {
+      writer.value(change.time);
+      writer.value(change.total_nodes);
+    }
+
+    writer.value(m_current_time);
+    writer.value(m_job_rejection_capacity);
+    writer.value(m_next_capacity_change);
+    writer.value(m_current_capacity);
+    writer.value(m_capacity_area);
+    writer.value(m_capacity_area_time);
+    writer.value(m_jobs_completed);
+    writer.value(m_jobs_submitted);
+    writer.value(static_cast<std::uint64_t>(m_next_progressive_file));
+    writer.value(m_last_automatic_checkpoint_jobs);
+    writer.value(m_has_automatic_checkpoint);
+    writer.value(m_last_automatic_checkpoint_time);
+    writer.value(m_pre_start_jobs);
+    writer.value(m_warm_resource_area);
+    writer.value(m_warm_resource_end);
+    writer.value(m_queue_length_sum);
+    writer.value(m_queue_length_samples);
+    writer.value(m_queue_length_peak);
+    writer.value(m_first_appended_job_idx);
+    writer.value(
+        static_cast<std::uint64_t>(m_appended_job_query_records.size()));
+    for (const auto &record : m_appended_job_query_records) {
+      writer.value(record.submit_time);
+      writer.value(record.limit_time);
+      writer.value(record.num_nodes);
+      writer.value(record.start_time);
+      writer.value(record.end_time);
+      writer.value(record.tracked);
+      writer.value(record.scheduled);
+      writer.value(record.rejected);
+    }
+    writer.value(m_scheduler->m_fcfs_reservation_time);
+    auto pending_job_ids = m_scheduler->pending_job_ids();
+    std::sort(pending_job_ids.begin(), pending_job_ids.end());
+    writer.value(static_cast<std::uint64_t>(pending_job_ids.size()));
+    for (const auto job_id : pending_job_ids) {
+      writer.value(job_id);
+    }
+    if (m_custom_scheduler != nullptr) {
+      writer.value(static_cast<std::uint64_t>(
+          m_custom_scheduler->m_wait_queue.capacity()));
+      writer.value(
+          static_cast<std::uint64_t>(m_custom_scheduler->m_wait_queue.size()));
+      for (const auto &job : m_custom_scheduler->m_wait_queue) {
+        writer.value(job.job_id);
+        writer.value(job.submit_time);
+        writer.value(job.run_time_estimate);
+        writer.value(job.nodes_requested);
+        writer.value(job.m_cost);
+        writer.value(job.removed);
+      }
+      writer.enumeration(m_custom_scheduler->m_overflow_policy);
+      writer.value(m_custom_scheduler->m_eligible_end_idx);
+      writer.value(m_custom_scheduler->m_current_tracked_time);
+      writer.value(m_custom_scheduler->m_removed_count);
+      writer.value(m_custom_scheduler->m_num_max_candidates);
+      writer.value(m_custom_scheduler->m_newly_eligible_begin_idx);
+      writer.value(m_custom_scheduler->m_arrival_update_pending);
+      writer.value(m_custom_scheduler->m_reevaluate_all_candidates);
+      writer.value(m_custom_scheduler->m_candidate_preparation_pending);
+      writer.value(m_custom_scheduler->m_resource_area);
+      writer.value(m_custom_scheduler->m_resource_area_time);
+      writer.value(m_custom_scheduler->m_resource_area_start);
+      writer.value(m_custom_scheduler->m_accounted_available_nodes);
+    }
+
+    writer.value(static_cast<std::uint64_t>(m_running_jobs.size()));
+    for (const auto &[job_id, running] : m_running_jobs) {
+      writer.value(job_id);
+      writer.value(running.start_time);
+      writer.value(running.run_time);
+      writer.value(running.nodes);
+    }
+    writer.value(static_cast<std::uint64_t>(m_pending_queue_arrivals.size()));
+    for (const auto &[time, count] : m_pending_queue_arrivals) {
+      writer.value(time);
+      writer.value(count);
+    }
+    writer.value(static_cast<std::uint64_t>(m_event_queue.size()));
+    for (const auto &event : m_event_queue) {
+      writer.value(event.get_job_idx());
+      write_epoch(writer, event.get_time());
+      writer.value(event.get_type());
+    }
+
+    writer.object(m_rng);
+
+    writer.value(m_trace.m_num_reclaimed);
+    writer.value(m_trace.m_job_store_capacity);
+    writer.value(m_trace.m_job_store_capacity_resolved);
+    writer.enumeration(m_trace.m_job_store_overflow);
+    writer.value(m_trace.m_job_flush_interval);
+    writer.value(m_trace.m_departures_since_job_flush);
+    writer.value(m_trace.m_replay_jobs_enqueued);
+    writer.value(m_trace.m_memory_pressure_fraction);
+    writer.value(m_trace.m_has_loaded_a_file);
+    write_epoch(writer, m_trace.m_last_loaded_submit_time);
+    writer.value(m_trace.m_completed_count);
+    writer.value(m_trace.m_wait_time_sum);
+    writer.value(m_trace.m_turnaround_time_sum);
+    writer.value(m_trace.m_makespan);
+    writer.value(m_trace.m_next_job_to_write);
+
+    writer.value(static_cast<std::uint64_t>(m_trace.m_data.capacity()));
+    writer.value(static_cast<std::uint64_t>(m_trace.m_data.size()));
+    for (const auto &job : m_trace.m_data) {
+      write_epoch(writer, job.m_t_begin);
+      write_epoch(writer, job.m_t_end);
+      write_epoch(writer, job.m_t_submit);
+      writer.value(job.m_t_limit);
+      writer.value(job.m_actual_run_time);
+      writer.value(job.m_num_nodes);
+      writer.enumeration(job.m_q);
+      writer.value(job.m_is_simulated);
+#if SHOW_ORG_NO
+      writer.value(job.m_org_no);
+#endif
+#if MARK_DAT_PERIOD
+      writer.value(job.m_dat);
+#endif
+      writer.value(job.m_busy_nodes);
+      if constexpr (std::is_same_v<TraceType, PconTrace>) {
+        writer.value(job.pcon().avgpcon);
+        writer.value(job.pcon().minpcon);
+        writer.value(job.pcon().maxpcon);
+      }
+    }
+
+#if MARK_DAT_PERIOD
+    writer.value(m_trace.m_ctx.m_pAll_cnt);
+    write_epoch(writer, m_trace.m_ctx.m_dat_start);
+    write_epoch(writer, m_trace.m_ctx.m_dat_end);
+    writer.value(m_trace.m_ctx.m_dat_span);
+    writer.enumeration(m_trace.m_ctx.m_prev_job_q);
+    writer.value(static_cast<std::uint64_t>(m_trace.m_reserved.size()));
+    for (const auto &period : m_trace.m_reserved) {
+      write_epoch(writer, period.first);
+      write_epoch(writer, period.second);
+    }
+#endif
+    writer.value(m_trace.m_ctx.m_n_nodes_in_use);
+    writer.value(static_cast<std::uint64_t>(m_trace.m_ctx.m_evtq.size()));
+    for (const auto &event : m_trace.m_ctx.m_evtq) {
+      writer.value(event.get_job_idx());
+      write_epoch(writer, event.get_time());
+      writer.value(event.get_type());
+    }
+
+    writer.value(m_trace.m_resource_history_capacity);
+    writer.value(m_trace.m_resource_history_capacity_resolved);
+    writer.value(static_cast<std::uint64_t>(
+        m_trace.m_ctx.m_resource_history.capacity()));
+    writer.value(
+        static_cast<std::uint64_t>(m_trace.m_ctx.m_resource_history.size()));
+    for (const auto &sample : m_trace.m_ctx.m_resource_history) {
+      write_epoch(writer, sample.time);
+      writer.value(sample.allocated);
+      writer.value(sample.capacity);
+      if constexpr (std::is_same_v<TraceType, PconTrace>) {
+        writer.value(sample.pcon.avgpcon);
+        writer.value(sample.pcon.minpcon);
+        writer.value(sample.pcon.maxpcon);
+      }
+    }
+    writer.value(m_trace.m_resource_trace_total_nodes);
+    writer.value(m_trace.m_resource_trace_current_capacity);
+    writer.value(m_trace.m_resource_capacity_initialized);
+    writer.value(m_trace.m_resource_recording_start);
+    write_epoch(writer, m_trace.m_resource_recording_baseline.time);
+    writer.value(m_trace.m_resource_recording_baseline.allocated);
+    writer.value(m_trace.m_resource_recording_baseline.capacity);
+    if constexpr (std::is_same_v<TraceType, PconTrace>) {
+      writer.value(m_trace.m_resource_recording_baseline.pcon.avgpcon);
+      writer.value(m_trace.m_resource_recording_baseline.pcon.minpcon);
+      writer.value(m_trace.m_resource_recording_baseline.pcon.maxpcon);
+    }
+    writer.value(m_trace.m_has_resource_recording_baseline);
+    writer.value(m_trace.m_resource_trace_msec);
+    writer.value(m_trace.m_simulated_trace_msec);
+    writer.value(simulated_output_open);
+    writer.value(resource_output_open);
+    writer.value(simulated_output_bytes);
+    writer.value(resource_output_bytes);
+    writer.value(redis_output);
+    writer.value(redis_boundary.job_csv_bytes);
+    writer.value(redis_boundary.resource_csv_bytes);
+    writer.value(redis_boundary.resource_count);
+    writer.value(redis_boundary.resource_trace_active);
+    writer.value(static_cast<std::uint64_t>(redis_boundary.job_ids.size()));
+    for (const auto &id : redis_boundary.job_ids) {
+      writer.string(id);
+    }
+  } else {
+    static_assert(std::is_same_v<TraceType, Trace> ||
+                      std::is_same_v<TraceType, PconTrace>,
+                  "checkpoint serialization is not defined for this trace");
+  }
+}
+
+template <typename TraceType>
+void BasicSimulation<TraceType>::save_checkpoint(const std::string &filename) {
+  std::ostringstream buffer(std::ios::out | std::ios::binary);
+  save_checkpoint(buffer);
+  std::ofstream output(filename, std::ios::binary | std::ios::trunc);
+  if (!output) {
+    throw std::runtime_error("cannot open checkpoint for writing: " + filename);
+  }
+  const std::string state = buffer.str();
+  output.write(state.data(), static_cast<std::streamsize>(state.size()));
+  output.close();
+  if (!output) {
+    throw std::runtime_error("failed to finish checkpoint: " + filename);
+  }
+}
+
+template <typename TraceType>
+void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
+  if constexpr (std::is_same_v<TraceType, Trace> ||
+                std::is_same_v<TraceType, PconTrace>) {
+    if (m_custom_scheduler != nullptr &&
+        typeid(*m_custom_scheduler) != typeid(CustomFCFSScheduler)) {
+      throw std::logic_error(
+          "checkpointing is not supported for custom scheduler subclasses");
+    }
+
+    CheckpointReader reader(input);
+    std::array<char, checkpoint_magic.size()> magic{};
+    reader.bytes(magic.data(), magic.size());
+    if (magic != checkpoint_magic) {
+      throw std::runtime_error("not a DR_EVT simulation checkpoint");
+    }
+    require_checkpoint_match(reader.value<std::uint32_t>(), checkpoint_version,
+                             "format version");
+    require_checkpoint_match(reader.value<bool>(),
+                             std::is_same_v<TraceType, PconTrace>,
+                             "trace type");
+    require_checkpoint_match(reader.value<std::uint32_t>(),
+                             static_cast<std::uint32_t>(sizeof(
+                                 typename TraceType::policy_type::record_type)),
+                             "trace record ABI");
+    require_checkpoint_match(reader.value<num_nodes_t>(),
+                             m_params.m_total_nodes, "total_nodes");
+    require_checkpoint_match(reader.enumeration<BackfillPolicy>(),
+                             m_params.m_backfill_policy, "backfill_policy");
+    require_checkpoint_match(reader.enumeration<PriorityPolicy>(),
+                             m_params.m_priority_policy, "priority_policy");
+    require_checkpoint_match(reader.enumeration<QueueImplementation>(),
+                             m_params.m_queue_impl, "queue_impl");
+    require_checkpoint_match(reader.value<size_t>(), m_params.m_block_size,
+                             "block_size");
+    require_checkpoint_match(reader.value<size_t>(),
+                             m_params.m_num_max_candidates,
+                             "num_max_candidates");
+    require_checkpoint_match(reader.value<size_t>(),
+                             m_params.m_wait_queue_capacity,
+                             "wait_queue_capacity");
+    require_checkpoint_match(reader.enumeration<CircularOverflowPolicy>(),
+                             m_params.m_wait_queue_overflow,
+                             "wait_queue_overflow");
+    require_checkpoint_match(reader.enumeration<RunTimeMode>(),
+                             m_params.m_run_time_mode, "run_time_mode");
+    require_checkpoint_match(reader.enumeration<DistributionType>(),
+                             m_params.m_run_time_distribution,
+                             "run_time_distribution");
+    require_checkpoint_match(reader.value<double>(), m_params.m_run_time_scale,
+                             "run_time_scale");
+    require_checkpoint_match(reader.value<double>(), m_params.m_run_time_stddev,
+                             "run_time_stddev");
+    require_checkpoint_match(reader.string(), m_params.get_outfile(),
+                             "simulated trace output");
+    require_checkpoint_match(reader.string(), m_params.get_resource_trace(),
+                             "resource trace output");
+    require_checkpoint_match(reader.string(), m_params.m_redis_uri,
+                             "redis_uri");
+    require_checkpoint_match(reader.string(), m_params.m_redis_key_prefix,
+                             "redis_key_prefix");
+    require_checkpoint_match(reader.value<bool>(), m_params.m_msec_output,
+                             "msec_output");
+    require_checkpoint_match(reader.value<num_jobs_t>(),
+                             m_params.m_checkpoint_interval_jobs,
+                             "checkpoint_interval_jobs");
+    const size_t progressive_file_count = reader.count();
+    require_checkpoint_match(progressive_file_count,
+                             m_params.m_infile_list_parsed.size(),
+                             "progressive input file count");
+    for (const auto &expected : m_params.m_infile_list_parsed) {
+      require_checkpoint_match(reader.string(), expected,
+                               "progressive input file");
+    }
+    const bool checkpoint_uses_custom_scheduler = reader.value<bool>();
+    require_checkpoint_match(checkpoint_uses_custom_scheduler,
+                             m_custom_scheduler != nullptr,
+                             "custom scheduler kind");
+    const size_t capacity_change_count = reader.count();
+    require_checkpoint_match(capacity_change_count, m_capacity_changes.size(),
+                             "capacity schedule size");
+    for (const auto &expected : m_capacity_changes) {
+      require_checkpoint_match(reader.value<sim_time_t>(), expected.time,
+                               "capacity schedule time");
+      require_checkpoint_match(reader.value<num_nodes_t>(),
+                               expected.total_nodes, "capacity schedule nodes");
+    }
+
+    m_trace.m_simulated_trace_ofs.close();
+    m_trace.m_resource_trace_ofs.close();
+
+    m_current_time = reader.value<sim_time_t>();
+    m_job_rejection_capacity = reader.value<num_nodes_t>();
+    m_next_capacity_change = reader.value<size_t>();
+    m_current_capacity = reader.value<num_nodes_t>();
+    m_capacity_area = reader.value<tdiff_t>();
+    m_capacity_area_time = reader.value<sim_time_t>();
+    m_jobs_completed = reader.value<num_jobs_t>();
+    m_jobs_submitted = reader.value<num_jobs_t>();
+    m_next_progressive_file = reader.count();
+    if (m_next_progressive_file > m_params.m_infile_list_parsed.size()) {
+      throw std::runtime_error(
+          "checkpoint progressive input cursor is out of range");
+    }
+    m_last_automatic_checkpoint_jobs = reader.value<num_jobs_t>();
+    m_has_automatic_checkpoint = reader.value<bool>();
+    m_last_automatic_checkpoint_time = reader.value<sim_time_t>();
+    m_checkpoint_loaded = true;
+    m_pre_start_jobs = reader.value<size_t>();
+    m_warm_resource_area = reader.value<tdiff_t>();
+    m_warm_resource_end = reader.value<sim_time_t>();
+    m_queue_length_sum = reader.value<size_t>();
+    m_queue_length_samples = reader.value<size_t>();
+    m_queue_length_peak = reader.value<size_t>();
+    m_first_appended_job_idx = reader.value<job_no_t>();
+    m_appended_job_query_records.clear();
+    m_appended_job_query_records.resize(reader.count());
+    for (auto &record : m_appended_job_query_records) {
+      record.submit_time = reader.value<sim_time_t>();
+      record.limit_time = reader.value<tdiff_t>();
+      record.num_nodes = reader.value<num_nodes_t>();
+      record.start_time = reader.value<sim_time_t>();
+      record.end_time = reader.value<sim_time_t>();
+      record.tracked = reader.value<bool>();
+      record.scheduled = reader.value<bool>();
+      record.rejected = reader.value<bool>();
+    }
+    const sim_time_t reservation_time = reader.value<sim_time_t>();
+    std::vector<job_no_t> pending_job_ids;
+    const size_t pending_job_count = reader.count();
+    pending_job_ids.reserve(pending_job_count);
+    for (size_t i = 0; i < pending_job_count; ++i) {
+      pending_job_ids.push_back(reader.value<job_no_t>());
+    }
+    std::sort(pending_job_ids.begin(), pending_job_ids.end());
+    if (std::adjacent_find(pending_job_ids.begin(), pending_job_ids.end()) !=
+        pending_job_ids.end()) {
+      throw std::runtime_error(
+          "checkpoint scheduler contains a duplicate job identifier");
+    }
+    if (checkpoint_uses_custom_scheduler) {
+      const size_t queue_capacity = reader.count();
+      const size_t queue_size = reader.count();
+      if (queue_size > queue_capacity) {
+        throw std::runtime_error(
+            "checkpoint custom scheduler queue exceeds its capacity");
+      }
+      m_custom_scheduler->m_wait_queue.clear();
+      m_custom_scheduler->m_wait_queue.set_capacity(queue_capacity);
+      for (size_t i = 0; i < queue_size; ++i) {
+        const auto job_id = reader.value<job_no_t>();
+        const auto submit_time = reader.value<sim_time_t>();
+        const auto run_time = reader.value<tdiff_t>();
+        const auto nodes = reader.value<num_nodes_t>();
+        const auto cost = reader.value<job_cost_t>();
+        const auto removed = reader.value<bool>();
+        m_custom_scheduler->m_wait_queue.push_back(
+            CustomFCFSScheduler::JobEntry(job_id, submit_time, run_time, nodes,
+                                          cost));
+        m_custom_scheduler->m_wait_queue.back().removed = removed;
+      }
+      const auto overflow_policy = reader.enumeration<CircularOverflowPolicy>();
+      require_checkpoint_match(overflow_policy, m_params.m_wait_queue_overflow,
+                               "custom scheduler overflow policy");
+      m_custom_scheduler->m_overflow_policy = overflow_policy;
+      m_custom_scheduler->m_eligible_end_idx = reader.value<size_t>();
+      m_custom_scheduler->m_current_tracked_time = reader.value<sim_time_t>();
+      m_custom_scheduler->m_removed_count = reader.value<size_t>();
+      const size_t num_max_candidates = reader.value<size_t>();
+      require_checkpoint_match(num_max_candidates,
+                               m_params.m_num_max_candidates,
+                               "custom scheduler candidate limit");
+      m_custom_scheduler->m_num_max_candidates = num_max_candidates;
+      m_custom_scheduler->m_newly_eligible_begin_idx = reader.value<size_t>();
+      m_custom_scheduler->m_arrival_update_pending = reader.value<bool>();
+      m_custom_scheduler->m_reevaluate_all_candidates = reader.value<bool>();
+      m_custom_scheduler->m_candidate_preparation_pending =
+          reader.value<bool>();
+      m_custom_scheduler->m_resource_area = reader.value<tdiff_t>();
+      m_custom_scheduler->m_resource_area_time = reader.value<sim_time_t>();
+      m_custom_scheduler->m_resource_area_start = reader.value<sim_time_t>();
+      m_custom_scheduler->m_accounted_available_nodes =
+          reader.value<num_nodes_t>();
+      if (m_custom_scheduler->m_eligible_end_idx > queue_size ||
+          m_custom_scheduler->m_newly_eligible_begin_idx >
+              m_custom_scheduler->m_eligible_end_idx ||
+          m_custom_scheduler->m_removed_count >
+              m_custom_scheduler->m_eligible_end_idx ||
+          m_custom_scheduler->m_accounted_available_nodes >
+              m_params.m_total_nodes) {
+        throw std::runtime_error(
+            "checkpoint custom scheduler indices are inconsistent");
+      }
+    }
+
+    m_running_jobs.clear();
+    for (size_t i = 0, count = reader.count(); i < count; ++i) {
+      const auto job_id = reader.value<job_no_t>();
+      Running_Job running{reader.value<sim_time_t>(), reader.value<tdiff_t>(),
+                          reader.value<num_nodes_t>()};
+      m_running_jobs.emplace(job_id, running);
+    }
+    m_pending_queue_arrivals.clear();
+    for (size_t i = 0, count = reader.count(); i < count; ++i) {
+      const auto time = reader.value<sim_time_t>();
+      const auto count_at_time = reader.value<size_t>();
+      m_pending_queue_arrivals.emplace(time, count_at_time);
+    }
+    m_event_queue.clear();
+    for (size_t i = 0, count = reader.count(); i < count; ++i) {
+      const auto job_id = reader.value<job_no_t>();
+      const auto time = read_epoch(reader);
+      const auto type = reader.value<bool>();
+      m_event_queue.emplace(job_id, time, type);
+    }
+    reader.object(m_rng);
+
+    m_trace.m_num_reclaimed = reader.value<size_t>();
+    m_trace.m_job_store_capacity = reader.value<size_t>();
+    m_trace.m_job_store_capacity_resolved = reader.value<bool>();
+    m_trace.m_job_store_overflow = reader.enumeration<CircularOverflowPolicy>();
+    m_trace.m_job_flush_interval = reader.value<size_t>();
+    m_trace.m_departures_since_job_flush = reader.value<size_t>();
+    m_trace.m_replay_jobs_enqueued = reader.value<size_t>();
+    m_trace.m_memory_pressure_fraction = reader.value<double>();
+    m_trace.m_has_loaded_a_file = reader.value<bool>();
+    m_trace.m_last_loaded_submit_time = read_epoch(reader);
+    m_trace.m_completed_count = reader.value<num_jobs_t>();
+    m_trace.m_wait_time_sum = reader.value<tdiff_t>();
+    m_trace.m_turnaround_time_sum = reader.value<tdiff_t>();
+    m_trace.m_makespan = reader.value<sim_time_t>();
+    m_trace.m_next_job_to_write = reader.value<size_t>();
+
+    const size_t job_capacity = reader.count();
+    const size_t job_count = reader.count();
+    if (job_count > job_capacity) {
+      throw std::runtime_error("checkpoint job store exceeds its capacity");
+    }
+    m_trace.m_data.clear();
+    m_trace.m_data.set_capacity(job_capacity);
+    for (size_t i = 0; i < job_count; ++i) {
+      const auto begin = read_epoch(reader);
+      const auto end = read_epoch(reader);
+      const auto submit = read_epoch(reader);
+      const auto limit = reader.value<timeout_t>();
+      const auto actual = reader.value<tdiff_t>();
+      const auto nodes = reader.value<num_nodes_t>();
+      const auto queue = reader.enumeration<job_queue_t>();
+      const auto simulated = reader.value<bool>();
+      Job_Record job(submit, nodes, queue, limit);
+      job.m_t_begin = begin;
+      job.m_t_end = end;
+      job.m_actual_run_time = actual;
+      job.m_is_simulated = simulated;
+#if SHOW_ORG_NO
+      job.m_org_no = reader.value<job_no_t>();
+#endif
+#if MARK_DAT_PERIOD
+      job.m_dat = reader.value<bool>();
+#endif
+      job.m_busy_nodes = reader.value<num_nodes_t>();
+      if constexpr (std::is_same_v<TraceType, PconTrace>) {
+        const Pcon_Values pcon{reader.value<double>(), reader.value<double>(),
+                               reader.value<double>()};
+        m_trace.m_data.push_back(Pcon_Job_Record(std::move(job), pcon));
+      } else {
+        m_trace.m_data.push_back(std::move(job));
+      }
+    }
+
+    const auto first_resident_job =
+        static_cast<job_no_t>(m_trace.m_num_reclaimed);
+    const auto resident_job_count =
+        static_cast<job_no_t>(m_trace.m_data.size());
+    m_trace.reset_policy_runtime_state();
+    for (const auto &[job_id, running] : m_running_jobs) {
+      (void)running;
+      if (job_id < first_resident_job ||
+          job_id - first_resident_job >= resident_job_count) {
+        throw std::runtime_error(
+            "checkpoint running-job map references a non-resident job");
+      }
+      m_trace.restore_policy_running_job(
+          m_trace.m_data[job_id - first_resident_job]);
+    }
+
+#if MARK_DAT_PERIOD
+    m_trace.m_ctx.m_pAll_cnt = reader.value<num_jobs_t>();
+    m_trace.m_ctx.m_dat_start = read_epoch(reader);
+    m_trace.m_ctx.m_dat_end = read_epoch(reader);
+    m_trace.m_ctx.m_dat_span = reader.value<tdiff_t>();
+    m_trace.m_ctx.m_prev_job_q = reader.enumeration<job_queue_t>();
+    m_trace.m_reserved.clear();
+    for (size_t i = 0, count = reader.count(); i < count; ++i) {
+      const auto begin = read_epoch(reader);
+      const auto end = read_epoch(reader);
+      m_trace.m_reserved.emplace_back(begin, end);
+    }
+#endif
+    m_trace.m_ctx.m_n_nodes_in_use = reader.value<num_nodes_t>();
+    m_trace.m_ctx.m_evtq.clear();
+    for (size_t i = 0, count = reader.count(); i < count; ++i) {
+      const auto job_id = reader.value<job_no_t>();
+      const auto time = read_epoch(reader);
+      const auto type = reader.value<bool>();
+      m_trace.m_ctx.m_evtq.emplace(job_id, time, type);
+    }
+
+    m_trace.m_resource_history_capacity = reader.value<size_t>();
+    m_trace.m_resource_history_capacity_resolved = reader.value<bool>();
+    const size_t resource_capacity = reader.count();
+    const size_t resource_count = reader.count();
+    if (resource_count > resource_capacity) {
+      throw std::runtime_error(
+          "checkpoint resource history exceeds its capacity");
+    }
+    m_trace.m_ctx.m_resource_history.clear();
+    m_trace.m_ctx.m_resource_history.set_capacity(resource_capacity);
+    for (size_t i = 0; i < resource_count; ++i) {
+      const auto time = read_epoch(reader);
+      const auto allocated = reader.value<num_nodes_t>();
+      const auto capacity = reader.value<num_nodes_t>();
+      if constexpr (std::is_same_v<TraceType, PconTrace>) {
+        const Pcon_Values pcon{reader.value<double>(), reader.value<double>(),
+                               reader.value<double>()};
+        m_trace.m_ctx.m_resource_history.push_back(
+            Pcon_Resource_Sample{time, allocated, capacity, pcon});
+      } else {
+        m_trace.m_ctx.m_resource_history.push_back(
+            Standard_Resource_Sample{time, allocated, capacity});
+      }
+    }
+    m_trace.m_resource_trace_total_nodes = reader.value<num_nodes_t>();
+    m_trace.m_resource_trace_current_capacity = reader.value<num_nodes_t>();
+    m_trace.m_resource_capacity_initialized = reader.value<bool>();
+    m_trace.m_resource_recording_start = reader.value<sim_time_t>();
+    m_trace.m_resource_recording_baseline.time = read_epoch(reader);
+    m_trace.m_resource_recording_baseline.allocated =
+        reader.value<num_nodes_t>();
+    m_trace.m_resource_recording_baseline.capacity =
+        reader.value<num_nodes_t>();
+    if constexpr (std::is_same_v<TraceType, PconTrace>) {
+      m_trace.m_resource_recording_baseline.pcon = {reader.value<double>(),
+                                                    reader.value<double>(),
+                                                    reader.value<double>()};
+    }
+    m_trace.m_has_resource_recording_baseline = reader.value<bool>();
+    m_trace.m_resource_trace_msec = reader.value<bool>();
+    m_trace.m_simulated_trace_msec = reader.value<bool>();
+    const bool simulated_output_open = reader.value<bool>();
+    const bool resource_output_open = reader.value<bool>();
+    const auto simulated_output_bytes = reader.value<std::uint64_t>();
+    const auto resource_output_bytes = reader.value<std::uint64_t>();
+    const bool redis_output = reader.value<bool>();
+    CheckpointRedisBoundary redis_boundary;
+    redis_boundary.job_csv_bytes = reader.value<std::uint64_t>();
+    redis_boundary.resource_csv_bytes = reader.value<std::uint64_t>();
+    redis_boundary.resource_count = reader.value<std::uint64_t>();
+    redis_boundary.resource_trace_active = reader.value<bool>();
+    redis_boundary.job_ids.resize(reader.count());
+    for (auto &id : redis_boundary.job_ids) {
+      id = reader.string();
+    }
+    m_trace.m_simulated_trace_buffer.clear();
+
+    for (const auto job_id : pending_job_ids) {
+      if (job_id < first_resident_job ||
+          job_id - first_resident_job >= resident_job_count) {
+        throw std::runtime_error(
+            "checkpoint scheduler references a non-resident job");
+      }
+      const auto &job = m_trace.m_data[job_id - first_resident_job];
+      if (job.is_scheduled() ||
+          job.get_submit_time() == Job_Record::unscheduled_sentinel()) {
+        throw std::runtime_error(
+            "checkpoint scheduler references a non-pending job");
+      }
+    }
+    if (checkpoint_uses_custom_scheduler) {
+      auto restored_pending_ids = m_custom_scheduler->pending_job_ids();
+      std::sort(restored_pending_ids.begin(), restored_pending_ids.end());
+      if (restored_pending_ids != pending_job_ids) {
+        throw std::runtime_error(
+            "checkpoint custom scheduler queue ownership is inconsistent");
+      }
+    } else {
+      m_scheduler = create_scheduler(
+          m_params.m_total_nodes, m_trace.m_data.size(),
+          m_params.m_backfill_policy, m_params.m_priority_policy,
+          m_params.m_queue_impl, m_params.m_block_size,
+          m_params.m_wait_queue_capacity, m_params.m_wait_queue_overflow);
+      for (const auto job_id : pending_job_ids) {
+        const auto &job = m_trace.m_data[job_id - first_resident_job];
+        m_scheduler->insert_job(
+            job_id, convert_epoch<sim_time_t>(job.get_submit_time()),
+            job.get_limit_time(), job.get_num_nodes());
+      }
+      m_scheduler->sync_to(m_current_time);
+    }
+    m_scheduler->m_fcfs_reservation_time = reservation_time;
+
+    if (redis_output) {
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+      m_trace.m_redis_output.reset();
+      RedisCheckpointBoundary native_boundary;
+      native_boundary.job_csv_bytes = redis_boundary.job_csv_bytes;
+      native_boundary.resource_csv_bytes = redis_boundary.resource_csv_bytes;
+      native_boundary.resource_count = redis_boundary.resource_count;
+      native_boundary.job_ids = std::move(redis_boundary.job_ids);
+      native_boundary.resource_trace_active =
+          redis_boundary.resource_trace_active;
+      RedisOutput::archive_checkpoint_namespace(
+          m_params.m_redis_uri, m_params.m_redis_key_prefix, native_boundary);
+      if (simulated_output_open) {
+        m_trace.start_simulated_trace(
+            m_params.get_outfile(), m_params.m_msec_output,
+            m_params.m_redis_uri, m_params.m_redis_key_prefix);
+      }
+      if (resource_output_open) {
+        std::string header = "time,free_nodes,allocated_nodes";
+        header += TraceType::policy_type::resource_columns();
+        header += '\n';
+        m_trace.m_redis_output->start_resource_trace(
+            header, m_params.m_msec_output);
+      }
+#else
+      throw std::logic_error("Redis checkpoint requires Redis support");
+#endif
+    } else if (simulated_output_open) {
+      const auto filename = m_params.get_outfile();
+      start_restart_output_segment(filename, simulated_output_bytes,
+                                   m_trace.m_simulated_trace_ofs);
+    }
+    if (!redis_output && resource_output_open) {
+      const auto filename = m_params.get_resource_trace();
+      start_restart_output_segment(filename, resource_output_bytes,
+                                   m_trace.m_resource_trace_ofs);
+    }
+  } else {
+    static_assert(std::is_same_v<TraceType, Trace> ||
+                      std::is_same_v<TraceType, PconTrace>,
+                  "checkpoint deserialization is not defined for this trace");
+  }
+}
+
+template <typename TraceType>
+void BasicSimulation<TraceType>::load_checkpoint(const std::string &filename) {
+  std::ifstream input(filename, std::ios::binary);
+  if (!input) {
+    throw std::runtime_error("cannot open checkpoint for reading: " + filename);
+  }
+  load_checkpoint(input);
+}
+#endif
+
 template <typename TraceType>
 void BasicSimulation<TraceType>::write_resource_trace(
     const std::string &filename) {
-  if (filename.empty()) {
+  if (filename.empty() && m_params.m_redis_uri.empty()) {
     return;
   }
+
+  // A direct API caller may finalize Redis resource output without first
+  // calling run() or append_job(s), so initialize the shared Redis sink here
+  // too. Never reopen the ordinary job file after it has been finalized.
+  if (!m_params.m_redis_uri.empty()) {
+    m_trace.start_simulated_trace(m_params.get_outfile(),
+                                  m_params.m_msec_output, m_params.m_redis_uri,
+                                  m_params.m_redis_key_prefix);
+  }
+  m_trace.start_resource_trace(filename, m_params.m_total_nodes,
+                               m_params.m_msec_output);
 
   // Trace's own context is populated identically regardless of trace
   // mode (both go through the same process_single_event()/
@@ -636,7 +1765,12 @@ void BasicSimulation<TraceType>::write_resource_trace(
   m_trace.write_resource_trace(filename, m_params.m_total_nodes,
                                m_params.m_msec_output);
   if (m_params.m_verbose) {
-    std::cout << "Resource trace written to: " << filename << std::endl;
+    if (m_params.m_redis_uri.empty()) {
+      std::cout << "Resource trace written to: " << filename << std::endl;
+    } else {
+      std::cout << "Resource trace written to Redis key: "
+                << m_params.m_redis_key_prefix << ":resources:csv" << std::endl;
+    }
   }
 }
 
@@ -647,7 +1781,9 @@ template <typename TraceType>
 job_no_t BasicSimulation<TraceType>::append_job(sim_time_t submit_time,
                                                 num_nodes_t num_nodes,
                                                 const std::string &queue,
-                                                tdiff_t limit_time) {
+                                                tdiff_t limit_time,
+                                                std::optional<tdiff_t>
+                                                    actual_run_time) {
   if (submit_time < m_current_time) {
     throw std::runtime_error(
         "Cannot append job with submit_time < current_time. "
@@ -655,14 +1791,23 @@ job_no_t BasicSimulation<TraceType>::append_job(sim_time_t submit_time,
         std::to_string(submit_time) +
         " but current_time=" + std::to_string(m_current_time));
   }
+  const timeout_t stored_limit = checked_streaming_limit(limit_time);
+  if (actual_run_time &&
+      (!std::isfinite(*actual_run_time) || *actual_run_time <= 0.0 ||
+       *actual_run_time > static_cast<tdiff_t>(stored_limit))) {
+    throw std::invalid_argument(
+        "actual_run_time must be positive and no greater than limit_time");
+  }
 
   // Online callers need not invoke run() first. Open incremental outputs before
   // this insertion can reclaim a completed record from a full job store.
   m_trace.set_job_flush_interval(m_params.m_job_flush_interval);
   m_trace.set_resource_history_capacity(m_params.m_resource_history_capacity);
+  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output,
+                                m_params.m_redis_uri,
+                                m_params.m_redis_key_prefix);
   m_trace.start_resource_trace(m_params.get_resource_trace(),
                                m_params.m_total_nodes, m_params.m_msec_output);
-  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output);
 
   time_t sec = static_cast<time_t>(submit_time);
   float frac = submit_time - sec;
@@ -676,8 +1821,9 @@ job_no_t BasicSimulation<TraceType>::append_job(sim_time_t submit_time,
 #endif
 
   job_no_t job_idx = m_trace.append_job(m_current_time, submit_epoch, num_nodes,
-                                        q, static_cast<timeout_t>(limit_time));
+                                        q, stored_limit, actual_run_time);
   submit_job(job_idx, submit_time);
+  record_appended_job(job_idx, submit_time, num_nodes, stored_limit);
   return job_idx;
 }
 
@@ -687,9 +1833,11 @@ std::vector<job_no_t> BasicSimulation<TraceType>::append_jobs(
   // Same one-time, idempotent setup as append_job(), once for this batch.
   m_trace.set_job_flush_interval(m_params.m_job_flush_interval);
   m_trace.set_resource_history_capacity(m_params.m_resource_history_capacity);
+  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output,
+                                m_params.m_redis_uri,
+                                m_params.m_redis_key_prefix);
   m_trace.start_resource_trace(m_params.get_resource_trace(),
                                m_params.m_total_nodes, m_params.m_msec_output);
-  m_trace.start_simulated_trace(m_params.get_outfile(), m_params.m_msec_output);
 
   // Validate every request's submit_time before appending any of them
   // - same precondition append_job() enforces per-job, checked here
@@ -703,6 +1851,16 @@ std::vector<job_no_t> BasicSimulation<TraceType>::append_jobs(
           std::to_string(i) +
           " has submit_time=" + std::to_string(requests[i].submit_time) +
           " but current_time=" + std::to_string(m_current_time));
+    }
+    const timeout_t stored_limit =
+        checked_streaming_limit(requests[i].limit_time);
+    if (requests[i].actual_run_time &&
+        (!std::isfinite(*requests[i].actual_run_time) ||
+         *requests[i].actual_run_time <= 0.0 ||
+         *requests[i].actual_run_time > static_cast<tdiff_t>(stored_limit))) {
+      throw std::invalid_argument(
+          "request " + std::to_string(i) +
+          " actual_run_time must be positive and no greater than limit_time");
     }
   }
 
@@ -719,15 +1877,139 @@ std::vector<job_no_t> BasicSimulation<TraceType>::append_jobs(
 #endif
     trace_reqs.push_back(
         dr_evt::Job_Append_Request{epoch_t{sec, frac}, r.num_nodes, q,
-                                   static_cast<timeout_t>(r.limit_time)});
+                                   static_cast<timeout_t>(r.limit_time),
+                                   r.actual_run_time});
   }
 
   std::vector<job_no_t> job_idxs =
       m_trace.append_jobs(m_current_time, trace_reqs);
   for (size_t i = 0; i < job_idxs.size(); ++i) {
     submit_job(job_idxs[i], requests[i].submit_time);
+    record_appended_job(job_idxs[i], requests[i].submit_time,
+                        requests[i].num_nodes,
+                        static_cast<timeout_t>(requests[i].limit_time));
   }
   return job_idxs;
+}
+
+template <typename TraceType>
+void BasicSimulation<TraceType>::record_appended_job(job_no_t job_idx,
+                                                     sim_time_t submit_time,
+                                                     num_nodes_t num_nodes,
+                                                     tdiff_t limit_time) {
+  if (m_appended_job_query_records.empty()) {
+    m_first_appended_job_idx = job_idx;
+  }
+  if (job_idx < m_first_appended_job_idx) {
+    throw std::logic_error("Appended job identifiers must be monotonic");
+  }
+  const size_t offset = job_idx - m_first_appended_job_idx;
+  if (offset >= m_appended_job_query_records.size()) {
+    m_appended_job_query_records.resize(offset + 1);
+  }
+  auto &query = m_appended_job_query_records[offset];
+  query.submit_time = submit_time;
+  query.limit_time = limit_time;
+  query.num_nodes = num_nodes;
+  query.tracked = true;
+  query.rejected = m_trace.job_at(job_idx).get_submit_time() ==
+                   Job_Record::unscheduled_sentinel();
+}
+
+template <typename TraceType>
+void BasicSimulation<TraceType>::record_appended_job_start(job_no_t job_idx) {
+  if (job_idx < m_first_appended_job_idx) {
+    return;
+  }
+  const size_t offset = job_idx - m_first_appended_job_idx;
+  if (offset >= m_appended_job_query_records.size() ||
+      !m_appended_job_query_records[offset].tracked) {
+    return;
+  }
+  const auto &job = m_trace.job_at(job_idx);
+  auto &query = m_appended_job_query_records[offset];
+  query.start_time = convert_epoch<sim_time_t>(job.get_begin_time());
+  query.end_time = convert_epoch<sim_time_t>(job.get_end_time());
+  query.scheduled = true;
+}
+
+template <typename TraceType>
+std::vector<typename BasicSimulation<TraceType>::Job_Status>
+BasicSimulation<TraceType>::get_job_statuses(
+    const std::vector<job_no_t> &job_idxs) const {
+  std::map<job_no_t, sim_time_t> expected_starts;
+  std::map<sim_time_t, num_nodes_t> releases;
+  num_nodes_t available = get_available_nodes();
+  for (const auto &[job_idx, running] : m_running_jobs) {
+    (void)job_idx;
+    const sim_time_t end = running.start_time + running.run_time;
+    if (end > m_current_time) {
+      releases[end] += running.nodes;
+    }
+  }
+
+  sim_time_t projection_time = m_current_time;
+  for (const job_no_t pending_id : m_scheduler->pending_job_ids()) {
+    const auto &record = m_trace.job_at(pending_id);
+    const sim_time_t submit_time =
+        convert_epoch<sim_time_t>(record.get_submit_time());
+    projection_time = std::max(projection_time, submit_time);
+    auto release = releases.begin();
+    while (release != releases.end() && release->first <= projection_time) {
+      available += release->second;
+      release = releases.erase(release);
+    }
+    while (available < record.get_num_nodes() && !releases.empty()) {
+      projection_time = releases.begin()->first;
+      available += releases.begin()->second;
+      releases.erase(releases.begin());
+    }
+    if (available < record.get_num_nodes()) {
+      continue;
+    }
+    const bool is_appended =
+        pending_id >= m_first_appended_job_idx &&
+        pending_id - m_first_appended_job_idx <
+            m_appended_job_query_records.size() &&
+        m_appended_job_query_records[pending_id - m_first_appended_job_idx]
+            .tracked;
+    if (is_appended) {
+      expected_starts[pending_id] = projection_time;
+    }
+    available -= record.get_num_nodes();
+    releases[projection_time + record.get_limit_time()] +=
+        record.get_num_nodes();
+  }
+
+  std::vector<Job_Status> result;
+  result.reserve(job_idxs.size());
+  for (const job_no_t job_idx : job_idxs) {
+    if (job_idx < m_first_appended_job_idx ||
+        job_idx - m_first_appended_job_idx >=
+            m_appended_job_query_records.size() ||
+        !m_appended_job_query_records[job_idx - m_first_appended_job_idx]
+             .tracked) {
+      throw std::out_of_range("No appended job with job_idx=" +
+                              std::to_string(job_idx));
+    }
+    const auto &job =
+        m_appended_job_query_records[job_idx - m_first_appended_job_idx];
+    Job_Status status{job_idx, Job_State::PENDING, std::nullopt, std::nullopt,
+                      std::nullopt};
+    if (job.rejected) {
+      status.state = Job_State::REJECTED;
+    } else if (job.scheduled) {
+      status.state = job.end_time <= m_current_time ? Job_State::COMPLETED
+                                                    : Job_State::RUNNING;
+      status.start_time = job.start_time;
+      status.end_time = job.end_time;
+    } else if (const auto it = expected_starts.find(job_idx);
+               it != expected_starts.end()) {
+      status.expected_start_time = it->second;
+    }
+    result.push_back(status);
+  }
+  return result;
 }
 
 template <typename TraceType>
@@ -789,7 +2071,12 @@ void BasicSimulation<TraceType>::submit_job(job_no_t job_idx,
   job.set_busy_nodes(get_nodes_in_use());
 #endif
 
-  m_scheduler->insert_job(job_idx, submit_time, run_time_estimate, nodes);
+  const SchedulerJobMetadata metadata{m_trace.scheduler_power(job_idx),
+                                      job.get_actual_run_time(),
+                                      job.get_limit_time(),
+                                      m_trace.scheduler_maximum_power(job_idx)};
+  m_scheduler->insert_job_with_metadata(job_idx, submit_time,
+                                        run_time_estimate, nodes, metadata);
   ++m_pending_queue_arrivals[submit_time];
 }
 
@@ -909,7 +2196,12 @@ void BasicSimulation<TraceType>::advance_to_impl(
   // jobs appended at the current time by a streaming caller.
   m_scheduler->sync_to(m_current_time);
   record_queue_arrivals(m_current_time);
-  apply_capacity_changes(m_current_time);
+  const bool initial_capacity_changed = apply_capacity_changes(m_current_time);
+  if constexpr (AccountResources) {
+    if (initial_capacity_changed) {
+      custom_scheduler->notify_resource_change();
+    }
+  }
   if (m_scheduler->has_eligible_jobs()) {
     // Call scheduler to evaluate newly arriving jobs
     while (true) {
@@ -925,10 +2217,14 @@ void BasicSimulation<TraceType>::advance_to_impl(
       // multiple)
       for (job_no_t job : jobs_to_run) {
         m_trace.insert_job(job, m_current_time);
+        record_appended_job_start(job);
         const auto &record = m_trace.job_at(job);
         m_running_jobs[job] = {m_current_time,
                                static_cast<tdiff_t>(record.get_limit_time()),
-                               record.get_num_nodes()};
+                               record.get_num_nodes(),
+                               m_scheduler->scheduling_power(
+                                   m_trace.scheduler_power(job),
+                                   m_trace.scheduler_maximum_power(job))};
         m_jobs_submitted++;
 
         // Records a resource-history sample internally (Trace's own
@@ -1051,6 +2347,12 @@ void BasicSimulation<TraceType>::advance_to_impl(
 
       const bool capacity_changed = apply_capacity_changes(m_current_time);
 
+      if constexpr (AccountResources) {
+        if (processed_end_event || capacity_changed) {
+          custom_scheduler->notify_resource_change();
+        }
+      }
+
       // Only call scheduler if we processed END events (resources freed)
       should_schedule = processed_end_event || capacity_changed ||
                         next_arrival == m_current_time;
@@ -1072,7 +2374,12 @@ void BasicSimulation<TraceType>::advance_to_impl(
       // this doesn't rely on that.
       m_scheduler->sync_to(m_current_time);
       record_queue_arrivals(m_current_time);
-      apply_capacity_changes(m_current_time);
+      const bool capacity_changed = apply_capacity_changes(m_current_time);
+      if constexpr (AccountResources) {
+        if (capacity_changed) {
+          custom_scheduler->notify_resource_change();
+        }
+      }
 
       // jobs_at_next_arrival already collected during wait_queue scan
       // TODO: Pass jobs_at_next_arrival to scheduler for efficient evaluation
@@ -1088,6 +2395,9 @@ void BasicSimulation<TraceType>::advance_to_impl(
       m_scheduler->sync_to(m_current_time);
       record_queue_arrivals(m_current_time);
       apply_capacity_changes(m_current_time);
+      if constexpr (AccountResources) {
+        custom_scheduler->notify_resource_change();
+      }
       should_schedule = true;
     } else {
       // No arrivals and no replay events before target_time
@@ -1118,10 +2428,14 @@ void BasicSimulation<TraceType>::advance_to_impl(
         // multiple)
         for (job_no_t job : jobs_to_run) {
           m_trace.insert_job(job, m_current_time);
+          record_appended_job_start(job);
           const auto &record = m_trace.job_at(job);
           m_running_jobs[job] = {m_current_time,
                                  static_cast<tdiff_t>(record.get_limit_time()),
-                                 record.get_num_nodes()};
+                                 record.get_num_nodes(),
+                                 m_scheduler->scheduling_power(
+                                     m_trace.scheduler_power(job),
+                                     m_trace.scheduler_maximum_power(job))};
           m_jobs_submitted++;
 
           // Process this START event - records a resource-history
@@ -1155,6 +2469,9 @@ void BasicSimulation<TraceType>::advance_to_impl(
 
     // Peak queue length after all events and scheduling at this timestamp.
     m_queue_length_peak = std::max(m_queue_length_peak, active_count);
+
+    // All peer events and scheduling decisions at this timestamp are settled.
+    maybe_save_automatic_checkpoint(false);
 
     if constexpr (WarmStage) {
       // Transition only after every peer event and scheduling decision at the
@@ -1222,19 +2539,13 @@ BasicSimulation<TraceType>::get_backfill_window() const {
   Backfill_Window window{
       m_current_time, get_available_nodes(), get_fcfs_head_shadow_time(), {}};
 
-  // A head that can start now has no future window to describe.  Likewise,
-  // without a waiting head there is no EASY reservation.
-  if (window.shadow_time <= m_current_time) {
-    return window;
-  }
-
   // m_running_jobs stores the actual start time. The scheduler reserves
   // against each job's limit time, so this deliberately does the same.
   std::map<sim_time_t, num_nodes_t> releases_by_time;
   for (const auto &[job_idx, job] : m_running_jobs) {
     (void)job_idx;
     const sim_time_t end_time = job.start_time + job.run_time;
-    if (end_time > m_current_time && end_time <= window.shadow_time) {
+    if (end_time > m_current_time) {
       releases_by_time[end_time] += job.nodes;
     }
   }
@@ -1249,12 +2560,8 @@ BasicSimulation<TraceType>::get_backfill_window() const {
 template <typename TraceType>
 tdiff_t
 BasicSimulation<TraceType>::get_prediction_horizon(double utilization) const {
-  if (m_custom_scheduler == nullptr) {
-    throw std::logic_error(
-        "prediction horizon is available only with Custom FCFS");
-  }
-  return m_custom_scheduler->prediction_horizon(m_running_jobs, m_current_time,
-                                                utilization);
+  return m_scheduler->prediction_horizon(m_running_jobs, m_current_time,
+                                         utilization);
 }
 
 template <typename TraceType>
@@ -1276,7 +2583,9 @@ BasicSimulation<TraceType>::get_statistics() const {
 
   // Calculate wait times and turnaround times
   tdiff_t total_wait = 0.0;
+  tdiff_t total_run_time = 0.0;
   tdiff_t total_turnaround = 0.0;
+  double total_bounded_slowdown = 0.0;
   sim_time_t max_completion = 0.0;
   sim_time_t max_scheduled_completion = 0.0;
   num_jobs_t completed_count = 0;
@@ -1304,7 +2613,11 @@ BasicSimulation<TraceType>::get_statistics() const {
       tdiff_t exec = job.get_actual_run_time();
 
       total_wait += wait;
+      total_run_time += exec;
       total_turnaround += (wait + exec);
+      total_bounded_slowdown +=
+          std::max(1.0, (wait + exec) /
+                            std::max(exec, bounded_slowdown_threshold));
       max_completion = std::max(max_completion, completion);
       completed_count++;
     }
@@ -1312,8 +2625,12 @@ BasicSimulation<TraceType>::get_statistics() const {
 
   stats.avg_wait_time =
       (completed_count > 0) ? total_wait / completed_count : 0.0;
+  stats.avg_run_time =
+      (completed_count > 0) ? total_run_time / completed_count : 0.0;
   stats.avg_turnaround_time =
       (completed_count > 0) ? total_turnaround / completed_count : 0.0;
+  stats.avg_bounded_slowdown =
+      (completed_count > 0) ? total_bounded_slowdown / completed_count : 0.0;
   stats.makespan = max_completion;
 
   if (m_custom_scheduler != nullptr) {

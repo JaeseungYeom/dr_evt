@@ -32,6 +32,12 @@ static constexpr int OPT_JOB_FLUSH_INTERVAL = 1001;
 static constexpr int OPT_NUM_MAX_CANDIDATES = 1002;
 static constexpr int OPT_CAPACITY_SCHEDULE = 1003;
 static constexpr int OPT_SIM_START_TIME = 1004;
+static constexpr int OPT_REDIS_URI = 1005;
+static constexpr int OPT_REDIS_KEY_PREFIX = 1006;
+static constexpr int OPT_CHECKPOINT_FILE = 1007;
+static constexpr int OPT_CHECKPOINT_INTERVAL_JOBS = 1008;
+static constexpr int OPT_CAP_BACKFILL_POWER = 1009;
+static constexpr int OPT_CAP_FCFS_POWER = 1010;
 
 /** @brief getopt short-option specification for the simulator CLI. */
 #define OPTIONS "hi:j:n:o:s:t:b:p:q:Q:A:G:r:f:T:z:D:S:V:vc:R:MK:W:H:L:m:"
@@ -49,6 +55,8 @@ static const struct option sim_longopts[] = {
     {"max_time", required_argument, 0, 't'},
     {"backfill_policy", required_argument, 0, 'b'},
     {"num_max_candidates", required_argument, 0, OPT_NUM_MAX_CANDIDATES},
+    {"cap_backfill_power", no_argument, 0, OPT_CAP_BACKFILL_POWER},
+    {"cap_fcfs_power", no_argument, 0, OPT_CAP_FCFS_POWER},
     {"priority_policy", required_argument, 0, 'p'},
     {"queue_impl", required_argument, 0, 'q'},
     {"block_size", required_argument, 0, 'Q'},
@@ -71,6 +79,11 @@ static const struct option sim_longopts[] = {
     {"msec_output", no_argument, 0, 'M'},
     {"config", required_argument, 0, 'c'},
     {"resource_trace", required_argument, 0, 'R'},
+    {"redis_uri", required_argument, 0, OPT_REDIS_URI},
+    {"redis_key_prefix", required_argument, 0, OPT_REDIS_KEY_PREFIX},
+    {"checkpoint_file", required_argument, 0, OPT_CHECKPOINT_FILE},
+    {"checkpoint_interval_jobs", required_argument, 0,
+     OPT_CHECKPOINT_INTERVAL_JOBS},
     {0, 0, 0, 0},
 };
 
@@ -78,13 +91,15 @@ Sim_Params::Sim_Params()
     : m_seed(0u), m_max_jobs(10u), m_max_time(dr_evt::max_sim_time),
       m_sim_start_time(0.0), m_is_jobs_set(false), m_is_time_set(false),
       m_backfill_policy(BackfillPolicy::EASY), m_num_max_candidates(1),
+      m_cap_backfill_power(false), m_cap_fcfs_power(false),
       m_priority_policy(PriorityPolicy::FCFS),
       m_queue_impl(QueueImplementation::CIRCULAR), m_block_size(128),
       m_wait_queue_capacity(0), // 0 = size of job trace (never overflows)
       m_wait_queue_overflow(CircularOverflowPolicy::GROW),
       m_job_store_capacity(0), // 0 = size of job trace (never overflows)
       m_job_store_overflow(CircularOverflowPolicy::GROW),
-      m_job_flush_interval(0), m_memory_pressure_fraction(0.0),
+      m_job_flush_interval(0), m_checkpoint_interval_jobs(0),
+      m_memory_pressure_fraction(0.0),
       m_resource_history_capacity(0), m_total_nodes(dr_evt::total_nodes),
       m_trace_type(TraceType::STANDARD),
       m_trace_format("simple"),    // Default to simple format
@@ -182,6 +197,17 @@ void Sim_Params::getopt(int &argc, char **&argv) {
     case 'o': /* --outfile */
       m_outfile = std::string(optarg);
       break;
+    case OPT_CHECKPOINT_FILE:
+      m_checkpoint_file = optarg;
+      break;
+    case OPT_CHECKPOINT_INTERVAL_JOBS:
+      m_checkpoint_interval_jobs = std::stoull(optarg);
+      if (m_checkpoint_interval_jobs == 0) {
+        std::cerr
+            << "Error: --checkpoint_interval_jobs must be greater than zero\n";
+        print_usage(argv[0], 1);
+      }
+      break;
     case 's': /* --seed */
       m_seed = static_cast<unsigned>(atoi(optarg));
       break;
@@ -212,6 +238,12 @@ void Sim_Params::getopt(int &argc, char **&argv) {
                   << std::endl;
         print_usage(argv[0], 1);
       }
+      break;
+    case OPT_CAP_BACKFILL_POWER: /* --cap_backfill_power */
+      m_cap_backfill_power = true;
+      break;
+    case OPT_CAP_FCFS_POWER: /* --cap_fcfs_power */
+      m_cap_fcfs_power = true;
       break;
     case 'p': /* --priority_policy */
     {
@@ -437,6 +469,12 @@ void Sim_Params::getopt(int &argc, char **&argv) {
     case 'R': /* --resource_trace */
       m_resource_trace = std::string(optarg);
       break;
+    case OPT_REDIS_URI: /* --redis_uri */
+      m_redis_uri = optarg;
+      break;
+    case OPT_REDIS_KEY_PREFIX: /* --redis_key_prefix */
+      m_redis_key_prefix = optarg;
+      break;
     default:
       print_usage(argv[0], 1);
       break;
@@ -465,6 +503,26 @@ void Sim_Params::getopt(int &argc, char **&argv) {
     }
   }
   set_outfile(m_outfile);
+
+  if (m_redis_uri.empty() != m_redis_key_prefix.empty()) {
+    std::cerr << "Error: --redis_uri and --redis_key_prefix must be specified "
+                 "together"
+              << std::endl;
+    print_usage(argv[0], 1);
+  }
+  if (m_checkpoint_file.empty() && m_checkpoint_interval_jobs != 0) {
+    std::cerr << "Error: --checkpoint_interval_jobs requires --checkpoint_file"
+              << std::endl;
+    print_usage(argv[0], 1);
+  }
+#if !defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+  if (!m_redis_uri.empty()) {
+    std::cerr << "Error: Redis output requires a build configured with "
+                 "-DDR_EVT_WITH_REDIS=ON"
+              << std::endl;
+    print_usage(argv[0], 1);
+  }
+#endif
 
   if (m_is_time_set && (!std::isfinite(m_max_time) || m_max_time < 0.0)) {
     std::cerr << "Error: --max_time must be finite and nonnegative"
@@ -514,14 +572,15 @@ void Sim_Params::print_usage(const std::string exec, int code) {
          "        Specify the maximum number of jobs to run.\n"
          "\n"
          "    -n, --total_nodes\n"
-         "        Specify total number of nodes in the system (default: 795).\n"
+         "        Specify total nodes (default: 795). Input jobs requesting\n"
+         "        more are dropped during loading and reported.\n"
          "\n"
          "    --capacity_schedule FILENAME\n"
          "        CSV change points with columns time,total_nodes. Capacity\n"
          "        defaults to --total_nodes before the first row. Reductions\n"
          "        are non-preemptive: running jobs finish, and new starts\n"
-         "        wait until they fit. Jobs are rejected only when they\n"
-         "        exceed --total_nodes, not the scheduled capacity. A zero\n"
+         "        wait until they fit. Jobs are dropped only when they exceed\n"
+         "        --total_nodes, not the scheduled capacity. A zero\n"
          "        value pauses new starts.\n"
          "\n"
          "    --sim_start_time TIME\n"
@@ -533,6 +592,26 @@ void Sim_Params::print_usage(const std::string exec, int code) {
          "\n"
          "    -o, --outfile\n"
          "        Specify the output file name for simulation.\n"
+         "\n"
+         "    --checkpoint_file FILENAME\n"
+         "        Write automatic restart checkpoints to FILENAME.\n"
+         "        Progressive loading checkpoints at every completed input\n"
+         "        file boundary; --checkpoint_interval_jobs adds periodic\n"
+         "        checkpoints after settled event timestamps.\n"
+         "\n"
+         "    --checkpoint_interval_jobs COUNT\n"
+         "        Checkpoint after each COUNT additional completed jobs.\n"
+         "        Requires --checkpoint_file.\n"
+         "\n"
+         "    --redis_uri URI\n"
+         "        Write simulated-job and resource-history output to Redis\n"
+         "        instead of --outfile and --resource_trace. Requires\n"
+         "        --redis_key_prefix and a build\n"
+         "        configured with -DDR_EVT_WITH_REDIS=ON.\n"
+         "\n"
+         "    --redis_key_prefix PREFIX\n"
+         "        Redis namespace for job/resource CSV values, per-job\n"
+         "        hashes, and sorted indexes. Requires --redis_uri.\n"
          "\n"
          "    -s, --seed\n"
          "        Specify the seed for random number generator. Without this,\n"
@@ -553,6 +632,14 @@ void Sim_Params::print_usage(const std::string exec, int code) {
          "        Maximum feasible jobs offered to the experimental external\n"
          "        backfill selector per decision (default: 1). The callback\n"
          "        itself is installed through the C++ or Python API.\n"
+         "\n"
+         "    --cap_backfill_power\n"
+         "        Ask EASYPower to reject backfill candidates whose\n"
+         "        projected total power exceeds P_max (default: off).\n"
+         "\n"
+         "    --cap_fcfs_power\n"
+         "        Ask EASYPower to reject FCFS-prefix starts whose projected\n"
+         "        total power exceeds P_max (default: off).\n"
          "\n"
          "    -p, --priority_policy {fcfs|fcfs_alt|fcfs_conservative|sjf|ljf}\n"
          "        Job priority/ordering policy (default: fcfs).\n"
@@ -653,9 +740,10 @@ void Sim_Params::print_usage(const std::string exec, int code) {
          "        simple: CSV, columns looked up by name in the header row.\n"
          "          Simulation mode (no begin_time/end_time columns): "
          "requires\n"
-         "          job_submit_time, num_nodes, and time_limit.\n"
+         "          job_submit_time (or submit_time), num_nodes, and\n"
+         "          time_limit (or timelimit or walltime).\n"
          "          Replay mode (begin_time and end_time present): requires\n"
-         "          job_submit_time, begin_time, end_time, "
+         "          job_submit_time (or submit_time), begin_time, end_time, "
          "num_nodes, and\n"
          "          time_limit. The queue field is optional in both modes.\n"
          "        lassen: 33-column LLNL Lassen format\n"
@@ -676,8 +764,8 @@ void Sim_Params::print_usage(const std::string exec, int code) {
          "mode (default: actual).\n"
          "        actual: Read from actual_run_time column in trace (most "
          "realistic)\n"
-         "          (also accepted aliases: duration, actual_duration, "
-         "run_time)\n"
+         "          (also accepted aliases: actual_runtime, duration,\n"
+         "          actual_duration, run_time)\n"
          "        limit: Jobs run exactly time_limit (unrealistic, for "
          "debugging/testing)\n"
          "        distribution: Sample from statistical distribution "
@@ -746,9 +834,15 @@ void Sim_Params::print() const {
   msg += " - sim_start_time: " + to_string(m_sim_start_time) + "\n";
   msg += " - infile: " + m_infile + "\n";
   msg += " - outfile: " + m_outfile + "\n";
+  msg += " - redis_uri: " + m_redis_uri + "\n";
+  msg += " - redis_key_prefix: " + m_redis_key_prefix + "\n";
   msg += " - total_nodes: " + to_string(m_total_nodes) + "\n";
   msg += " - capacity_schedule: " + m_capacity_schedule + "\n";
   msg += " - num_max_candidates: " + to_string(m_num_max_candidates) + "\n";
+  msg += " - cap_backfill_power: " +
+         string{m_cap_backfill_power ? "true" : "false"} + "\n";
+  msg += " - cap_fcfs_power: " + string{m_cap_fcfs_power ? "true" : "false"} +
+         "\n";
   msg += " - job_flush_interval: " + to_string(m_job_flush_interval) + "\n";
   msg += " - is_jobs_set: " + string{m_is_jobs_set ? "true" : "false"} + "\n";
   msg += " - is_time_set: " + string{m_is_time_set ? "true" : "false"} + "\n";

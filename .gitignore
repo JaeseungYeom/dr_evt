@@ -34,6 +34,9 @@
 # Build directories
 build/
 install/
+/.build-*/
+/build-*/
+/install-*/
 venv/
 
 # Development notes (local only - but keep design-decisions/)
@@ -71,3 +74,25 @@ VERIFICATION_COMPLETE.md
 docs/_build/
 docs/doxygen/
 venv_docs/
+
+# Market notebook scratch space
+python/dr_evt_market/learn/output/
+*.egg-info/
+
+# Local job traces, never committed
+python/dr_evt_market/lc_traces/
+
+# Local multi-cluster experiment inputs and generated results
+/multi-cluster/
+/experimental/synthesize/lassen/synthetic_traces/
+/experimental/synthesize/lassen/simulations/
+/experimental/multi-cluster/dispatch-exp-results*/
+/experimental/multi-cluster/prediction-utilization-study/
+/experimental/multi-cluster/relative-performance-plots/
+/experimental/multi-cluster/trace-scale-comparison-plots/
+
+# Experiments
+experimental/fugaku-power/results
+experimental/fugaku-power/literature-search
+experimental/fugaku-power/private-notes
+experimental/fugaku-power/individual-monthly-warm-start-*

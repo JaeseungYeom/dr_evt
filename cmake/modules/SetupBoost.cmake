@@ -178,12 +178,22 @@ unset(DR_EVT_HAD_BOOST_LIBRARYDIR)
 if(NOT Boost_FOUND)
     include(FetchContent)
 
-    FetchContent_Declare(
-        Boost
-        URL https://github.com/boostorg/boost/releases/download/boost-1.85.0/boost-1.85.0-cmake.tar.xz
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-        SYSTEM  # CMake 3.25+ marks it as SYSTEM to suppress warnings
-    )
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.28)
+        FetchContent_Declare(
+            Boost
+            URL https://github.com/boostorg/boost/releases/download/boost-1.85.0/boost-1.85.0-cmake.tar.xz
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+            SYSTEM
+            EXCLUDE_FROM_ALL
+        )
+    else()
+        FetchContent_Declare(
+            Boost
+            URL https://github.com/boostorg/boost/releases/download/boost-1.85.0/boost-1.85.0-cmake.tar.xz
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+            SYSTEM
+        )
+    endif()
 
     # FetchContent reuses an already populated source tree across configure
     # runs. Report that separately from the first download so reconfiguration
@@ -210,13 +220,31 @@ if(NOT Boost_FOUND)
         program_options serialization graph multi_index circular_buffer)
     set(BOOST_ENABLE_CMAKE ON)
 
-    # Suppress compiler warnings from third-party Boost code
+    # Suppress compiler warnings from third-party Boost C and C++ code.
+    # SYSTEM include directories only affect consumers of Boost headers; they
+    # do not silence diagnostics while Boost's own sources are compiled.
+    set(_dr_evt_saved_c_flags "${CMAKE_C_FLAGS}")
     set(_dr_evt_saved_cxx_flags "${CMAKE_CXX_FLAGS}")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w")
 
-    FetchContent_MakeAvailable(Boost)
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.28)
+        FetchContent_MakeAvailable(Boost)
+    else()
+        # FetchContent_Declare(EXCLUDE_FROM_ALL) was added in CMake 3.28.
+        # Preserve the behavior on the project's older supported CMake
+        # versions by adding the populated dependency explicitly.
+        FetchContent_GetProperties(Boost)
+        if(NOT boost_POPULATED)
+            FetchContent_Populate(Boost)
+        endif()
+        add_subdirectory("${boost_SOURCE_DIR}" "${boost_BINARY_DIR}"
+                         EXCLUDE_FROM_ALL)
+    endif()
 
+    set(CMAKE_C_FLAGS "${_dr_evt_saved_c_flags}")
     set(CMAKE_CXX_FLAGS "${_dr_evt_saved_cxx_flags}")
+    unset(_dr_evt_saved_c_flags)
     unset(_dr_evt_saved_cxx_flags)
 
     # Modern CMake 3.24+: Boost imported targets (Boost::component) are automatically created

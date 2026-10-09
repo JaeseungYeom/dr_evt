@@ -14,12 +14,13 @@ Configuration field names match the long command-line names with the leading
 
 | Group | Fields |
 |---|---|
-| Input and output | `infile`, `infile_list`, `outfile`, `resource_trace` |
+| Input and output | `infile`, `infile_list`, `outfile`, `resource_trace`, `redis_uri`, `redis_key_prefix` |
 | Limits/system | `max_jobs`, `max_time`, `sim_start_time`, `total_nodes`, `capacity_schedule` |
-| Scheduling | `backfill_policy`, `priority_policy`, `num_max_candidates`, `queue_impl`, `block_size` |
+| Scheduling | `backfill_policy`, `priority_policy`, `num_max_candidates`, `cap_backfill_power`, `cap_fcfs_power`, `queue_impl`, `block_size` |
 | Queue storage | `wait_queue_capacity`, `wait_queue_overflow` |
 | Job storage | `job_store_capacity`, `job_store_overflow`, `job_flush_interval`, `memory_pressure_fraction` |
 | Resource history | `resource_history_capacity` |
+| Checkpoint | `checkpoint_file`, `checkpoint_interval_jobs` |
 | Trace handling | `trace_type`, `trace_format`, `timestamp_format`, `timezone` |
 | Runtime model | `run_time_mode`, `run_time_distribution`, `run_time_scale`, `run_time_stddev` |
 | Other | `seed`, `verbose` |
@@ -42,13 +43,22 @@ level:
 infile: "trace.csv"
 outfile: "results.csv"
 resource_trace: "resources.csv"
+redis_uri: "redis://127.0.0.1:6379"
+redis_key_prefix: "dr_evt:run42"
 total_nodes: 1000
 sim_start_time: 1713139200
 backfill_policy: "easy"
+cap_backfill_power: true
+cap_fcfs_power: false
 priority_policy: "fcfs"
 trace_format: "simple"
 timestamp_format: "epoch"
 ```
+
+`redis_uri` and `redis_key_prefix` must be set together and require a build
+configured with `DR_EVT_WITH_REDIS=ON`. They direct the simulated-job schedule
+and resource history to Redis instead of `outfile` and `resource_trace`; see
+[Redis Output](redis-output.md).
 
 Do not wrap the fields in `simulation_params { ... }`. The authoritative
 schema is

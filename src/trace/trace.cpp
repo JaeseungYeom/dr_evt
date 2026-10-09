@@ -16,8 +16,13 @@
 #include "trace/job_io.hpp"
 #include "trace/parse_utils.hpp"
 #include "utils/system_memory.hpp" // get_available_memory_bytes() - check_memory_pressure()
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+#include "utils/redis_output.hpp"
+#endif
 #include <algorithm>
 #include <fstream>
+#include <optional>
+#include <type_traits>
 
 namespace dr_evt {
 
@@ -95,6 +100,8 @@ BasicTrace<Policy>::BasicTrace(const std::string &fname,
   }
 }
 
+template <typename Policy> BasicTrace<Policy>::~BasicTrace() = default;
+
 template <typename Policy>
 void BasicTrace<Policy>::resolve_job_store_capacity(num_jobs_t hint) {
   if (m_job_store_capacity_resolved) {
@@ -123,7 +130,8 @@ int BasicTrace<Policy>::load_data(num_jobs_t n_lines_to_read) {
   // m_job_store_overflow's abort/grow fallback applies here exactly
   // as it would mid-run.
   std::vector<trace_record_t<Policy>> loaded;
-  int rc = Policy::load_records(m_fname, m_dcols, loaded, n_lines_to_read);
+  int rc = Policy::load_records(m_fname, m_dcols, loaded, n_lines_to_read,
+                                m_admission_limits);
 
 #if LIMIT_VS_EXEC_TIME_ONLY
   print_limit_vs_exec_time(m_dcols.get_cols_to_read(), loaded);
@@ -330,7 +338,8 @@ job_no_t BasicTrace<Policy>::append_job(sim_time_t current_time,
                                         const epoch_t &submit_time,
                                         num_nodes_t num_nodes,
                                         job_queue_t queue,
-                                        timeout_t limit_time) {
+                                        timeout_t limit_time,
+                                        std::optional<tdiff_t> actual_run_time) {
   // In case this is called before load_data() ever runs (genuine
   // streaming, no batch preload at all) - resolve_job_store_capacity()
   // is idempotent (guarded by m_job_store_capacity_resolved), so this
@@ -355,6 +364,8 @@ job_no_t BasicTrace<Policy>::append_job(sim_time_t current_time,
 
   m_data.push_back(
       Policy::make_record(submit_time, num_nodes, queue, limit_time));
+  if (actual_run_time)
+    m_data.back().set_actual_run_time(*actual_run_time);
   return static_cast<job_no_t>(m_num_reclaimed + m_data.size() - 1);
 }
 
@@ -497,6 +508,8 @@ std::vector<job_no_t> BasicTrace<Policy>::append_jobs(
   for (const auto &req : requests) {
     m_data.push_back(Policy::make_record(req.submit_time, req.num_nodes,
                                          req.queue, req.limit_time));
+    if (req.actual_run_time)
+      m_data.back().set_actual_run_time(*req.actual_run_time);
     job_nos.push_back(
         static_cast<job_no_t>(m_num_reclaimed + m_data.size() - 1));
   }
@@ -508,7 +521,8 @@ std::vector<job_no_t>
 BasicTrace<Policy>::load_next_file(sim_time_t current_time,
                                    const std::string &fname) {
   std::vector<trace_record_t<Policy>> loaded;
-  int rc = Policy::load_records(fname, m_dcols, loaded, 0);
+  int rc = Policy::load_records(fname, m_dcols, loaded, 0,
+                                m_admission_limits);
   if (rc != EXIT_SUCCESS) {
     throw std::runtime_error("Trace::load_next_file(): failed to load '" +
                              fname + "'");
@@ -675,13 +689,13 @@ template <typename Policy> bool BasicTrace<Policy>::process_single_event() {
   const bool timestamp_drained =
       m_ctx.m_evtq.empty() ||
       event.get_time() < m_ctx.m_evtq.begin()->get_time();
-  if (is_departure && m_simulated_trace_ofs.is_open()) {
+  if (is_departure && simulated_trace_output_active()) {
     const size_t interval = effective_job_flush_interval();
     if (m_departures_since_job_flush < interval) {
       ++m_departures_since_job_flush;
     }
   }
-  if (m_simulated_trace_ofs.is_open() && timestamp_drained &&
+  if (simulated_trace_output_active() && timestamp_drained &&
       m_departures_since_job_flush >= effective_job_flush_interval()) {
     flush_completed_jobs_impl(convert_epoch<sim_time_t>(event.get_time()),
                               /*sync=*/false);
@@ -702,26 +716,32 @@ void BasicTrace<Policy>::start_resource_trace(const std::string &filename,
     m_resource_trace_current_capacity = total_nodes;
     m_resource_capacity_initialized = true;
   }
-  if (filename.empty()) {
-    return;
-  }
-  if (m_resource_trace_ofs.is_open()) {
-    // Already started - e.g. Simulation::run() started it for real
-    // with a real filename, and run_job_trace()'s own internal call
-    // (with empty defaults, in Simulation's replay-mode branch) must
-    // not clobber that. Ignore this call rather than reopening.
-    return;
-  }
-  m_resource_trace_ofs.open(filename);
-  if (!m_resource_trace_ofs) {
-    std::cerr << "Failed to open resource trace file: " << filename
-              << std::endl;
-    return;
-  }
   std::string header = "time,free_nodes,allocated_nodes";
   header += Policy::resource_columns();
   header += "\n";
-  m_resource_trace_ofs << header;
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+  if (m_redis_output) {
+    if (m_redis_output->resource_trace_active()) {
+      return;
+    }
+    m_redis_output->start_resource_trace(header, msec);
+  } else
+#endif
+  {
+    if (filename.empty()) {
+      return;
+    }
+    if (m_resource_trace_ofs.is_open()) {
+      return;
+    }
+    m_resource_trace_ofs.open(filename);
+    if (!m_resource_trace_ofs) {
+      std::cerr << "Failed to open resource trace file: " << filename
+                << std::endl;
+      return;
+    }
+    m_resource_trace_ofs << header;
+  }
 
   // Baseline row. For a traditional run this remains time 0 with no
   // allocation. A warm run resets m_resource_recording_start at its boundary
@@ -739,12 +759,33 @@ void BasicTrace<Policy>::start_resource_trace(const std::string &filename,
   const auto capacity = baseline_sample.capacity;
   const sim_time_t baseline_output_time =
       convert_epoch<sim_time_t>(baseline_sample.time);
-  std::string baseline =
-      format_sim_time(baseline_output_time, msec) + "," +
-      std::to_string(allocated < capacity ? capacity - allocated : 0) + "," +
-      std::to_string(allocated) + Policy::resource_values(baseline_sample) +
-      "\n";
-  m_resource_trace_ofs << baseline;
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+  if (m_redis_output && m_redis_output->resource_trace_active()) {
+    const auto *first = &baseline_sample;
+    m_redis_output->append_resource_trace(
+        first, first + 1, [](const resource_sample_t &sample) {
+          RedisResourceRecord record{convert_epoch<sim_time_t>(sample.time),
+                                     sample.allocated < sample.capacity
+                                         ? sample.capacity - sample.allocated
+                                         : 0,
+                                     sample.allocated, std::nullopt};
+          if constexpr (std::is_same_v<resource_sample_t,
+                                       Pcon_Resource_Sample>) {
+            record.pcon = RedisPconValues{
+                sample.pcon.avgpcon, sample.pcon.minpcon, sample.pcon.maxpcon};
+          }
+          return record;
+        });
+  } else
+#endif
+  {
+    const std::string baseline =
+        format_sim_time(baseline_output_time, msec) + "," +
+        std::to_string(allocated < capacity ? capacity - allocated : 0) + "," +
+        std::to_string(allocated) + Policy::resource_values(baseline_sample) +
+        "\n";
+    m_resource_trace_ofs << baseline;
+  }
   m_has_resource_recording_baseline = false;
 }
 
@@ -773,25 +814,51 @@ void BasicTrace<Policy>::resolve_resource_history_capacity() {
 }
 
 template <typename Policy> void BasicTrace<Policy>::flush_resource_history() {
-  if (!m_resource_trace_ofs.is_open() || m_ctx.m_resource_history.empty()) {
-    // No file open to receive these - discard. Bounded memory still
-    // applies either way; nobody asked for this output.
+  bool redis_resource_active = false;
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+  redis_resource_active =
+      m_redis_output && m_redis_output->resource_trace_active();
+#endif
+  if ((!m_resource_trace_ofs.is_open() && !redis_resource_active) ||
+      m_ctx.m_resource_history.empty()) {
+    // No output sink is active. Bounded memory still applies either way.
     m_ctx.m_resource_history.clear();
     return;
   }
+
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+  if (redis_resource_active) {
+    m_redis_output->append_resource_trace(
+        m_ctx.m_resource_history.cbegin(), m_ctx.m_resource_history.cend(),
+        [](const resource_sample_t &sample) {
+          RedisResourceRecord record{convert_epoch<sim_time_t>(sample.time),
+                                     sample.allocated < sample.capacity
+                                         ? sample.capacity - sample.allocated
+                                         : 0,
+                                     sample.allocated, std::nullopt};
+          if constexpr (std::is_same_v<resource_sample_t,
+                                       Pcon_Resource_Sample>) {
+            record.pcon = RedisPconValues{
+                sample.pcon.avgpcon, sample.pcon.minpcon, sample.pcon.maxpcon};
+          }
+          return record;
+        });
+    m_ctx.m_resource_history.clear();
+    return;
+  }
+#endif
 
   const size_t blk_sz = 65536ul;
   std::string buf;
   buf.reserve(blk_sz + 4096);
 
   for (const auto &sample : m_ctx.m_resource_history) {
-    buf += format_sim_time(convert_epoch<sim_time_t>(sample.time),
-                           m_resource_trace_msec) +
-           "," +
-           std::to_string(sample.allocated < sample.capacity
-                              ? sample.capacity - sample.allocated
-                              : 0) +
-           "," + std::to_string(sample.allocated) +
+    const sim_time_t sample_time = convert_epoch<sim_time_t>(sample.time);
+    const num_nodes_t free_nodes = sample.allocated < sample.capacity
+                                       ? sample.capacity - sample.allocated
+                                       : 0;
+    buf += format_sim_time(sample_time, m_resource_trace_msec) + "," +
+           std::to_string(free_nodes) + "," + std::to_string(sample.allocated) +
            Policy::resource_values(sample) + "\n";
     if (buf.size() >= blk_sz) {
       m_resource_trace_ofs << buf;
@@ -851,18 +918,42 @@ const Job_Record &BasicTrace<Policy>::job_at(job_no_t job_no) const {
 }
 
 template <typename Policy>
+std::optional<double>
+BasicTrace<Policy>::scheduler_power(job_no_t job_no) const {
+  // job_at() performs the permanent-ID bounds checks. The physical offset is
+  // then safe and retains the policy-specific record type (including Pcon).
+  (void)job_at(job_no);
+  const size_t idx = static_cast<size_t>(job_no - m_num_reclaimed);
+  return Policy::scheduler_power(m_data[idx]);
+}
+
+template <typename Policy>
+std::optional<double>
+BasicTrace<Policy>::scheduler_maximum_power(job_no_t job_no) const {
+  (void)job_at(job_no);
+  const size_t idx = static_cast<size_t>(job_no - m_num_reclaimed);
+  return Policy::scheduler_maximum_power(m_data[idx]);
+}
+
+template <typename Policy>
 bool BasicTrace<Policy>::is_front_reclaimable(sim_time_t current_time) const {
   if (m_data.empty()) {
     return false;
   }
-  const auto &job = m_data.front();
+  return is_job_reclaimable(m_num_reclaimed, m_data.front(), current_time);
+}
+
+template <typename Policy>
+bool BasicTrace<Policy>::is_job_reclaimable(job_no_t job_id,
+                                            const Job_Record &job,
+                                            sim_time_t current_time) const {
   // Rejected (submit_time == unscheduled_sentinel()): will never resolve, so
   // it can be skipped once a capacity/explicit-flush boundary reaches it.
   if (job.get_submit_time() == Job_Record::unscheduled_sentinel()) {
     return true;
   }
   if (m_dcols.get_trace_mode() == TraceMode::REPLAY &&
-      m_num_reclaimed >= m_replay_jobs_enqueued) {
+      job_id >= m_replay_jobs_enqueued) {
     return false;
   }
   // Do not rely solely on the caller's time: if an event at or before that
@@ -890,7 +981,7 @@ void BasicTrace<Policy>::maybe_flush_completed_jobs(
   // Periodic reclamation is meaningful only when the schedule-output consumer
   // is active. The standalone tracer intentionally retains its replay records
   // for print(), print_span(), and Job_Stat_Submit after run_job_trace().
-  if (!m_simulated_trace_ofs.is_open()) {
+  if (!simulated_trace_output_active()) {
     return;
   }
   const size_t interval = effective_job_flush_interval();
@@ -927,16 +1018,21 @@ void BasicTrace<Policy>::reclaim_front_jobs(sim_time_t current_time,
   if (m_data.capacity() >= m_data.size() + min_free) {
     return;
   }
+  size_t reclaim_count = 0;
+  auto reclaim_end = m_data.cbegin();
+  while (m_data.capacity() < m_data.size() - reclaim_count + min_free &&
+         reclaim_end != m_data.cend() &&
+         is_job_reclaimable(m_num_reclaimed + reclaim_count, *reclaim_end,
+                            current_time)) {
+    ++reclaim_count;
+    ++reclaim_end;
+  }
   const size_t reclaimed_before = m_num_reclaimed;
-  while (m_data.capacity() < m_data.size() + min_free &&
-         is_front_reclaimable(current_time)) {
-    if (m_next_job_to_write == m_num_reclaimed) {
-      write_job_line(m_data.front());
-      ++m_next_job_to_write;
-    } else if (m_next_job_to_write < m_num_reclaimed) {
-      throw std::logic_error(
-          "Trace: scheduled-job output cursor fell behind reclaimed records");
-    }
+  if (reclaim_count != 0) {
+    write_job_range(m_data.cbegin(), reclaim_end, m_num_reclaimed,
+                    current_time);
+  }
+  for (size_t i = 0; i < reclaim_count; ++i) {
     m_data.pop_front();
     ++m_num_reclaimed;
   }
@@ -990,7 +1086,8 @@ void BasicTrace<Policy>::write_job_line(const Job_Record &job) {
                                job.get_actual_run_time());
 
   if (!m_simulated_trace_ofs.is_open()) {
-    return; // nobody asked for the output file, but stats above still count
+    // The Redis range path invokes this after successful serialization.
+    return;
   }
   std::string line =
       format_sim_time(convert_epoch<sim_time_t>(job.get_submit_time()),
@@ -1016,6 +1113,89 @@ void BasicTrace<Policy>::write_job_line(const Job_Record &job) {
 }
 
 template <typename Policy>
+void BasicTrace<Policy>::write_job_range(
+    typename trace_data_t::const_iterator first,
+    typename trace_data_t::const_iterator last, job_no_t first_job_id,
+    sim_time_t completed_through) {
+  if (first_job_id > m_next_job_to_write) {
+    throw std::logic_error(
+        "Trace: scheduled-job output cursor has a missing record");
+  }
+  const size_t skip = static_cast<size_t>(m_next_job_to_write - first_job_id);
+  const size_t range_size = static_cast<size_t>(std::distance(first, last));
+  if (skip >= range_size) {
+    return;
+  }
+  std::advance(first, skip);
+  first_job_id += skip;
+
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+  if (m_redis_output) {
+    const size_t remaining_size =
+        static_cast<size_t>(std::distance(first, last));
+    m_redis_output->flush_job_range(
+        first, last, first_job_id,
+        [this, completed_through](job_no_t job_id, const Job_Record &job)
+            -> std::optional<RedisJobRecord> {
+          if (!job.is_scheduled() ||
+              convert_epoch<sim_time_t>(job.get_end_time()) >
+                  completed_through) {
+            return std::nullopt;
+          }
+          std::optional<job_queue_t> queue;
+#if DR_EVT_LEGACY_QUEUE_INPUT
+          if (m_dcols.has_queue_column()) {
+            queue = job.get_queue();
+          }
+#else
+          if (m_dcols.has_q_id_column()) {
+            queue = job.get_queue();
+          }
+#endif
+          return RedisJobRecord{
+              job_id,
+              convert_epoch<sim_time_t>(job.get_submit_time()),
+              convert_epoch<sim_time_t>(job.get_begin_time()),
+              convert_epoch<sim_time_t>(job.get_end_time()),
+              job.get_num_nodes(),
+              0,
+              queue,
+              job.get_limit_time()};
+        });
+    job_no_t job_id = first_job_id;
+    for (auto accounted = first; accounted != last; ++accounted, ++job_id) {
+      const Job_Record &job = *accounted;
+      if (job.is_scheduled() &&
+          convert_epoch<sim_time_t>(job.get_end_time()) <= completed_through) {
+        write_job_line(job);
+      }
+    }
+    m_next_job_to_write = first_job_id + remaining_size;
+    return;
+  }
+#endif
+
+  job_no_t job_id = first_job_id;
+  for (; first != last; ++first, ++job_id) {
+    const Job_Record &job = *first;
+    if (job.is_scheduled() &&
+        convert_epoch<sim_time_t>(job.get_end_time()) <= completed_through) {
+      write_job_line(job);
+    }
+  }
+  m_next_job_to_write = job_id;
+}
+
+template <typename Policy>
+bool BasicTrace<Policy>::simulated_trace_output_active() const {
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+  return m_simulated_trace_ofs.is_open() || m_redis_output != nullptr;
+#else
+  return m_simulated_trace_ofs.is_open();
+#endif
+}
+
+template <typename Policy>
 void BasicTrace<Policy>::flush_simulated_trace_buffer(bool sync) {
   if (m_simulated_trace_ofs.is_open() && !m_simulated_trace_buffer.empty()) {
     m_simulated_trace_ofs << m_simulated_trace_buffer;
@@ -1027,18 +1207,14 @@ void BasicTrace<Policy>::flush_simulated_trace_buffer(bool sync) {
 }
 
 template <typename Policy>
-void BasicTrace<Policy>::start_simulated_trace(const std::string &filename,
-                                               bool msec) {
-  if (filename.empty()) {
+void BasicTrace<Policy>::start_simulated_trace(
+    const std::string &filename, bool msec, const std::string &redis_uri,
+    const std::string &redis_key_prefix) {
+  if (filename.empty() && redis_uri.empty()) {
     return;
   }
-  if (m_simulated_trace_ofs.is_open()) {
+  if (simulated_trace_output_active()) {
     return; // already started - see start_resource_trace()'s own comment
-  }
-  m_simulated_trace_ofs.open(filename);
-  if (!m_simulated_trace_ofs) {
-    std::cerr << "Failed to open output file: " << filename << std::endl;
-    return;
   }
   m_simulated_trace_msec = msec;
   std::string header =
@@ -1053,37 +1229,41 @@ void BasicTrace<Policy>::start_simulated_trace(const std::string &filename,
   }
 #endif
   header += ",time_limit\n";
-  m_simulated_trace_ofs << header;
+
+  if (!redis_uri.empty()) {
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+    m_redis_output = std::make_unique<RedisOutput>(redis_uri, redis_key_prefix,
+                                                   header, msec);
+#else
+    throw std::runtime_error(
+        "Redis output requires a build configured with DR_EVT_WITH_REDIS");
+#endif
+  } else {
+    m_simulated_trace_ofs.open(filename);
+    if (!m_simulated_trace_ofs) {
+      std::cerr << "Failed to open output file: " << filename << std::endl;
+      return;
+    }
+    m_simulated_trace_ofs << header;
+  }
 }
 
 template <typename Policy>
 void BasicTrace<Policy>::write_simulated_trace(const std::string &filename,
                                                bool msec,
                                                sim_time_t completed_through) {
-  if (filename.empty()) {
+  if (filename.empty() && !simulated_trace_output_active()) {
     return;
   }
-  if (!m_simulated_trace_ofs.is_open()) {
+  if (!simulated_trace_output_active()) {
     // start_simulated_trace() was never called - open fresh here and
     // write m_data's current contents in one shot (the original,
     // pre-streaming behavior). Anything already reclaimed before this
     // call is already gone.
     start_simulated_trace(filename, msec);
   }
-  size_t job_no = m_num_reclaimed;
-  for (const auto &job : m_data) {
-    if (job_no == m_next_job_to_write) {
-      if (job.is_scheduled() &&
-          convert_epoch<sim_time_t>(job.get_end_time()) <= completed_through) {
-        write_job_line(job);
-      }
-      ++m_next_job_to_write;
-    } else if (job_no > m_next_job_to_write) {
-      throw std::logic_error(
-          "Trace: scheduled-job output cursor has a missing record");
-    }
-    ++job_no;
-  }
+  write_job_range(m_data.cbegin(), m_data.cend(), m_num_reclaimed,
+                  completed_through);
   flush_simulated_trace_buffer(true);
   m_simulated_trace_ofs.close();
 }
@@ -1097,14 +1277,19 @@ template <typename Policy>
 size_t BasicTrace<Policy>::flush_completed_jobs_impl(sim_time_t current_time,
                                                      bool sync) {
   const size_t reclaimed_before = m_num_reclaimed;
-  while (is_front_reclaimable(current_time)) {
-    if (m_next_job_to_write == m_num_reclaimed) {
-      write_job_line(m_data.front());
-      ++m_next_job_to_write;
-    } else if (m_next_job_to_write < m_num_reclaimed) {
-      throw std::logic_error(
-          "Trace: scheduled-job output cursor fell behind reclaimed records");
-    }
+  size_t reclaim_count = 0;
+  auto reclaim_end = m_data.cbegin();
+  while (reclaim_end != m_data.cend() &&
+         is_job_reclaimable(m_num_reclaimed + reclaim_count, *reclaim_end,
+                            current_time)) {
+    ++reclaim_count;
+    ++reclaim_end;
+  }
+  if (reclaim_count != 0) {
+    write_job_range(m_data.cbegin(), reclaim_end, m_num_reclaimed,
+                    current_time);
+  }
+  for (size_t i = 0; i < reclaim_count; ++i) {
     m_data.pop_front();
     ++m_num_reclaimed;
   }
@@ -1117,10 +1302,15 @@ template <typename Policy>
 void BasicTrace<Policy>::write_resource_trace(const std::string &filename,
                                               num_nodes_t total_nodes,
                                               bool msec) {
-  if (filename.empty()) {
+  bool redis_resource_active = false;
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+  redis_resource_active =
+      m_redis_output && m_redis_output->resource_trace_active();
+#endif
+  if (filename.empty() && !redis_resource_active) {
     return;
   }
-  if (!m_resource_trace_ofs.is_open()) {
+  if (!m_resource_trace_ofs.is_open() && !redis_resource_active) {
     // start_resource_trace() was never called (or was called with a
     // different/empty filename) - open fresh here. Note: anything
     // already reclaimed before this point (silently discarded, since no

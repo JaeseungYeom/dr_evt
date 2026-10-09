@@ -171,6 +171,8 @@ def test_sim_params(result):
         params.run_time_mode = dr_evt.RunTimeMode.LIMIT
         params.backfill_policy = dr_evt.BackfillPolicy.EASY
         params.num_max_candidates = 8
+        params.cap_backfill_power = True
+        params.cap_fcfs_power = True
         params.priority_policy = dr_evt.PriorityPolicy.FCFS
         params.verbose = False
 
@@ -207,13 +209,23 @@ def test_streaming_api(result):
         # Create simulation
         sim = dr_evt.Simulation(params)
         # append_job() is the public streaming entry point.
-        sim.append_job(0.0, 10, QUEUE_INPUT, 100)
+        first_id = sim.append_job(0.0, 10, QUEUE_INPUT, 100)
+        second_id = sim.append_job(50.0, 20, QUEUE_INPUT, 100)
+        pending = sim.get_job_statuses([second_id, first_id, second_id])
+        assert [item.job_idx for item in pending] == [second_id, first_id,
+                                                       second_id]
+        assert pending[0].state == dr_evt.JobState.PENDING
+        assert pending[0].expected_start_time == 50.0
+        assert pending[1].expected_start_time == 0.0
         sim.advance_to(0.0)
-        assert sim.get_nodes_in_use() == 10
-        result.record_pass("append_job and advance_to")
+        active = sim.get_job_statuses([first_id, second_id])
+        assert active[0].state == dr_evt.JobState.RUNNING
+        assert active[0].start_time == 0.0
+        assert active[0].end_time == 100.0
+        assert active[1].state == dr_evt.JobState.PENDING
+        result.record_pass("append_job, status query, and advance_to")
 
         # Test run_until_exclusive
-        sim.append_job(50.0, 20, QUEUE_INPUT, 100)
         sim.run_until_exclusive(50.0)
         # Job 1 must NOT have started yet - the event at exactly the
         # target time is excluded by run_until_exclusive.
@@ -305,7 +317,7 @@ def test_backfill_window_api(result):
         sim = dr_evt.Simulation(
             params,
             lambda job_id, _submit, _runtime, _nodes: job_id,
-            lambda candidates: candidates[0][0] if candidates else None,
+            lambda candidates: 0 if candidates else None,
         )
         for num_nodes, limit_time in [(40, 50), (60, 100), (100, 10)]:
             sim.append_job(0.0, num_nodes, QUEUE_INPUT, limit_time)
@@ -321,6 +333,20 @@ def test_backfill_window_api(result):
         # No running-job completion remains after the shadow event, so the
         # 1000 node-seconds are drained at U * total_nodes = 50 nodes.
         assert abs(sim.get_prediction_horizon(0.5) - 20.0) < 1e-12
+        # Once the waiting head starts, the snapshot continues to expose the
+        # projected releases of running work.
+        sim.advance_to(100.0)
+        full_window = sim.get_backfill_window()
+        assert full_window.shadow_time == -1.0
+        assert [(release.time, release.nodes_released)
+                for release in full_window.releases] == [(110.0, 100)]
+
+        standard = dr_evt.Simulation(params)
+        standard.append_job(0.0, 100, QUEUE_INPUT, 40.0)
+        standard.advance_to(0.0)
+        standard.append_job(0.0, 50, QUEUE_INPUT, 8.0)
+        standard.advance_to(0.0)
+        assert standard.get_prediction_horizon(0.5) == 8.0
         result.record_pass("Backfill window snapshot")
     except Exception as e:
         result.record_fail("Backfill window API", str(e))
@@ -354,8 +380,12 @@ def test_custom_backfill_api(result):
             return job_id
 
         def select_lowest_cost(candidates):
-            candidate_windows.append(candidates)
-            return min(candidates, key=lambda candidate: candidate[1])[0]
+            candidate_windows.append([
+                (candidate.queue_index, candidate.cost)
+                for candidate in candidates
+            ])
+            return min(range(len(candidates)),
+                       key=lambda index: candidates[index].cost)
 
         sim = dr_evt.Simulation(params, compute_cost, select_lowest_cost)
         for nodes, runtime in [(70, 100), (50, 200), (20, 50),
@@ -364,8 +394,7 @@ def test_custom_backfill_api(result):
         sim.advance_to(0.0)
 
         assert costed_jobs == [0, 1, 2, 3, 4]
-        assert candidate_windows[0] == [(2, 2), (3, 3)]
-        assert select_lowest_cost([(7, 4), (8, 2), (9, 2)]) == 8
+        assert candidate_windows[0] == [(1, 2), (2, 3)]
         result.record_pass("Custom cost and selection callbacks")
     except Exception as e:
         result.record_fail("Custom backfill API", str(e))
@@ -397,7 +426,7 @@ def test_statistics(result):
         sim = dr_evt.Simulation(
             params,
             lambda job_id, _submit, _runtime, _nodes: job_id,
-            lambda candidates: candidates[0][0] if candidates else None,
+            lambda candidates: 0 if candidates else None,
         )
         # Run complete simulation
         sim.advance_to(0.0)
@@ -564,6 +593,83 @@ def test_batch_mode(result):
         os.unlink(trace_file.name)
 
 
+def test_checkpoint_restart(result):
+    """Save and restore running, waiting, and future streaming work."""
+    print("\n10. Checkpoint/Restart")
+
+    trace_file = tempfile.NamedTemporaryFile(mode='w', suffix='.csv',
+                                             delete=False)
+    checkpoint_file = tempfile.NamedTemporaryFile(suffix='.ckpt', delete=False)
+    trace_file.close()
+    checkpoint_file.close()
+    try:
+        create_test_trace(trace_file.name, [])
+        params = dr_evt.SimParams()
+        params.infile = trace_file.name
+        params.total_nodes = 100
+        params.trace_format = "simple"
+        params.timestamp_format = "epoch"
+        params.run_time_mode = dr_evt.RunTimeMode.LIMIT
+
+        source = dr_evt.Simulation(params)
+        source.initialize_trace()
+        source.append_job(0.0, 100, QUEUE_INPUT, 50.0)
+        source.append_job(0.0, 50, QUEUE_INPUT, 10.0)
+        source.append_job(25.0, 25, QUEUE_INPUT, 5.0)
+        source.advance_to(20.0)
+        source.save_checkpoint(checkpoint_file.name)
+
+        resumed = dr_evt.Simulation(params)
+        resumed.load_checkpoint(checkpoint_file.name)
+        restored = resumed.get_statistics()
+        assert restored.current_time == 20.0
+        assert restored.jobs_running == 1
+        assert restored.jobs_waiting == 1
+
+        source.advance_to(float("inf"))
+        resumed.advance_to(float("inf"))
+        expected = source.get_statistics()
+        actual = resumed.get_statistics()
+        assert actual.jobs_submitted == expected.jobs_submitted
+        assert actual.jobs_completed == expected.jobs_completed
+        assert actual.current_time == expected.current_time
+        assert actual.avg_wait_time == expected.avg_wait_time
+
+        params.backfill_policy = dr_evt.BackfillPolicy.EASY
+        params.num_max_candidates = 4
+        costed_jobs = []
+
+        def compute_cost(job_id, _submit_time, _runtime, _nodes):
+            costed_jobs.append(job_id)
+            return job_id
+
+        def select_last(candidates):
+            return candidates[-1][0] if candidates else None
+
+        custom_source = dr_evt.Simulation(params, compute_cost, select_last)
+        custom_source.initialize_trace()
+        custom_source.append_job(0.0, 100, QUEUE_INPUT, 50.0)
+        custom_source.append_job(0.0, 50, QUEUE_INPUT, 10.0)
+        custom_source.append_job(25.0, 25, QUEUE_INPUT, 5.0)
+        custom_source.advance_to(20.0)
+        custom_source.save_checkpoint(checkpoint_file.name)
+
+        custom_resumed = dr_evt.Simulation(params, compute_cost, select_last)
+        calls_before_load = len(costed_jobs)
+        custom_resumed.load_checkpoint(checkpoint_file.name)
+        assert len(costed_jobs) == calls_before_load
+        custom_source.advance_to(float("inf"))
+        custom_resumed.advance_to(float("inf"))
+        assert (custom_resumed.get_statistics().avg_wait_time ==
+                custom_source.get_statistics().avg_wait_time)
+        result.record_pass("Ser20 checkpoint/restart")
+    except Exception as e:
+        result.record_fail("Checkpoint/restart", str(e))
+    finally:
+        os.unlink(trace_file.name)
+        os.unlink(checkpoint_file.name)
+
+
 def test_warm_start_batch_mode(result):
     """Python run() exposes replay-based warm-start classification/accounting."""
     print("\n10. Warm-start Batch Mode")
@@ -598,7 +704,9 @@ def test_warm_start_batch_mode(result):
         assert abs(stats.resource_area - 51.0) < 1e-12
         assert abs(stats.utilization - 0.85) < 1e-12
         assert abs(stats.avg_wait_time - 1.5) < 1e-12
+        assert abs(stats.avg_run_time - 3.0) < 1e-12
         assert abs(stats.avg_turnaround_time - 4.5) < 1e-12
+        assert abs(stats.avg_bounded_slowdown - 1.0) < 1e-12
         assert abs(stats.makespan - 16.0) < 1e-12
         result.record_pass("Native replay warm start")
     except Exception as e:
@@ -627,6 +735,8 @@ def main():
     test_backfill_policies(result)
     test_priority_policies(result)
     test_batch_mode(result)
+    if hasattr(dr_evt.Simulation, "save_checkpoint"):
+        test_checkpoint_restart(result)
     test_warm_start_batch_mode(result)
 
     # Print summary and exit

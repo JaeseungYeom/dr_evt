@@ -69,6 +69,8 @@ templates_path = ['_templates']
 # List of patterns to ignore
 exclude_patterns = [
     '_build',
+    'venv',
+    'venv/**',
     '_static/README.md',
     'Thumbs.db',
     '.DS_Store',

@@ -58,12 +58,28 @@ PYBIND11_MODULE(dr_evt, m) {
       .value("LJF", PriorityPolicy::LJF)
       .export_values();
 
+  py::enum_<Simulation::Job_State>(m, "JobState",
+                                   "Lifecycle state of an appended job.")
+      .value("PENDING", Simulation::Job_State::PENDING)
+      .value("RUNNING", Simulation::Job_State::RUNNING)
+      .value("COMPLETED", Simulation::Job_State::COMPLETED)
+      .value("REJECTED", Simulation::Job_State::REJECTED);
+
   // Mutable configuration populated before constructing Simulation.
   py::class_<Sim_Params>(m, "SimParams")
       .def(py::init<>(), "Creates a configuration with DR_EVT default values.")
       .def_readwrite("infile", &Sim_Params::m_infile,
                      "str: Path to the input trace used by batch mode and "
                      "initialize_trace().")
+      .def_readwrite("redis_uri", &Sim_Params::m_redis_uri,
+                     "str: Redis connection URI; empty selects file output.")
+      .def_readwrite("redis_key_prefix", &Sim_Params::m_redis_key_prefix,
+                     "str: Redis namespace for output and search indexes.")
+      .def_readwrite("checkpoint_file", &Sim_Params::m_checkpoint_file,
+                     "str: Automatic binary checkpoint destination.")
+      .def_readwrite("checkpoint_interval_jobs",
+                     &Sim_Params::m_checkpoint_interval_jobs,
+                     "int: Completed-job cadence for automatic checkpoints.")
       .def_readwrite("total_nodes", &Sim_Params::m_total_nodes,
                      "int: Total scheduler-managed compute nodes.")
       .def_readwrite("capacity_schedule", &Sim_Params::m_capacity_schedule,
@@ -83,6 +99,10 @@ PYBIND11_MODULE(dr_evt, m) {
       .def_readwrite("num_max_candidates", &Sim_Params::m_num_max_candidates,
                      "int: Maximum feasible jobs offered to the experimental "
                      "backfill selector.")
+      .def_readwrite("cap_backfill_power", &Sim_Params::m_cap_backfill_power,
+                     "bool: Enable the EASYPower hard backfill power cap.")
+      .def_readwrite("cap_fcfs_power", &Sim_Params::m_cap_fcfs_power,
+                     "bool: Enable the EASYPower hard FCFS power cap.")
       .def_readwrite("priority_policy", &Sim_Params::m_priority_policy,
                      "PriorityPolicy: Waiting-job ordering policy.")
       .def_readwrite("verbose", &Sim_Params::m_verbose,
@@ -91,15 +111,18 @@ PYBIND11_MODULE(dr_evt, m) {
   // One value passed to Simulation.append_jobs().
   py::class_<Simulation::Job_Append_Request>(m, "JobAppendRequest")
       .def(py::init([](sim_time_t submit_time, num_nodes_t num_nodes,
-                       const std::string &queue, tdiff_t limit_time) {
+                       const std::string &queue, tdiff_t limit_time,
+                       std::optional<tdiff_t> actual_run_time) {
              return Simulation::Job_Append_Request{submit_time, num_nodes,
-                                                   queue, limit_time};
+                                                   queue, limit_time,
+                                                   actual_run_time};
            }),
            py::arg("submit_time"), py::arg("num_nodes"), py::arg("queue"),
-           py::arg("limit_time"),
+           py::arg("limit_time"), py::arg("actual_run_time") = py::none(),
            "Create one batch job request. submit_time is a float, num_nodes is "
            "an int, "
-           "queue is a str, and limit_time is a float.")
+           "queue is a str, limit_time is a float, and actual_run_time is an "
+           "optional float.")
       .def_readwrite("submit_time",
                      &Simulation::Job_Append_Request::submit_time,
                      "float: Arrival time, not earlier than the simulation's "
@@ -109,7 +132,10 @@ PYBIND11_MODULE(dr_evt, m) {
       .def_readwrite("queue", &Simulation::Job_Append_Request::queue,
                      "str: Numeric queue ID, or a name in legacy-input builds.")
       .def_readwrite("limit_time", &Simulation::Job_Append_Request::limit_time,
-                     "float: Requested wall-time limit.");
+                     "float: Requested wall-time limit.")
+      .def_readwrite("actual_run_time",
+                     &Simulation::Job_Append_Request::actual_run_time,
+                     "Optional[float]: Known execution time.");
 
   // Statistics structure
   py::class_<Simulation::Statistics>(m, "Statistics")
@@ -137,9 +163,14 @@ PYBIND11_MODULE(dr_evt, m) {
                     "post-hoc schedule utilization otherwise.")
       .def_readonly("avg_wait_time", &Simulation::Statistics::avg_wait_time,
                     "float: Mean completed-job wait time.")
+      .def_readonly("avg_run_time", &Simulation::Statistics::avg_run_time,
+                    "float: Mean completed-job execution time.")
       .def_readonly("avg_turnaround_time",
                     &Simulation::Statistics::avg_turnaround_time,
                     "float: Mean completed-job turnaround time.")
+      .def_readonly("avg_bounded_slowdown",
+                    &Simulation::Statistics::avg_bounded_slowdown,
+                    "float: Mean bounded slowdown using a 10-second bound.")
       .def_readonly("makespan", &Simulation::Statistics::makespan,
                     "float: Time from first submission to final completion.")
       .def("__repr__", [](const Simulation::Statistics &s) {
@@ -173,6 +204,26 @@ PYBIND11_MODULE(dr_evt, m) {
                     "list[ResourceRelease]: Future resource-release events in "
                     "time order.");
 
+  py::class_<Simulation::Job_Status>(m, "JobStatus")
+      .def_readonly("job_idx", &Simulation::Job_Status::job_idx,
+                    "int: Stable identifier returned by append_job(s).")
+      .def_readonly("state", &Simulation::Job_Status::state,
+                    "JobState: Current lifecycle state.")
+      .def_readonly("start_time", &Simulation::Job_Status::start_time,
+                    "Optional[float]: Scheduled start time.")
+      .def_readonly("end_time", &Simulation::Job_Status::end_time,
+                    "Optional[float]: Scheduled completion time.")
+      .def_readonly("expected_start_time",
+                    &Simulation::Job_Status::expected_start_time,
+                    "Optional[float]: Current projection while pending.");
+
+  py::class_<BackfillCandidate>(m, "BackfillCandidate")
+      .def_readonly("queue_index", &BackfillCandidate::queue_index,
+                    "int: Ephemeral index of this job in the wait queue.")
+      .def_readonly("cost", &BackfillCandidate::cost,
+                    "float: Scheduler scalar computed when the job entered "
+                    "the queue.");
+
   // Main Simulation class
   py::class_<Simulation>(m, "Simulation")
       .def(py::init<const Sim_Params &>(), py::arg("params"),
@@ -182,8 +233,8 @@ PYBIND11_MODULE(dr_evt, m) {
            py::arg("params"), py::arg("job_cost_function"),
            py::arg("backfill_selector"),
            "Create an experimental circular-buffer simulation. One callback "
-           "computes each job's cost at insertion; the other selects one "
-           "feasible (job_id, cost) backfill candidate.")
+           "computes each job's cost at insertion; the other returns the "
+           "position of one feasible BackfillCandidate.")
 
       // Batch mode
       .def("run", &Simulation::run,
@@ -192,6 +243,7 @@ PYBIND11_MODULE(dr_evt, m) {
       // Streaming API - New jobs are appended and enqueued atomically.
       .def("append_job", &Simulation::append_job, py::arg("submit_time"),
            py::arg("num_nodes"), py::arg("queue"), py::arg("limit_time"),
+           py::arg("actual_run_time") = py::none(),
            "Append and enqueue one new job.\n\n"
            "Args:\n"
            "    submit_time (float): Arrival time, not earlier than current "
@@ -200,6 +252,7 @@ PYBIND11_MODULE(dr_evt, m) {
            "    queue (str): Numeric queue ID, or a name in legacy-input "
            "builds.\n"
            "    limit_time (float): Requested wall-time limit.\n"
+           "    actual_run_time (Optional[float]): Known execution time.\n"
            "Returns:\n"
            "    int: Identifier of the appended trace job.")
 
@@ -217,6 +270,12 @@ PYBIND11_MODULE(dr_evt, m) {
            "batch; "
            "no request is appended.")
 
+      .def("get_job_statuses", &Simulation::get_job_statuses,
+           py::arg("job_idxs"),
+           "Return status snapshots for appended job IDs in request order. "
+           "Pending jobs have expected_start_time; scheduled jobs have "
+           "start_time and end_time.")
+
       // Streaming API - Time advancement
       .def("run_until_exclusive", &Simulation::run_until_exclusive,
            py::arg("target_time"),
@@ -228,6 +287,24 @@ PYBIND11_MODULE(dr_evt, m) {
            "Advance through events at or before target_time.\n\n"
            "Args:\n    target_time (float): Inclusive time bound.\n"
            "Returns:\n    None")
+
+#if defined(DR_EVT_HAS_SER20)
+      .def(
+          "save_checkpoint",
+          [](Simulation &simulation, const std::string &filename) {
+            simulation.save_checkpoint(filename);
+          },
+          py::arg("filename"),
+          "Save the complete simulation state to a binary checkpoint file.")
+
+      .def(
+          "load_checkpoint",
+          [](Simulation &simulation, const std::string &filename) {
+            simulation.load_checkpoint(filename);
+          },
+          py::arg("filename"),
+          "Replace current state from a compatible checkpoint file.")
+#endif
 
       // Monitoring - Basic state
       .def("get_current_time", &Simulation::get_current_time,
@@ -256,13 +333,13 @@ PYBIND11_MODULE(dr_evt, m) {
 
       .def("get_backfill_window", &Simulation::get_backfill_window,
            "Return a BackfillWindow snapshot for evaluating a backfill "
-           "candidate.")
+           "candidate, including all running-job releases.")
 
       .def("get_prediction_horizon", &Simulation::get_prediction_horizon,
            py::arg("utilization"),
-           "Estimate the Custom-FCFS waiting-queue drain time from the FCFS "
-           "shadow time. Requires EASY backfilling; future arrivals are "
-           "excluded.")
+           "Estimate the waiting-queue drain time from the FCFS shadow time. "
+           "Computed on demand for supported EASY schedulers; future arrivals "
+           "are excluded.")
 
       // Monitoring - Comprehensive statistics
       .def("get_statistics", &Simulation::get_statistics,

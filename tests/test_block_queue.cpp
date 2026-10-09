@@ -10,6 +10,7 @@
 #include "sim/block_wait_queue.hpp"
 #include <cassert>
 #include <iostream>
+#include <stdexcept>
 
 template <size_t BlockSize> void run_tests_impl() {
   std::cout << "\n=== BlockWaitQueue Tests (block_size=" << BlockSize
@@ -130,6 +131,39 @@ template <size_t BlockSize> void run_tests_impl() {
   assert(large_queue.active_count() == BlockSize);
   std::cout << "✓ Cross-block find-and-remove works, active count: "
             << large_queue.active_count() << std::endl;
+
+  // Test 10: A drained block must not be reused for the next ID range.
+  // Progressive loading interleaves removals and insertions, unlike a
+  // full-file run that inserts every job before scheduling starts.
+  dr_evt::BlockWaitQueue<BlockSize> progressive_queue;
+  for (size_t i = 0; i < BlockSize; ++i) {
+    progressive_queue.insert_job(i, 0.0, 10.0, 1);
+  }
+  for (size_t i = 0; i < BlockSize; ++i) {
+    progressive_queue.remove(i);
+  }
+  progressive_queue.insert_job(BlockSize, 1.0, 20.0, 2);
+  double progressive_run_time = 0.0;
+  dr_evt::num_nodes_t progressive_nodes = 0;
+  assert(progressive_queue.get_job_info(BlockSize, progressive_run_time,
+                                        progressive_nodes));
+  assert(progressive_run_time == 20.0);
+  assert(progressive_nodes == 2);
+  progressive_queue.remove(BlockSize);
+  assert(progressive_queue.empty());
+  std::cout << "✓ Drained blocks are not reused by later job-ID ranges"
+            << std::endl;
+
+  // Test 11: Lookup relies on permanent, increasing ID ranges. Reject an ID
+  // that would move insertion backward even after its old block was drained.
+  bool rejected_out_of_order = false;
+  try {
+    progressive_queue.insert_job(BlockSize - 1, 2.0, 30.0, 3);
+  } catch (const std::invalid_argument &) {
+    rejected_out_of_order = true;
+  }
+  assert(rejected_out_of_order);
+  std::cout << "✓ Out-of-order job IDs are rejected" << std::endl;
 
   std::cout << "✓ All tests passed for block_size=" << BlockSize << std::endl;
 }

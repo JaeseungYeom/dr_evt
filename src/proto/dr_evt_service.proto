@@ -46,6 +46,10 @@ message ClientMessage {
         GetBackfillWindowRequest get_backfill_window = 16;
         GetCurrentUtilizationRequest get_current_utilization = 17;
         RunRequest run = 18;
+        GetPredictionHorizonRequest get_prediction_horizon = 19;
+        SaveCheckpointRequest save_checkpoint = 20;
+        LoadCheckpointRequest load_checkpoint = 21;
+        GetJobStatusesRequest get_job_statuses = 22;
     }
 }
 
@@ -53,6 +57,7 @@ message ClientMessage {
 // from a flat Sim_Params-equivalent config (same fields as the existing
 // protobuf --config schema). Must be sent before any other request.
 message InitRequest {
+    // System node limit; larger file-loaded jobs are dropped before storage.
     uint32 total_nodes = 1;
     string trace_format = 2;       // "simple" or "lassen" (default: "simple")
     string timestamp_format = 3;   // retained "epoch"/"iso" compatibility value
@@ -90,6 +95,15 @@ message InitRequest {
     // Global simulation start time. A positive value selects native replay
     // warm-start execution for RunRequest; zero preserves ordinary execution.
     double sim_start_time = 15;
+
+    // When set together, job and resource-history output is written to Redis.
+    string redis_uri = 16;
+    string redis_key_prefix = 17;
+    uint64 job_flush_interval = 18; // 0 follows job-store capacity
+
+    // Optional hard EASYPower admission controls (default: false).
+    bool cap_backfill_power = 19;
+    bool cap_fcfs_power = 20;
 }
 
 // Runs the configured input trace to completion. Unlike AdvanceToRequest,
@@ -113,7 +127,8 @@ message AppendJobRequest {
     // Numeric queue ID by default (e.g. "1" for Queue1), or a legacy queue
     // name (e.g. "pbatch") when DR_EVT_LEGACY_QUEUE_INPUT is enabled.
     string queue = 3;
-    double limit_time = 4;  // user-estimated time limit, in seconds
+    double limit_time = 4;  // positive whole-second time limit
+    optional double actual_run_time = 5; // known execution time, if available
 }
 
 // One job's data within an AppendJobsRequest - same fields as
@@ -123,7 +138,8 @@ message JobAppendData {
     uint32 num_nodes = 2;
     // Uses the same compile-time queue representation as AppendJobRequest.
     string queue = 3;
-    double limit_time = 4;
+    double limit_time = 4;  // positive whole-second time limit
+    optional double actual_run_time = 5;
 }
 
 // The batch counterpart to AppendJobRequest: several genuinely new jobs
@@ -160,8 +176,19 @@ message GetBackfillWindowRequest {}
 // Instantaneous nodes-in-use / total-nodes ratio. This is distinct from the
 // resource-area-based utilization in GetStatisticsResponse.
 message GetCurrentUtilizationRequest {}
+// Estimate how long the currently waiting resource-time demand takes to drain
+// after the FCFS-head shadow time. Computed only when queried.
+message GetPredictionHorizonRequest {
+    double utilization = 1;
+}
 message GetStatisticsRequest {}
 message GetTraceSizeRequest {}
+// Returns a binary, same-build simulation checkpoint in the response.
+message SaveCheckpointRequest {}
+// Replaces the current session state from SaveCheckpointResponse.checkpoint.
+message LoadCheckpointRequest {
+    bytes checkpoint = 1;
+}
 
 // ---- Server -> Client ----
 
@@ -188,6 +215,10 @@ message ServerMessage {
         GetBackfillWindowResponse get_backfill_window = 17;
         GetCurrentUtilizationResponse get_current_utilization = 18;
         RunResponse run = 19;
+        GetPredictionHorizonResponse get_prediction_horizon = 20;
+        SaveCheckpointResponse save_checkpoint = 21;
+        LoadCheckpointResponse load_checkpoint = 22;
+        GetJobStatusesResponse get_job_statuses = 23;
     }
 }
 
@@ -203,9 +234,17 @@ message InitResponse {
     bool ok = 1;
     string session_id = 2;
     string simulated_trace_file = 3;
+    // Empty with Redis output; use <redis_key_prefix>:resources:csv instead.
     string resource_trace_file = 4;
     string statistics_file = 5;
+    string redis_key_prefix = 6;
 }
+
+message SaveCheckpointResponse {
+    bytes checkpoint = 1;
+}
+
+message LoadCheckpointResponse {}
 
 message InitializeTraceResponse {
     uint64 num_jobs_loaded = 1;
@@ -219,6 +258,42 @@ message AppendJobsResponse {
     // Each new job's job_idx, in the same order as the request's requests
     // field. All returned jobs have already been enqueued for scheduling.
     repeated uint32 job_idx = 1;
+}
+
+// Queries jobs previously created by AppendJob or AppendJobs. Results use the
+// same order as job_idx, including duplicates. An unknown ID fails the whole
+// request with ErrorResponse.
+message GetJobStatusesRequest {
+    repeated uint32 job_idx = 1;
+}
+
+enum JobState {
+    JOB_STATE_UNSPECIFIED = 0;
+    JOB_STATE_PENDING = 1;
+    JOB_STATE_RUNNING = 2;
+    JOB_STATE_COMPLETED = 3;
+    JOB_STATE_REJECTED = 4;
+}
+
+message ScheduledJobTimes {
+    double start_time = 1;
+    double end_time = 2;
+}
+
+message JobStatus {
+    uint32 job_idx = 1;
+    JobState state = 2;
+    oneof timing {
+        // Present once the scheduler has started the job. end_time is the
+        // simulated completion time and may still be in the future.
+        ScheduledJobTimes scheduled = 3;
+        // Present while pending when a capacity projection is available.
+        double expected_start_time = 4;
+    }
+}
+
+message GetJobStatusesResponse {
+    repeated JobStatus jobs = 1;
 }
 
 message AdvanceToResponse {}
@@ -243,6 +318,10 @@ message GetCurrentUtilizationResponse {
     double utilization = 1;
 }
 
+message GetPredictionHorizonResponse {
+    double horizon = 1;
+}
+
 message GetActiveJobCountResponse {
     uint64 active_job_count = 1;
 }
@@ -264,8 +343,8 @@ message GetBackfillWindowResponse {
     uint32 available_nodes = 2;
     // Earliest start of the FCFS queue head, or -1 when there is no head.
     double shadow_time = 3;
-    // Ordered release events in (current_time, shadow_time]. Empty when
-    // there is no FCFS head or it can start immediately.
+    // Ordered release events for all running jobs. May be nonempty when there
+    // is no FCFS head.
     repeated ResourceRelease releases = 4;
 }
 
@@ -285,6 +364,9 @@ message GetStatisticsResponse {
     // Scheduled-job resource area for the server's standard scheduler, in
     // node-seconds.
     double resource_area = 13;
+    double avg_run_time = 14;
+    // Mean max(1, turnaround / max(run_time, 10 seconds)).
+    double avg_bounded_slowdown = 15;
 }
 
 message GetTraceSizeResponse {
@@ -295,6 +377,8 @@ message FinishSimulationResponse {
     GetStatisticsResponse statistics = 1;
     string session_id = 2;
     string simulated_trace_file = 3;
+    // Empty with Redis output; use <redis_key_prefix>:resources:csv instead.
     string resource_trace_file = 4;
     string statistics_file = 5;
+    string redis_key_prefix = 6;
 }

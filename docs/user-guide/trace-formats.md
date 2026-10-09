@@ -89,22 +89,29 @@ determines simulation vs replay mode (see below).
 
 | Name | Description | Required for |
 |------|-------------|--------------|
-| `job_submit_time` | When the job arrives/submits | Both modes |
+| `job_submit_time` | When the job arrives/submits. Accepted alias: `submit_time` | Both modes |
 | `num_nodes` | Number of nodes requested | Both modes |
 | `q_id` | Optional one-based queue ID. If absent, the job uses `1` (`Queue1`). | Both modes |
-| `time_limit` | User-provided time limit (seconds). Accepted column-name aliases: `time_limit`, `timelimit`, `walltime` | Both modes |
+| `time_limit` | Positive whole-number time limit (seconds); fractional values are rejected. Accepted column-name aliases: `time_limit`, `timelimit`, `walltime` | Both modes |
 | `begin_time` | Historical start time of this individual job; distinct from the global `--sim_start_time` boundary | Replay mode only; must appear together with `end_time` |
 | `end_time` | Historical end time from trace | Replay mode only; must appear together with `begin_time` |
-| `duration` | Accepted alias for `actual_run_time`; in replay mode it is only checked against `end_time - begin_time` and does not control execution | Required for simulation `--run_time_mode actual` unless another runtime alias is present; optional in replay mode |
 | `avgpcon` | Average power usage associated with the job | Required only with `--trace_type pcon`; ignored in standard mode |
 | `minpcon` | Minimum power usage associated with the job | Required only with `--trace_type pcon`; ignored in standard mode |
 | `maxpcon` | Maximum power usage associated with the job | Required only with `--trace_type pcon`; ignored in standard mode |
 | `exit_status` | Output-only compatibility field. The simulator currently writes `0`. | Generated output only |
-| `actual_run_time` | The job's real, historical run time in seconds. It determines execution only for simulation `--run_time_mode actual`; in replay mode, `begin_time` and `end_time` determine execution and this field is only checked for consistency. Accepted aliases: `actual_runtime`, `duration`, `actual_duration`, `run_time` | Required for simulation `--run_time_mode actual`; optional in replay mode |
+| `actual_run_time` | The job's real, historical run time in seconds. It determines execution only for simulation `--run_time_mode actual`; in replay mode, `begin_time` and `end_time` determine execution and this field is only checked for consistency. Accepted column names: `actual_run_time`, `actual_runtime`, `duration`, `actual_duration`, `run_time` | Required for simulation `--run_time_mode actual`; optional in replay mode |
 
-`time_limit` and `actual_run_time` accept the aliases listed above. If multiple
-aliases for one field are present, the first listed match is used. Lassen
-input uses fixed column positions instead of header names.
+The complete simple-format alias sets are:
+
+| Logical field | Accepted column names, in precedence order |
+|---|---|
+| Submission time | `job_submit_time`, `submit_time` |
+| Time limit | `time_limit`, `timelimit`, `walltime` |
+| Actual run time | `actual_run_time`, `actual_runtime`, `duration`, `actual_duration`, `run_time` |
+
+If multiple aliases for one logical field are present, the first listed match
+is used. These aliases apply to simple-format simulation and replay input.
+Lassen input uses fixed column positions instead of header names.
 
 A supplied `actual_run_time` must be finite. In simulation input it must not
 exceed `time_limit`. In replay input it must equal `end_time - begin_time`

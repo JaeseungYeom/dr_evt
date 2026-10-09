@@ -13,6 +13,8 @@ set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
 
 cd "$REPO_ROOT"
 
@@ -27,7 +29,8 @@ PASS=0
 FAIL=0
 TRACE_DIR="tests/test_traces/progressive"
 TEST_WORK_DIR=$(mktemp -d "/tmp/dr-evt-progressive.XXXXXXXX")
-trap 'rm -rf -- "$TEST_WORK_DIR"' EXIT INT TERM
+cleanup() { rm -rf -- "$TEST_WORK_DIR"; }
+test_report_set_cleanup cleanup
 
 # --- Test 0: the C++-level test binary (test_progressive_load.cpp) -
 # constructs Sim_Params directly, so it covers correctness and memory
@@ -108,7 +111,34 @@ else
     FAIL=$((FAIL + 1))
 fi
 
-# --- Test 3: empty --infile_list file is rejected with a clear error,
+# --- Test 3: progressive loading with the block wait queue. This combination
+# previously reused a drained block for a later job-ID range, causing lookup of
+# the FCFS head to fail. Use the smallest block size so the three two-job input
+# batches cross a block boundary while earlier jobs are being removed.
+echo "Testing: infile_list_with_block_queue"
+
+OUT_BLOCK="$TEST_WORK_DIR/block.csv"
+
+block_ok=1
+if ! "$SIMULATOR" --infile_list "$TRACE_DIR/file_list.txt" \
+    --total_nodes 100 --trace_format simple --timestamp_format epoch \
+    --run_time_mode limit --job_store_capacity 2 --job_store_overflow grow \
+    --queue_impl block --block_size 4 \
+    --outfile "$OUT_BLOCK" > "$TEST_WORK_DIR/block.log" 2>&1; then
+    block_ok=0
+fi
+
+if [ "$block_ok" -eq 1 ] && [ -f "$OUT_BLOCK" ] && \
+   diff -w "$OUT_BLOCK" "$OUT_COMBINED" > /dev/null 2>&1; then
+    echo "  ✓ PASS"
+    PASS=$((PASS + 1))
+else
+    echo "  ✗ FAIL - progressive block-queue output differs or the run failed"
+    sed 's/^/    /' "$TEST_WORK_DIR/block.log"
+    FAIL=$((FAIL + 1))
+fi
+
+# --- Test 4: empty --infile_list file is rejected with a clear error,
 # not a crash ---
 echo "Testing: infile_list_empty_file_rejected"
 
@@ -129,7 +159,7 @@ else
     fi
 fi
 
-# --- Test 4: --infile_list together with a positional trace file is
+# --- Test 5: --infile_list together with a positional trace file is
 # rejected (mutually exclusive - see print_usage()'s own note) ---
 echo "Testing: infile_list_with_positional_arg_rejected"
 

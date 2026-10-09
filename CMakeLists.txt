@@ -2,6 +2,17 @@ cmake_minimum_required(VERSION 3.24)
 
 project(DR_EVT CXX)
 
+# Single-config generators otherwise leave CMAKE_BUILD_TYPE empty, which
+# produces an unoptimized build. Use Release by default without affecting an
+# explicit selection or multi-config generators such as Visual Studio.
+if (NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the build type" FORCE)
+endif ()
+if (NOT CMAKE_CONFIGURATION_TYPES)
+  set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+    Debug Release RelWithDebInfo MinSizeRel)
+endif ()
+
 # Resolve the platform's install layout before any install or RPATH variable
 # is used. The cached CMAKE_INSTALL_LIBDIR value is also inherited by
 # dependencies added with FetchContent.
@@ -113,6 +124,23 @@ option(DR_EVT_WITH_SER20 "Include Ser20" ON)
 
 option(DR_EVT_WITH_OPENMP "Enable OpenMP" OFF)
 
+option(DR_EVT_GPROF
+  "Build with gprof instrumentation (-pg); requires static libraries" OFF)
+
+# GNU gprof does not collect useful call-graph or time samples for code in
+# shared libraries.  Keep the cached BUILD_SHARED_LIBS preference intact for
+# subsequent non-gprof configurations, but make every library created during
+# this configure static so the profiled code is linked into the executables.
+if (DR_EVT_GPROF AND BUILD_SHARED_LIBS)
+  message(STATUS
+    "DR_EVT_GPROF=ON requires static libraries; using BUILD_SHARED_LIBS=OFF "
+    "for this configuration")
+  set(BUILD_SHARED_LIBS OFF)
+endif ()
+
+option(DR_EVT_WITH_REDIS
+  "Enable Redis output support through redis-plus-plus" OFF)
+
 option(DR_EVT_WITH_UNIT_TESTING
   "Enable the unit testing framework (requires Catch2)" OFF)
 
@@ -201,6 +229,9 @@ option(DR_EVT_ENABLE_PROTOBUF "Enable Protobuf support" OFF)
 # since the gRPC service definition is itself a .proto file)
 option(DR_EVT_ENABLE_GRPC "Enable gRPC client/server support" OFF)
 
+option(DR_EVT_INSTALL_FETCHED_GRPC
+  "Install fetched gRPC, Protobuf, Abseil, and supporting libraries" OFF)
+
 # Select the trace-file queue representation at configure time. Legacy mode
 # keeps existing `queue`-name traces compatible; ID mode reads `q_id` only.
 option(DR_EVT_LEGACY_QUEUE_INPUT "Read legacy queue-name trace columns instead of q_id" OFF)
@@ -287,6 +318,10 @@ if (DR_EVT_WITH_SER20)
   include(SetupSer20)
 endif (DR_EVT_WITH_SER20)
 
+if (DR_EVT_WITH_REDIS)
+  include(SetupRedisPlusPlus)
+endif (DR_EVT_WITH_REDIS)
+
 
 if (OpenMP_CXX_FOUND)
   message(STATUS "DR_EVT_OMP_MODE value (${DR_EVT_OMP_MODE})")
@@ -365,6 +400,10 @@ if (DR_EVT_HAS_SER20)
   target_link_libraries(dr_evt PUBLIC ser20::ser20)
 endif (DR_EVT_HAS_SER20)
 
+if (DR_EVT_HAS_REDIS_PLUS_PLUS)
+  target_link_libraries(dr_evt PRIVATE DR_EVT::redis_plus_plus)
+endif (DR_EVT_HAS_REDIS_PLUS_PLUS)
+
 if (DR_EVT_WITH_UNIT_TESTING)
   target_include_directories(dr_evt PUBLIC
     $<BUILD_INTERFACE:${CATCH2_INCLUDE_DIR}>)
@@ -442,6 +481,9 @@ if (DR_EVT_HAS_GRPC)
   # separately-running server, it never links against the simulation
   # library directly.
   target_link_libraries(dr_evt_client-bin PRIVATE dr_evt_service_proto)
+  if (DR_EVT_HAS_REDIS_PLUS_PLUS)
+    target_link_libraries(dr_evt_client-bin PRIVATE DR_EVT::redis_plus_plus)
+  endif ()
   set_target_properties(dr_evt_client-bin PROPERTIES OUTPUT_NAME dr_evt_client)
   set_target_properties(dr_evt_client-bin PROPERTIES CMAKE_INSTALL_RPATH
                         "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
@@ -561,10 +603,29 @@ set_target_properties(test_append_job_api-bin PROPERTIES CMAKE_INSTALL_RPATH
 
 list(APPEND DR_EVT_UNIT_TEST_TARGETS test_append_job_api-bin)
 
+if(DR_EVT_HAS_SER20)
+  # Exact continuation across queued/running jobs, output append, and
+  # incompatible-state rejection.
+  add_executable(test_checkpoint_restart-bin
+    tests/test_checkpoint_restart.cpp)
+  target_include_directories(test_checkpoint_restart-bin PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}>)
+  target_link_libraries(test_checkpoint_restart-bin PRIVATE dr_evt)
+  set_target_properties(test_checkpoint_restart-bin PROPERTIES
+    OUTPUT_NAME test_checkpoint_restart
+    CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
+  list(APPEND DR_EVT_UNIT_TEST_TARGETS test_checkpoint_restart-bin)
+endif()
+
 # Custom callback-driven EASY backfill scheduler, resource accounting, and
 # prediction-horizon APIs.
 add_executable(test_custom_scheduler-bin
-  tests/test_custom_scheduler.cpp)
+  tests/test_custom_scheduler.cpp
+  src/sim/scheduler_power_cap.cpp
+  src/sim/scheduler_easy_pc.cpp
+  src/sim/scheduler_easy_power.cpp)
 target_include_directories(test_custom_scheduler-bin PUBLIC
   $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
   $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
@@ -722,6 +783,21 @@ list(APPEND DR_EVT_UNIT_TEST_TARGETS test_warm_start-bin)
 # Only search for MPI for this test - dr_evt library itself has no MPI dependency
 find_package(MPI)
 if(MPI_CXX_FOUND)
+  if(DR_EVT_HAS_SER20)
+    add_executable(mpi_performance_dispatch-bin
+      experimental/multi-cluster/mpi_performance_dispatch.cpp)
+    target_include_directories(mpi_performance_dispatch-bin PUBLIC
+      $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
+      $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
+      $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}>)
+    target_link_libraries(mpi_performance_dispatch-bin PRIVATE
+      dr_evt MPI::MPI_CXX)
+    set_target_properties(mpi_performance_dispatch-bin PROPERTIES
+      OUTPUT_NAME mpi_performance_dispatch
+      CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
+    list(APPEND DR_EVT_EXEC_TARGETS mpi_performance_dispatch-bin)
+  endif()
+
   add_executable( test_mpi_streaming-bin tests/test_mpi_streaming.cpp )
 
   target_include_directories(test_mpi_streaming-bin PUBLIC
@@ -743,6 +819,15 @@ if(DR_EVT_WITH_UNIT_TESTING)
   add_test(
     NAME test_append_job_api
     COMMAND $<TARGET_FILE:test_append_job_api-bin>)
+  if(DR_EVT_HAS_SER20)
+    add_test(
+      NAME test_checkpoint_restart
+      COMMAND $<TARGET_FILE:test_checkpoint_restart-bin>)
+    set_tests_properties(test_checkpoint_restart PROPERTIES
+      LABELS "unit;native;checkpoint"
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      RUN_SERIAL TRUE)
+  endif()
   add_test(
     NAME test_custom_scheduler
     COMMAND ${CMAKE_COMMAND} -E env
@@ -786,6 +871,21 @@ if(DR_EVT_WITH_UNIT_TESTING)
     set_tests_properties(test_trace_tools PROPERTIES
       LABELS "unit;scripts"
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(
+      NAME test_python_performance_dispatch
+      COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/experimental/multi-cluster/tests/test_performance_dispatch.py)
+    set_tests_properties(test_python_performance_dispatch PROPERTIES
+      LABELS "unit;scripts;multi-cluster"
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(
+      NAME test_monthly_easy_pc_scripts
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_monthly_easy_pc_scripts.py)
+    set_tests_properties(test_monthly_easy_pc_scripts PROPERTIES
+      LABELS "unit;scripts"
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
   endif()
 
   set_tests_properties(
@@ -809,6 +909,21 @@ if(DR_EVT_WITH_UNIT_TESTING)
       LABELS "unit;native;mpi"
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
       RUN_SERIAL TRUE)
+    if(DR_EVT_HAS_SER20 AND Python3_Interpreter_FOUND)
+      add_test(
+        NAME test_mpi_performance_dispatch
+        COMMAND ${Python3_EXECUTABLE}
+          ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mpi_performance_dispatch.py
+          ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG}
+          $<TARGET_FILE:mpi_performance_dispatch-bin>
+          ${CMAKE_CURRENT_SOURCE_DIR})
+      set_tests_properties(test_mpi_performance_dispatch PROPERTIES
+        LABELS "unit;native;mpi"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        RUN_SERIAL TRUE
+        SKIP_RETURN_CODE 77
+        TIMEOUT 120)
+    endif()
   endif()
 endif()
 
@@ -842,22 +957,27 @@ if(DR_EVT_BOOST_FETCHCONTENT)
     endif()
   ")
 
-  # Boost headers are spread across many libs/*/include/boost trees in the
-  # CMake distribution. Merge them into the conventional include/boost
-  # destination, including .ipp implementation headers and generated config
-  # headers. Without this, the installed libraries cannot be consumed by a
-  # subsequent configure that searches CMAKE_INSTALL_PREFIX.
-  if(EXISTS "${boost_SOURCE_DIR}/boost")
-    install(DIRECTORY "${boost_SOURCE_DIR}/boost"
-            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-  endif()
-  file(GLOB BOOST_HEADER_TREES LIST_DIRECTORIES true
+  # Boost's own subdirectory is EXCLUDE_FROM_ALL, so install its development
+  # headers through one guarded script. The version check avoids traversing
+  # thousands of files again when the effective destination already contains
+  # this fetched Boost version (including with `cmake --install --prefix`).
+  file(GLOB DR_EVT_BOOST_HEADER_TREES LIST_DIRECTORIES true
        "${boost_SOURCE_DIR}/libs/*/include/boost")
-  foreach(BOOST_HEADER_TREE IN LISTS BOOST_HEADER_TREES)
-    install(DIRECTORY "${BOOST_HEADER_TREE}/"
-            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/boost)
-  endforeach()
-  unset(BOOST_HEADER_TREES)
+  file(STRINGS "${boost_SOURCE_DIR}/libs/config/include/boost/version.hpp"
+       DR_EVT_FETCHED_BOOST_VERSION_LINE
+       REGEX "^#define BOOST_VERSION [0-9]+$"
+       LIMIT_COUNT 1)
+  string(REGEX MATCH "[0-9]+$" DR_EVT_FETCHED_BOOST_VERSION
+         "${DR_EVT_FETCHED_BOOST_VERSION_LINE}")
+  configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/InstallFetchedBoost.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/InstallFetchedBoost.cmake"
+    @ONLY)
+  install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/InstallFetchedBoost.cmake"
+          COMPONENT Development)
+  unset(DR_EVT_BOOST_HEADER_TREES)
+  unset(DR_EVT_FETCHED_BOOST_VERSION_LINE)
+  unset(DR_EVT_FETCHED_BOOST_VERSION)
 endif()
 
 # Install the binaries
@@ -1016,6 +1136,10 @@ install(
         "${PROJECT_SOURCE_DIR}/src/boost.hpp"
   DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 
+install(PROGRAMS "${PROJECT_SOURCE_DIR}/scripts/stitch_checkpoint_output.py"
+  DESTINATION "${CMAKE_INSTALL_BINDIR}"
+  RENAME dr_evt_stitch_checkpoint_output)
+
 if (DR_EVT_HAS_EXPRTK)
   install(
     FILES ${EXPRTK_DIR}/${EXPRTK_HEADER}
@@ -1084,11 +1208,14 @@ string(APPEND _str "\n")
 append_str_tf(_str
   DR_EVT_GNU_LINUX
   DR_EVT_HAS_SER20
+  DR_EVT_HAS_REDIS_PLUS_PLUS
   DR_EVT_HAS_CATCH2
   DR_EVT_HAS_DOXYGEN
   DR_EVT_HAS_OPENMP
   DR_EVT_HAS_NUMA
-  DR_EVT_HAS_PROTOBUF)
+  DR_EVT_HAS_PROTOBUF
+  DR_EVT_INSTALL_FETCHED_GRPC
+  DR_EVT_GPROF)
 string(APPEND _str
   "\n== End DR_EVT Configuration Summary ==\n")
 
@@ -1125,9 +1252,43 @@ install(FILES "${CMAKE_BINARY_DIR}/dr_evt_module.lua.install"
 if(DR_EVT_HAS_PYBIND11)
   message(STATUS "Building Python bindings...")
 
-  pybind11_add_module(dr_evt_python
+  # Let CMake select the compiler's supported IPO flags before pybind11
+  # creates the module.  In particular, modern CMake uses GCC's
+  # parallel-capable -flto=auto instead of pybind11's plain -flto.
+  set(DR_EVT_PYTHON_IPO_WAS_UNDEFINED FALSE)
+  if(NOT DEFINED CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT DR_EVT_PYTHON_IPO_SUPPORTED
+                        OUTPUT DR_EVT_PYTHON_IPO_ERROR
+                        LANGUAGES CXX)
+    if(DR_EVT_PYTHON_IPO_SUPPORTED)
+      set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+    else()
+      set(CMAKE_INTERPROCEDURAL_OPTIMIZATION FALSE)
+      message(WARNING
+        "IPO is unavailable for the Python module: "
+        "${DR_EVT_PYTHON_IPO_ERROR}")
+    endif()
+    set(DR_EVT_PYTHON_IPO_WAS_UNDEFINED TRUE)
+  endif()
+
+  # pybind11 enables LTO as one of its default "extras" in Release builds.
+  # Suppress those extras for gprof so every target follows the profiling-safe
+  # no-LTO policy established by SetupCXX.cmake.
+  set(DR_EVT_PYBIND11_OPTIONS)
+  if(DR_EVT_GPROF)
+    list(APPEND DR_EVT_PYBIND11_OPTIONS NO_EXTRAS)
+  endif()
+  pybind11_add_module(dr_evt_python ${DR_EVT_PYBIND11_OPTIONS}
     python/dr_evt_bindings.cpp
   )
+  unset(DR_EVT_PYBIND11_OPTIONS)
+  if(DR_EVT_PYTHON_IPO_WAS_UNDEFINED)
+    unset(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+  endif()
+  unset(DR_EVT_PYTHON_IPO_WAS_UNDEFINED)
+  unset(DR_EVT_PYTHON_IPO_SUPPORTED)
+  unset(DR_EVT_PYTHON_IPO_ERROR)
 
   target_link_libraries(dr_evt_python PRIVATE dr_evt)
 

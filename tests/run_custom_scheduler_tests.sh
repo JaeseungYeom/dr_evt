@@ -5,6 +5,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
 cd "$REPO_ROOT"
 
 INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX:-$REPO_ROOT/install}"
@@ -23,7 +25,8 @@ if [[ ! -x "$TEST_BIN" ]]; then
 fi
 
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dr-evt-custom-scheduler.XXXXXXXX")"
-trap 'rm -rf -- "$RUN_DIR"' EXIT INT TERM
+cleanup() { rm -rf -- "$RUN_DIR"; }
+test_report_set_cleanup cleanup
 
 echo "Running custom scheduler unit checks"
 "$TEST_BIN"

@@ -18,6 +18,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,10 @@
 #include "trace/trace_policy.hpp"
 
 namespace dr_evt {
+template <typename TraceType> class BasicSimulation;
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+class RedisOutput;
+#endif
 /** \addtogroup dr_evt_trace
  *  @{ */
 
@@ -46,10 +51,14 @@ struct Job_Append_Request {
   num_nodes_t num_nodes;            ///< Requested node count.
   job_queue_t queue = QueueUnknown; ///< Queue identity, initially unknown.
   timeout_t limit_time;             ///< Requested execution-time limit.
+  std::optional<tdiff_t> actual_run_time =
+      std::nullopt; ///< Known execution time, if any.
 };
 
 /** @brief Job store, event queue, and output-trace state for one workload. */
 template <typename Policy> class BasicTrace : private Policy {
+  template <typename TraceType> friend class BasicSimulation;
+
 public:
   /// Circular buffer, front-only reclaim: a job's slot becomes reusable
   /// once safe (see is_front_reclaimable()), same shape as
@@ -108,6 +117,8 @@ protected:
   size_t m_replay_jobs_enqueued;
   double m_memory_pressure_fraction =
       0.0; ///< 0.0 = disabled; see set_memory_pressure_fraction()
+  /// Limits used to discard jobs before assigning trace-store job IDs.
+  Trace_Admission_Limits m_admission_limits;
 
   /// Tracks continuity across load_next_file() calls: the latest
   /// submit_time seen across every file loaded so far this way, so
@@ -195,10 +206,7 @@ protected:
   /// True after the resource-history capacity has been resolved.
   bool m_resource_history_capacity_resolved;
 
-  /// Set once start_resource_trace() opens a real output file - lets
-  /// reclaim-driven flushes incrementally during the run instead of only at
-  /// the very end.
-  /// Open incremental resource-trace output stream, when enabled.
+  /// Open incremental resource-trace file stream when Redis is not selected.
   std::ofstream m_resource_trace_ofs;
   /// Cluster size used to derive free nodes in resource-trace output.
   num_nodes_t m_resource_trace_total_nodes;
@@ -222,13 +230,17 @@ protected:
   /// write would ever see it.
   /// Open incremental simulated-job-trace output stream, when enabled.
   std::ofstream m_simulated_trace_ofs;
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+  /// Redis schedule sink, mutually exclusive with m_simulated_trace_ofs.
+  std::unique_ptr<RedisOutput> m_redis_output;
+#endif
   /// Whether simulated-job-trace timestamps are rendered in milliseconds.
   bool m_simulated_trace_msec;
   /// Permanent number of the next job whose schedule output/statistics have
   /// not yet been consumed. This is the output cursor across front reclamation,
   /// explicit flushes, and the final write.
   size_t m_next_job_to_write;
-  /// Accumulates complete schedule lines during one record-count flush.
+  /// Accumulates complete file-output lines during one record-count flush.
   std::string m_simulated_trace_buffer;
 
 public:
@@ -246,6 +258,7 @@ public:
    * @param[in] timezone Default timezone for timestamps without offsets. */
   BasicTrace(const std::string &fname, const std::string &format,
              const std::string &timestamp_format, const std::string &timezone);
+  ~BasicTrace();
 
   /// @brief Allow access to the header information and column filter.
   /// @return Read-only reference to the Data_Columns mapping.
@@ -255,6 +268,16 @@ public:
    * @param[in] n_lines_to_read Maximum rows to load; zero means all rows.
    * @return `EXIT_SUCCESS` on success, otherwise a nonzero status. */
   int load_data(num_jobs_t n_lines_to_read = static_cast<num_jobs_t>(0u));
+
+  /** Configure whole-record filtering applied by all subsequent file loads. */
+  void set_admission_limits(
+      std::optional<num_nodes_t> maximum_nodes,
+      std::optional<double> maximum_job_power = std::nullopt,
+      bool report_dropped_jobs = true,
+      std::optional<double> maximum_average_job_power = std::nullopt) {
+    m_admission_limits = {maximum_nodes, maximum_job_power,
+                          report_dropped_jobs, maximum_average_job_power};
+  }
 
   /// Allow write access to the job trace data - for range-based
   /// iteration only (write_simulated_trace(), print(), etc.). Indexing
@@ -279,6 +302,10 @@ public:
    * @param[in] job_no Permanent job identifier.
    * @return Read-only reference to the corresponding record. */
   const Job_Record &job_at(job_no_t job_no) const;
+
+  /** Power estimate embedded in the retained record, when the policy has one. */
+  std::optional<double> scheduler_power(job_no_t job_no) const;
+  std::optional<double> scheduler_maximum_power(job_no_t job_no) const;
 
   /// Jobs reclaimed so far - add to data().size() for the true total
   /// ever loaded (data().size() alone undercounts once anything's
@@ -403,6 +430,8 @@ public:
    * @param[in] num_nodes Number of nodes the job requests.
    * @param[in] queue Which queue the job was submitted to.
    * @param[in] limit_time User-estimated time limit.
+   * @param[in] actual_run_time Known execution time, or empty to use
+   *        limit_time as the streaming execution duration.
    * @return The new job's job_no. Simulation::append_job() immediately
    *         passes it to its protected submit_job() helper to enqueue it.
    * @see Simulation::append_job()
@@ -410,24 +439,18 @@ public:
    */
   job_no_t append_job(sim_time_t current_time, const epoch_t &submit_time,
                       num_nodes_t num_nodes, job_queue_t queue,
-                      timeout_t limit_time);
+                      timeout_t limit_time,
+                      std::optional<tdiff_t> actual_run_time = std::nullopt);
 
   /**
    * @brief Append several genuinely new jobs to m_data in one call -
    * the batch counterpart to append_job(), for the same never-seen-
    * before case (not a batch-preload; see load_data() for that).
    *
-   * Originally designed with a future chunked-loading reader in mind
-   * (a chunk as a std::vector<Job_Append_Request>, appended here once
-   * per chunk) - that didn't end up how progressive/multi-file
-   * loading (--infile_list) was actually built: Job_Append_Request's
-   * narrower, network-facing 4 fields can't carry actual_run_time,
-   * which load()'s output (what a real file read produces) can -
-   * routing that through this struct would silently drop it. See
-   * Trace::load_next_file() instead, which takes Job_Record directly;
-   * see OUTPUT_TRACE_BUFFERS.md for the full reasoning. This function
-   * still exists for genuine streaming, where a Job_Record doesn't
-   * exist yet - only the caller's raw values do.
+   * Progressive/multi-file loading does not use this network-facing record;
+   * Trace::load_next_file() retains each parser-created Job_Record directly.
+   * This structure remains the genuine streaming representation for jobs
+   * that do not already exist in the trace.
    *
    * Fully all-or-nothing: nothing in this batch is appended unless
    * all of it can be. Two things are checked before m_data is
@@ -483,13 +506,9 @@ public:
    * bounded --job_store_capacity can actually be honored (unlike
    * load_data(), which always grows to fit its one file whole).
    *
-   * Deliberately does not go through append_jobs()/Job_Append_Request:
-   * that struct only carries the 4 fields a genuine streaming caller
-   * (no Job_Record in hand yet) can supply - routing an
-   * already-parsed Job_Record through it would silently drop
-   * actual_run_time back to 0.0, wrong for run_time_mode=actual/
-   * distribution. This takes load()'s output directly instead,
-   * losing nothing.
+   * Deliberately does not go through append_jobs()/Job_Append_Request. This
+   * takes the parser-created Job_Record objects directly, preserving their
+   * complete input state and avoiding an unnecessary conversion.
    *
    * Two checks, both all-or-nothing before m_data is touched at all
    * (same shape as append_jobs()): this file's own rows must already
@@ -583,14 +602,13 @@ public:
   }
 
   /**
-   * @brief Open filename early so resource-history samples reclaimed from
-   * the circular buffer during the run get flushed to it incrementally,
-   * instead of only being available at the very end via
-   * write_resource_trace() below. Call once, before any processing
-   * begins (e.g. before submit_job()/advance_to(), or run_job_trace()).
-   * @param[in] filename Output path; a no-op if empty - samples reclaimed
-   *        before write_resource_trace() is later called are then
-   *        simply discarded, which is fine since nobody asked for them.
+   * @brief Initialize incremental resource-history output.
+   *
+   * When Redis job output is active, resource CSV is written to
+   * `<prefix>:resources:csv` and filename is ignored. Otherwise filename is
+   * opened normally. Call once before processing begins.
+   * @param[in] filename File output path when Redis is not active. An empty
+   *        path disables file output.
    * @param[in] total_nodes Pool size, used to derive free_nodes at write time.
    * @param[in] msec Format timestamps with millisecond precision instead of
    *        truncating to whole seconds (matches Sim_Params::m_msec_output;
@@ -615,11 +633,9 @@ public:
   }
 
   /**
-   * @brief Write this Trace's recorded resource-occupancy history to a
-   * CSV file (same "time,free_nodes,allocated_nodes" format used by the
-   * simulator). Shared by the standalone tracer and the scheduling
-   * simulator, since both populate this history through the same
-   * process_events_until()/process_single_event() code path.
+   * @brief Write this Trace's recorded resource-occupancy history as CSV.
+   * Redis simulation output uses `<prefix>:resources:csv`; otherwise this
+   * writes a normal file. Both use the same schema and buffered data path.
    *
    * If start_resource_trace() was already called with the same filename,
    * this only flushes whatever's left buffered and closes the file -
@@ -666,8 +682,12 @@ public:
    *        m_data can actually reclaim.
    * @param[in] msec Format timestamps with millisecond precision instead of
    *        truncating to whole seconds (matches Sim_Params::m_msec_output)
+   * @param[in] redis_uri Redis connection URI; empty selects file output.
+   * @param[in] redis_key_prefix Namespace for Redis output keys.
    */
-  void start_simulated_trace(const std::string &filename, bool msec = false);
+  void start_simulated_trace(const std::string &filename, bool msec = false,
+                             const std::string &redis_uri = {},
+                             const std::string &redis_key_prefix = {});
 
   /**
    * @brief Write this Trace's job records to a CSV file (same format
@@ -747,8 +767,8 @@ protected:
   /// any sample is recorded. A no-op on every call after the first.
   void resolve_resource_history_capacity();
 
-  /// Write every entry currently in m_ctx.m_resource_history to
-  /// m_resource_trace_ofs (if open) in one batch, then clear the buffer.
+  /// Write every entry currently in m_ctx.m_resource_history to the active
+  /// file or Redis resource sink in one batch, then clear the buffer.
   /// Used both for incremental reclaim-driven flushes during a run and
   /// for the final flush in write_resource_trace().
   void flush_resource_history();
@@ -780,6 +800,8 @@ protected:
   /// @param[in] current_time Fully processed simulation time boundary.
   /// @return `true` when the front slot may be discarded.
   bool is_front_reclaimable(sim_time_t current_time) const;
+  bool is_job_reclaimable(job_no_t job_id, const Job_Record &job,
+                          sim_time_t current_time) const;
 
   /// Reclaim from the front while is_front_reclaimable() holds, advancing
   /// m_num_reclaimed, until at least min_free slots are free (capacity()
@@ -887,17 +909,35 @@ protected:
   /// projected peak.
   void check_memory_pressure(size_t batch_size) const;
 
-  /// Write one job's line to m_simulated_trace_ofs (if open and the
-  /// job is_scheduled() - unscheduled/rejected jobs were never written
-  /// by the original write_simulated_trace() either). The single
-  /// choke point both reclaim_front_jobs() and write_simulated_trace()
-  /// go through.
+  /// Add one scheduled job to the active file or Redis flush buffer.
+  /// Unscheduled/rejected jobs were never written by the original
+  /// write_simulated_trace() either. This is the single choke point both
+  /// reclaim_front_jobs() and write_simulated_trace() go through.
   /// @param[in] job Record to write and include in running statistics.
   void write_job_line(const Job_Record &job);
 
-  /// Write and clear the schedule lines accumulated by one reclaim/final-write
+  /// Send an existing trace-buffer range to the active output sink.
+  void write_job_range(typename trace_data_t::const_iterator first,
+                       typename trace_data_t::const_iterator last,
+                       job_no_t first_job_id, sim_time_t completed_through);
+
+  /// Return whether either the file or Redis simulated-trace sink is active.
+  bool simulated_trace_output_active() const;
+
+  /// Write and clear file lines accumulated by one reclaim/final-write
   /// operation. If sync is true, also flush the underlying ostream buffer.
   void flush_simulated_trace_buffer(bool sync);
+
+  /** @brief Reset policy-owned runtime aggregates before checkpoint restore. */
+  void reset_policy_runtime_state() { this->reset_runtime_state(); }
+
+  /**
+   * @brief Rebuild policy-owned runtime aggregates for one restored job.
+   * @param[in] job Restored job that is currently running.
+   */
+  void restore_policy_running_job(const typename Policy::record_type &job) {
+    this->on_start(job);
+  }
 };
 
 /// Experimental trace carrying Pcon values in both job and resource records.

@@ -1,0 +1,4 @@
+#app,sys_requirement
+cpu-solver,CPU-only
+gpu-trainer,GPU-only
+portable-md,GPU-portable

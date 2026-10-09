@@ -42,6 +42,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
 TRACE="$SCRIPT_DIR/test_traces/feature/easy_vs_conservative_test.csv"
 EXPECTED_EASY="$SCRIPT_DIR/test_traces/feature/easy_vs_conservative_expected_easy.csv"
 EXPECTED_CONS="$SCRIPT_DIR/test_traces/feature/easy_vs_conservative_expected_conservative.csv"
@@ -50,13 +52,19 @@ NODES=100
 if ! OUTDIR="$(mktemp -d "${TMPDIR:-/tmp}/dr-evt-easy-vs-conservative.XXXXXXXX" 2>/dev/null)"; then
     OUTDIR="$(mktemp -d "/tmp/dr-evt-easy-vs-conservative.XXXXXXXX")"
 fi
-trap 'rm -rf -- "$OUTDIR"' EXIT INT TERM
+cleanup() { rm -rf -- "$OUTDIR"; }
+test_report_set_cleanup cleanup
 
 cd "$ROOT_DIR"
 
 # Resolve an explicitly configured or installed simulator before falling back
 # to the repository build tree.
 source "$SCRIPT_DIR/set_simulator_path.sh"
+source "$SCRIPT_DIR/select_python.sh"
+if ! select_python_interpreter 3 6; then
+    echo "ERROR: Python 3.6 or newer is required" >&2
+    exit 1
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -113,7 +121,7 @@ echo "=== Comparing Results Against Expected ==="
 echo ""
 
 # Compare using Python
-python3 - "$OUTDIR/easy.csv" "$OUTDIR/conservative.csv" \
+"$PYTHON_BIN" - "$OUTDIR/easy.csv" "$OUTDIR/conservative.csv" \
     "$EXPECTED_EASY" "$EXPECTED_CONS" << 'PYTHON_SCRIPT'
 import csv
 import sys

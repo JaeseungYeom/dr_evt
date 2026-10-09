@@ -15,23 +15,35 @@
 #include "trace/trace.hpp"
 #include <map>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace dr_evt {
+
+template <typename TraceType> class BasicSimulation;
 
 /** \addtogroup dr_evt_sim
  *  @{ */
 
 /**
- * @brief Describes a currently running job for reservation calculations.
+ * @brief Transient scheduler view of a job identified by a pending END event.
  */
 struct Running_Job {
   sim_time_t start_time;
   tdiff_t run_time;
   num_nodes_t nodes;
+  std::optional<double> predicted_power = std::nullopt;
 };
 
 using running_jobs_t = std::map<job_no_t, Running_Job>;
+
+/** Optional trace fields supplied alongside the scheduler's core job data. */
+struct SchedulerJobMetadata {
+  std::optional<double> predicted_power;
+  tdiff_t actual_run_time;
+  timeout_t time_limit;
+  std::optional<double> maximum_power = std::nullopt;
+};
 
 /**
  * @brief Abstract interface shared by all job schedulers.
@@ -42,6 +54,8 @@ using running_jobs_t = std::map<job_no_t, Running_Job>;
  * with the currently available nodes.
  */
 class SchedulerBase {
+  template <typename TraceType> friend class BasicSimulation;
+
 protected:
   /// Total nodes available to jobs selected by this scheduler.
   num_nodes_t m_total_nodes;
@@ -63,6 +77,25 @@ public:
   /** @brief Destroy a scheduler through its polymorphic base interface. */
   virtual ~SchedulerBase() = default;
 
+  /** Per-job power admission limit, if this scheduler defines one. */
+  virtual std::optional<double> maximum_job_power_for_admission() const {
+    return std::nullopt;
+  }
+
+  /** Per-job average-power admission limit, if defined by the scheduler. */
+  virtual std::optional<double>
+  maximum_average_job_power_for_admission() const {
+    return std::nullopt;
+  }
+
+  /** Select the trace power value copied into running-job scheduler state. */
+  virtual std::optional<double> scheduling_power(
+      std::optional<double> average_power,
+      std::optional<double> maximum_power) const {
+    (void)maximum_power;
+    return average_power;
+  }
+
   /**
    * @brief Enqueue an already-validated job in this scheduler's wait queue.
    * @details
@@ -80,6 +113,19 @@ public:
   virtual void insert_job(job_no_t job_id, sim_time_t submit_time,
                           tdiff_t run_time_estimate,
                           num_nodes_t nodes_requested) = 0;
+
+  /**
+   * @brief Enqueue a job with trace metadata needed by specialized schedulers.
+   * @details The default preserves the existing scheduler API. Schedulers that
+   * consume trace-specific fields can override this method without requiring
+   * callers to reread the input trace.
+   */
+  virtual void insert_job_with_metadata(
+      job_no_t job_id, sim_time_t submit_time, tdiff_t run_time_estimate,
+      num_nodes_t nodes_requested, const SchedulerJobMetadata &metadata) {
+    (void)metadata;
+    insert_job(job_id, submit_time, run_time_estimate, nodes_requested);
+  }
 
   /**
    * @brief Select wait-queue jobs that may start at current_time.
@@ -152,12 +198,39 @@ public:
   virtual bool has_eligible_jobs() = 0;
 
   /**
+   * @brief Return identifiers of jobs still owned by the wait queue.
+   * @details This is an on-demand checkpoint view, not persistent duplicate
+   * state. Scheduled/removed entries are excluded and future arrivals remain
+   * included.
+   * @return Pending job identifiers in implementation-defined order.
+   */
+  virtual std::vector<job_no_t> pending_job_ids() const = 0;
+
+  /**
    * @brief Return the current FCFS-head reservation time.
    * @return Earliest projected time the FCFS head can start, in sim_time_t.
    */
   sim_time_t get_fcfs_reservation_time() const {
     return m_fcfs_reservation_time;
   }
+
+  /**
+   * @brief Sum requested-node time for jobs currently waiting.
+   * @details Implementations compute this on demand from their existing queue
+   * records. The default reports that prediction is unsupported, avoiding any
+   * storage or scheduling-path overhead for schedulers that do not opt in.
+   */
+  virtual std::optional<tdiff_t> waiting_resource_area() const {
+    return std::nullopt;
+  }
+
+  /**
+   * @brief Estimate waiting-queue drain time after the FCFS shadow time.
+   * @details Uses waiting_resource_area() and projected running-job releases.
+   * No prediction state is maintained between calls.
+   */
+  tdiff_t prediction_horizon(const running_jobs_t &running_jobs,
+                             sim_time_t current_time, double utilization) const;
 
 protected:
   /**

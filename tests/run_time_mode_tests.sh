@@ -20,11 +20,18 @@ set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
 
 cd "$REPO_ROOT"
 
 # Source common simulator path finder
 source "$SCRIPT_DIR/set_simulator_path.sh"
+source "$SCRIPT_DIR/select_python.sh"
+if ! select_python_interpreter 3 6; then
+    echo "Error: Python 3.6 or newer is required" >&2
+    exit 1
+fi
 
 echo "=========================================="
 echo "Run Time Mode Tests"
@@ -35,7 +42,8 @@ echo ""
 PASS=0
 FAIL=0
 TEST_WORK_DIR=$(mktemp -d "/tmp/dr-evt-runtime-modes.XXXXXXXX")
-trap 'rm -rf -- "$TEST_WORK_DIR"' EXIT INT TERM
+cleanup() { rm -rf -- "$TEST_WORK_DIR"; }
+test_report_set_cleanup cleanup
 
 # Use a trace where actual_run_time differs from time_limit
 # Job 1: time_limit=200, actual_run_time=50
@@ -200,7 +208,7 @@ check_no_exceedance() {
         --outfile "$outfile" \
         > /dev/null 2>&1
 
-    python3 - "$outfile" "$dist" "$should_cap" "$EXPECTED_LARGE_JOBS" <<'PY'
+    "$PYTHON_BIN" - "$outfile" "$dist" "$should_cap" "$EXPECTED_LARGE_JOBS" <<'PY'
 import csv
 import sys
 

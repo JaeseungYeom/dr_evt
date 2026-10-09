@@ -21,7 +21,10 @@
 #include <limits>
 #include <map>
 #include <memory> // unique_ptr
+#include <optional>
 #include <random>
+#include <span>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -83,6 +86,16 @@ protected:
   /// Counters
   num_jobs_t m_jobs_completed;
   num_jobs_t m_jobs_submitted; ///< Jobs submitted during the current run.
+  /// Next progressive input file; advanced once its jobs are fully admitted.
+  size_t m_next_progressive_file;
+  /// True after load_checkpoint() restores runnable state.
+  bool m_checkpoint_loaded;
+  /// Completion count written by the last automatic checkpoint.
+  num_jobs_t m_last_automatic_checkpoint_jobs;
+  /// Whether this run has written an automatic checkpoint.
+  bool m_has_automatic_checkpoint;
+  /// Simulation time written by the last automatic checkpoint.
+  sim_time_t m_last_automatic_checkpoint_time;
   /// Historical jobs still running during the temporary warm-start stage.
   size_t m_pre_start_jobs;
   /// Post-boundary node-seconds contributed by suppressed historical jobs.
@@ -108,6 +121,22 @@ protected:
   /// Accepted arrivals not yet observed at their simulation timestamps.
   std::map<sim_time_t, size_t> m_pending_queue_arrivals;
 
+  // Compact, permanent query records for jobs created by append_job(s).
+  // Trace records may be reclaimed after completion, so their scheduling
+  // timestamps cannot by themselves satisfy the public status API.
+  struct Appended_Job_Query_Record {
+    sim_time_t submit_time = 0.0;
+    tdiff_t limit_time = 0.0;
+    num_nodes_t num_nodes = 0;
+    sim_time_t start_time = 0.0;
+    sim_time_t end_time = 0.0;
+    bool tracked = false;
+    bool scheduled = false;
+    bool rejected = false;
+  };
+  job_no_t m_first_appended_job_idx = std::numeric_limits<job_no_t>::max();
+  std::vector<Appended_Job_Query_Record> m_appended_job_query_records;
+
 public:
   /**
    * @brief Construct a simulation from immutable configuration.
@@ -123,6 +152,10 @@ public:
    */
   BasicSimulation(const Sim_Params &params, job_cost_function_t cost_function,
                   backfill_selector_t selector);
+
+  /** Construct a simulation with a configured Custom-FCFS subclass. */
+  BasicSimulation(const Sim_Params &params,
+                  std::unique_ptr<CustomFCFSScheduler> scheduler);
 
   /**
    * @brief Run a complete batch simulation for the configured trace.
@@ -155,6 +188,43 @@ public:
    */
   void flush_completed_jobs();
 
+#if defined(DR_EVT_HAS_SER20)
+  /**
+   * @brief Save an exact continuation checkpoint to a binary stream.
+   * @details Standard and Pcon traces are supported. Callback-based Custom FCFS
+   * is supported when restart constructs the destination with equivalent
+   * callbacks; callback objects themselves are not serialized. The checkpoint
+   * is intended for the same DR_EVT build and matching Sim_Params. Buffered
+   * output is flushed before the snapshot is written. Output files are not
+   * included in the checkpoint; their committed byte boundaries are.
+   * @param[in,out] output Binary destination stream.
+   */
+  void save_checkpoint(std::ostream &output);
+
+  /**
+   * @brief Save an exact continuation checkpoint to a file.
+   * @param[in] filename Destination path, replaced after state is serialized.
+   */
+  void save_checkpoint(const std::string &filename);
+
+  /**
+   * @brief Restore a checkpoint into this simulation.
+   * @details This replaces any current state. Configuration, scheduler kind,
+   * and output paths must match those used to create the checkpoint. A Custom
+   * FCFS destination must be constructed with equivalent callbacks. Existing
+   * file outputs are archived as pre-restart segments, and fresh output
+   * segments are opened at the configured paths.
+   * @param[in,out] input Binary checkpoint source stream.
+   */
+  void load_checkpoint(std::istream &input);
+
+  /**
+   * @brief Restore an exact continuation checkpoint from a file.
+   * @param[in] filename Existing checkpoint path.
+   */
+  void load_checkpoint(const std::string &filename);
+#endif
+
   /**
    * @brief Write resource-allocation history to a CSV file.
    * @param[in] filename Destination CSV path.
@@ -173,6 +243,8 @@ public:
     num_nodes_t num_nodes;  ///< Requested node count.
     std::string queue;      ///< Queue ID, or a name in legacy-input builds.
     tdiff_t limit_time;     ///< Requested time limit.
+    std::optional<tdiff_t> actual_run_time =
+        std::nullopt; ///< Known execution time, if any.
   };
 
   /**
@@ -190,12 +262,18 @@ public:
    * default Queue1), or a queue name such as "pbatch" when built with
    * `DR_EVT_LEGACY_QUEUE_INPUT`.
    * @param[in] limit_time User-estimated time limit in seconds.
+   * @param[in] actual_run_time Known execution time, or empty to use
+   *        limit_time as the streaming execution duration.
    * @return New Trace job identifier as job_no_t.
+   * @throws std::invalid_argument if limit_time is not a positive,
+   *         representable whole number of seconds, or if actual_run_time is
+   *         non-positive, non-finite, or greater than limit_time.
    * @see submit_job()
    * @see SchedulerBase::insert_job()
    */
   job_no_t append_job(sim_time_t submit_time, num_nodes_t num_nodes,
-                      const std::string &queue, tdiff_t limit_time);
+                      const std::string &queue, tdiff_t limit_time,
+                      std::optional<tdiff_t> actual_run_time = std::nullopt);
 
   /**
    * @brief Add several new job records and enqueue all of them.
@@ -213,11 +291,37 @@ public:
    *        Trace::append_jobs() for why - this function forwards
    *        requests as-is, so pass them there already sorted).
    * @return New Trace job identifiers in the same order as requests.
+   * @throws std::invalid_argument if any limit_time is not a positive,
+   *         representable whole number of seconds, or if an actual_run_time
+   *         is invalid or exceeds its limit_time.
    * @see append_job()
    * @see submit_job()
    */
   std::vector<job_no_t>
   append_jobs(const std::vector<Job_Append_Request> &requests);
+
+  /** Lifecycle state returned by get_job_statuses(). */
+  enum class Job_State { PENDING, RUNNING, COMPLETED, REJECTED };
+
+  /** Point-in-time status of one job created by append_job(s). */
+  struct Job_Status {
+    job_no_t job_idx;
+    Job_State state;
+    std::optional<sim_time_t> start_time;
+    std::optional<sim_time_t> end_time;
+    std::optional<sim_time_t> expected_start_time;
+  };
+
+  /**
+   * @brief Query appended jobs by their stable identifiers.
+   * @details Pending jobs receive an on-demand projected start based on the
+   * scheduler's current queue order, running-job limit-time releases, and
+   * current capacity. Scheduled jobs return their actual simulated start and
+   * end timestamps. Results preserve request order and duplicate IDs.
+   * @throws std::out_of_range if an ID was not returned by append_job(s).
+   */
+  std::vector<Job_Status>
+  get_job_statuses(const std::vector<job_no_t> &job_idxs) const;
 
 protected:
   /**
@@ -243,6 +347,10 @@ protected:
    * @see Trace::insert_job()
    */
   void submit_job(job_no_t job_idx, sim_time_t submit_time);
+
+  void record_appended_job(job_no_t job_idx, sim_time_t submit_time,
+                           num_nodes_t num_nodes, tdiff_t limit_time);
+  void record_appended_job_start(job_no_t job_idx);
 
 public:
   /**
@@ -371,9 +479,9 @@ public:
    * @details Returned by get_backfill_window() for a caller evaluating
    * whether a candidate can backfill without delaying the FCFS queue head.
    * `current_time` and `available_nodes` describe capacity immediately;
-   * `releases` then describes projected capacity increases up to the head's
-   * `shadow_time`. Release events use the time-limit estimates used by
-   * SchedulerBase::calculate_fcfs_reservation, rather than actual runtimes,
+   * `releases` then describes every projected capacity increase from the
+   * currently running jobs. Release events use the time-limit estimates used
+   * by SchedulerBase::calculate_fcfs_reservation, rather than actual runtimes,
    * so the projection and reservation agree. `shadow_time` is -1 when no
    * FCFS head is waiting.
    */
@@ -394,8 +502,7 @@ public:
     num_nodes_t available_nodes; ///< Nodes free immediately at current_time.
     sim_time_t
         shadow_time; ///< Reserved FCFS-head start time, or -1 if no head waits.
-    std::vector<Resource_Release>
-        releases; ///< Capacity increases through shadow_time.
+    std::vector<Resource_Release> releases; ///< Projected capacity increases.
   };
 
   /**
@@ -403,7 +510,8 @@ public:
    * @details
    * The result is a snapshot: available nodes and release times reflect
    * current scheduler state, while release times are based on the same
-   * time-limit estimates used for the FCFS reservation.
+   * time-limit estimates used for the FCFS reservation. Releases include
+   * every currently running job, including when no FCFS head waits.
    * @return Backfill_Window value for the current simulation time.
    */
   Backfill_Window get_backfill_window() const;
@@ -435,8 +543,8 @@ public:
    *
    * @pre The caller has completed scheduling at the current time, normally by
    * calling advance_to(get_current_time()) after adding jobs at that time.
-   * @pre This simulation was constructed with the CustomFCFSScheduler callback
-   * constructor and uses EASY backfilling.
+   * @pre The selected scheduler supports on-demand waiting-resource-area
+   * queries and uses EASY backfilling.
    * @param[in] utilization Expected system-utilization factor in (0, 1], or
    * zero to use the fallback factor 1.
    * @return Horizon duration from the shadow time. Returns zero for an empty
@@ -444,8 +552,8 @@ public:
    * resources.
    * @throws std::invalid_argument if utilization is non-finite, negative, or
    * greater than 1.
-   * @throws std::logic_error if this simulation does not use Custom FCFS with
-   * EASY backfilling.
+   * @throws std::logic_error if the scheduler does not support prediction or
+   * does not use EASY backfilling.
    */
   tdiff_t get_prediction_horizon(double utilization) const;
 
@@ -476,7 +584,9 @@ public:
      */
     double utilization;
     tdiff_t avg_wait_time;       ///< Mean completed-job wait duration.
+    tdiff_t avg_run_time;        ///< Mean completed-job execution duration.
     tdiff_t avg_turnaround_time; ///< Mean completed-job submit-to-end duration.
+    double avg_bounded_slowdown; ///< Mean bounded slowdown (10-second bound).
     sim_time_t makespan;         ///< Latest completion time in the trace.
   };
 
@@ -619,6 +729,12 @@ protected:
    * advance drains outstanding work. REPLAY input is not supported.
    */
   void run_progressive();
+
+  /**
+   * @brief Write a configured automatic checkpoint when it is due.
+   * @param[in] file_boundary Whether a progressive file was fully processed.
+   */
+  void maybe_save_automatic_checkpoint(bool file_boundary);
 
   /**
    * @brief Record what each job arriving now sees ahead of it in the queue.

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dr_evt_market"
+version = "0.1.0"
+description = "A federation market over DR_EVT"
+readme = "dr_evt_market/README.md"
+authors = [{name = "LLNL"}]
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+mechanisms = ["numpy", "scipy"]
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dr_evt_market*"]

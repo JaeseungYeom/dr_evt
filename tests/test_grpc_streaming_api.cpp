@@ -91,6 +91,8 @@ void connect_and_init(SimulationClient &client, const std::string &trace_file) {
   init->set_trace_format("simple");
   init->set_timestamp_format("epoch");
   init->set_backfill_policy("easy");
+  init->set_cap_backfill_power(true);
+  init->set_cap_fcfs_power(true);
   init->set_priority_policy("fcfs");
   init->set_run_time_mode("limit");
   init->set_infile(trace_file);
@@ -236,6 +238,21 @@ bool test_batch_append(const std::string &server_address,
       return false;
     }
 
+    ClientMessage pending_query;
+    pending_query.mutable_get_job_statuses()->add_job_idx(job_idxs[0]);
+    pending_query.mutable_get_job_statuses()->add_job_idx(job_idxs[2]);
+    const auto pending_response = client.call(pending_query);
+    if (pending_response.get_job_statuses().jobs_size() != 2 ||
+        pending_response.get_job_statuses().jobs(0).state() !=
+            dr_evt_grpc::JOB_STATE_PENDING ||
+        !pending_response.get_job_statuses()
+             .jobs(0)
+             .has_expected_start_time()) {
+      std::cerr << "  FAIL: pending status response is incomplete\n";
+      client.finish();
+      return false;
+    }
+
     ClientMessage advance_req;
     advance_req.mutable_advance_to()->set_target_time(1e9);
     client.call(advance_req);
@@ -257,6 +274,21 @@ bool test_batch_append(const std::string &server_address,
                    "resource_area=7250\n";
       client.finish();
       return false;
+    }
+
+    ClientMessage completed_query;
+    for (const auto idx : job_idxs) {
+      completed_query.mutable_get_job_statuses()->add_job_idx(idx);
+    }
+    const auto completed_response = client.call(completed_query);
+    for (const auto &job : completed_response.get_job_statuses().jobs()) {
+      if (job.state() != dr_evt_grpc::JOB_STATE_COMPLETED ||
+          !job.has_scheduled() ||
+          job.scheduled().end_time() < job.scheduled().start_time()) {
+        std::cerr << "  FAIL: completed status response is incomplete\n";
+        client.finish();
+        return false;
+      }
     }
   } catch (const std::exception &e) {
     std::cerr << "  FAIL: " << e.what() << "\n";
@@ -338,6 +370,16 @@ bool test_backfill_window(const std::string &server_address,
     if (!expected_snapshot) {
       std::cerr << "  FAIL: expected 0 free nodes, shadow=100, "
                 << "releases [(50,40), (100,60)]\n";
+      client.finish();
+      return false;
+    }
+
+    ClientMessage horizon_query;
+    horizon_query.mutable_get_prediction_horizon()->set_utilization(1.0);
+    const auto horizon_response = client.call(horizon_query);
+    if (std::fabs(horizon_response.get_prediction_horizon().horizon() - 200.0) >
+        1e-12) {
+      std::cerr << "  FAIL: expected prediction horizon 200\n";
       client.finish();
       return false;
     }
@@ -425,7 +467,9 @@ bool test_warm_start(const std::string &server_address,
         std::fabs(stats.resource_area() - 51.0) < 1e-12 &&
         std::fabs(stats.utilization() - 0.85) < 1e-12 &&
         std::fabs(stats.avg_wait_time() - 1.5) < 1e-12 &&
+        std::fabs(stats.avg_run_time() - 3.0) < 1e-12 &&
         std::fabs(stats.avg_turnaround_time() - 4.5) < 1e-12 &&
+        std::fabs(stats.avg_bounded_slowdown() - 1.0) < 1e-12 &&
         std::fabs(stats.makespan() - 16.0) < 1e-12;
     if (!correct) {
       std::cerr << "  FAIL: warm-start statistics did not match native run\n";

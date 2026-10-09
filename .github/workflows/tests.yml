@@ -24,8 +24,8 @@ jobs:
         compiler: [gcc, clang]
         include:
           - compiler: gcc
-            cc: gcc-13
-            cxx: g++-13
+            cc: gcc-14
+            cxx: g++-14
           - compiler: clang
             cc: clang-18
             cxx: clang++-18
@@ -81,7 +81,7 @@ jobs:
           python -m venv venv
           source venv/bin/activate
           python -m pip install --upgrade pip
-          python -m pip install grpcio grpcio-tools protobuf
+          python -m pip install grpcio grpcio-tools protobuf numpy scipy
 
       - name: Configure CMake
         env:
@@ -124,7 +124,7 @@ jobs:
           # docs/getting-started/installation.md's "Livermore Computing
           # (LC) HPC systems" section for the full explanation).
           # Build test binaries
-          make test_append_job_api-bin test_grpc_streaming_api-bin test_batch_vs_streaming-bin test_progressive_load-bin test_queue_input-bin
+          make test_append_job_api-bin test_checkpoint_restart-bin test_grpc_streaming_api-bin test_batch_vs_streaming-bin test_progressive_load-bin test_queue_input-bin
           # gRPC client/server + MPI multi-client/server test harness
           # (already covered by `make -j$(nproc)` above since none of
           # these are EXCLUDE_FROM_ALL, but listed explicitly here too
@@ -253,7 +253,7 @@ jobs:
       - name: Run Core CTest Tests
         id: core-ctest
         run: |
-          echo "Running 15 native CTest registrations, the trace-tools test, plus MPI when available"
+          echo "Running 17 native CTest registrations, the trace-tools test, plus MPI when available"
           cd build
           ctest --output-on-failure
 
@@ -262,9 +262,18 @@ jobs:
         run: |
           source venv/bin/activate
           echo "========================================"
-          echo "Running Python API Tests (18 tests)"
+          echo "Running Python API Tests (19 tests)"
           echo "========================================"
           PYTHON_EXECUTABLE=$(command -v python) ./tests/run_python_tests.sh
+
+      - name: Run Market Package Tests
+        id: market-package
+        run: |
+          source venv/bin/activate
+          echo "========================================"
+          echo "Running Market Package Tests (12 tests)"
+          echo "========================================"
+          PYTHON_EXECUTABLE=$(command -v python) ./tests/run_market_tests.sh
 
       - name: Run gRPC Client/Server Tests
         id: grpc
@@ -278,7 +287,7 @@ jobs:
         id: append-job
         run: |
           echo "========================================"
-          echo "Running Append-Job Tests (20 C++ + 5 optional gRPC checks)"
+          echo "Running Append-Job Tests (23 C++ + 5 optional gRPC checks)"
           echo "========================================"
           ./tests/run_append_job_tests.sh
 
@@ -304,7 +313,7 @@ jobs:
         id: progressive-load
         run: |
           echo "========================================"
-          echo "Running Progressive Loading Tests (11 C++ + 4 CLI)"
+          echo "Running Progressive Loading Tests (11 C++ + 5 CLI)"
           echo "========================================"
           ./tests/run_progressive_load_tests.sh
 
@@ -340,12 +349,13 @@ jobs:
           echo "  Resource History (5 tests): ${{ steps.resource-history.outcome }}"
           echo "  Job Store (6 tests): ${{ steps.job-store.outcome }}"
           echo "  Config (12 tests): ${{ steps.config.outcome }}"
-          echo "  CTest (15 native + trace tools + MPI when available): ${{ steps.core-ctest.outcome }}"
-          echo "  Python API (18 tests): ${{ steps.python-api.outcome }}"
-          echo "  Append-Job (20 C++ + 5 optional gRPC checks): ${{ steps.append-job.outcome }}"
+          echo "  CTest (17 native + trace tools + MPI when available): ${{ steps.core-ctest.outcome }}"
+          echo "  Python API (19 tests): ${{ steps.python-api.outcome }}"
+          echo "  Market Package (12 tests): ${{ steps.market-package.outcome }}"
+          echo "  Append-Job (23 C++ + 5 optional gRPC checks): ${{ steps.append-job.outcome }}"
           echo "  Backfill-window focused rerun (5 checks already counted): ${{ steps.backfill-window.outcome }}"
           echo "  Single-Coordinator gRPC: ${{ steps.grpc-single-coordinator.outcome }}"
-          echo "  Progressive Loading (11 C++ + 4 CLI): ${{ steps.progressive-load.outcome }}"
+          echo "  Progressive Loading (11 C++ + 5 CLI): ${{ steps.progressive-load.outcome }}"
           echo "  Queue Input Schema: ${{ steps.queue-input-schema.outcome }}"
           echo "  gRPC Client/Server (2 tests): ${{ steps.grpc.outcome }}"
           echo "  Scale (7 tests): ${{ steps.scale.outcome }}"
@@ -376,12 +386,12 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake libboost-all-dev gcc-13 g++-13
+          sudo apt-get install -y cmake libboost-all-dev gcc-14 g++-14
 
       - name: Configure without Ser20
         env:
-          CC: gcc-13
-          CXX: g++-13
+          CC: gcc-14
+          CXX: g++-14
         run: |
           cmake -S . -B build-no-ser20 \
             -DCMAKE_BUILD_TYPE=Release \
@@ -397,6 +407,64 @@ jobs:
             -j$(nproc)
           ./build-no-ser20/t_state_rngen
           ./build-no-ser20/t_state 10 42 4 2
+
+  redis-integration:
+    name: Redis Integration (Ser20 ${{ matrix.ser20 }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        ser20: ['OFF', 'ON']
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            libboost-all-dev \
+            libgrpc++-dev \
+            libhiredis-dev \
+            libprotobuf-dev \
+            protobuf-compiler \
+            protobuf-compiler-grpc \
+            redis-server \
+            gcc-14 \
+            g++-14
+
+      - name: Configure Redis-enabled build
+        env:
+          CC: gcc-14
+          CXX: g++-14
+        run: |
+          cmake -S . -B build-redis \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/install" \
+            -DDR_EVT_WITH_REDIS=ON \
+            -DDR_EVT_WITH_SER20=${{ matrix.ser20 }} \
+            -DDR_EVT_WITH_UNIT_TESTING=OFF \
+            -DDR_EVT_ENABLE_PROTOBUF=ON \
+            -DDR_EVT_ENABLE_GRPC=ON
+
+      - name: Build and install Redis-enabled binaries
+        run: |
+          cmake --build build-redis -j2
+          cmake --install build-redis
+
+      - name: Run Redis integration test
+        env:
+          CMAKE_INSTALL_PREFIX: ${{ github.workspace }}/install
+          REQUIRE_CHECKPOINT_RESTART: ${{ matrix.ser20 == 'ON' && '1' || '0' }}
+        run: ./tests/run_redis_tests.sh
+
+      - name: Run Redis gRPC client example test
+        env:
+          CMAKE_INSTALL_PREFIX: ${{ github.workspace }}/install
+        run: ./tests/run_redis_grpc_client_test.sh
 
   documentation:
     name: Build Documentation

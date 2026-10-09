@@ -35,6 +35,12 @@
 - Install: `apt-get install libopenmpi-dev openmpi-bin`
 - Install the Python MPI binding for the launcher: `python3 -m pip install mpi4py`
 
+**Redis**: For searchable job and resource output (`-DDR_EVT_WITH_REDIS=ON`)
+- Requires hiredis headers and a reachable Redis server at runtime
+- Redis++ is found as an installed package or fetched automatically
+- See [Redis Output](../user-guide/redis-output.md) for installation, server
+  startup, and query examples
+
 ### gRPC and Protocol Buffers
 
 Enable gRPC directly when the client/server interface is needed. This selects
@@ -81,6 +87,10 @@ Protobuf or gRPC (both are opt-in, see below). If Boost or Ser20 is not found,
 the first build obtains and compiles it via FetchContent. Boost can take
 ~10-15 minutes; enabling Protobuf and/or gRPC adds their own download/build
 time when they are not found either. Subsequent builds reuse populated sources.
+When fetched Boost must be installed, DR_EVT excludes Boost's upstream install
+rules and installs the dependency once through its own guarded step. A later
+install to a prefix already containing the same Boost version skips the Boost
+header tree instead of traversing and reinstalling it.
 
 **CMake warnings**: You will see deprecation warnings from third-party dependencies (Boost, pybind11). These are harmless and come from their old cmake_minimum_required versions. To suppress them:
 ```bash
@@ -130,7 +140,24 @@ cmake -S . -B build -DDR_EVT_ENABLE_GRPC=ON -DAVOID_SYSTEM_GRPC=ON
 # Reuse an explicit/local gRPC install, otherwise fall back to FetchContent
 cmake -S . -B build -DDR_EVT_ENABLE_GRPC=ON -DAVOID_SYSTEM_GRPC=ON \
   -DCMAKE_INSTALL_PREFIX=/path/to/local/prefix
+
+# Also install a fetched gRPC stack for reuse by later clean build trees
+cmake -S . -B build -DDR_EVT_ENABLE_GRPC=ON -DAVOID_SYSTEM_GRPC=ON \
+  -DDR_EVT_INSTALL_FETCHED_GRPC=ON \
+  -DCMAKE_INSTALL_PREFIX=/path/to/local/prefix
+cmake --build build -j4
+cmake --install build
 ```
+
+Fetched gRPC, Protobuf, Abseil, and their supporting libraries are not
+installed by default. They are statically linked implementation dependencies,
+and installing them automatically would substantially enlarge the install
+prefix and could conflict with other versions already present there. Set
+`DR_EVT_INSTALL_FETCHED_GRPC=ON` to install the complete compatible stack when
+the extra files are desirable: subsequent clean DR_EVT build trees can then
+discover it through the same `CMAKE_INSTALL_PREFIX`, avoiding another gRPC
+configuration and rebuild. The option has no effect when an installed gRPC is
+already selected.
 
 **Protobuf (standalone, only when gRPC is not used):**
 ```bash
@@ -148,6 +175,13 @@ cmake -S . -B build -DDR_EVT_BUILD_PYTHON=ON
 # Specify Python executable
 cmake -S . -B build -DDR_EVT_BUILD_PYTHON=ON -DPython3_EXECUTABLE=/path/to/python3
 ```
+
+**Redis output:**
+```bash
+cmake -S . -B build -DDR_EVT_WITH_REDIS=ON
+```
+
+See [Redis Output](../user-guide/redis-output.md) for the runtime options.
 
 **Testing:**
 ```bash
@@ -169,6 +203,63 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 # Release build (optimized, default)
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 ```
+
+### Linux `perf` profiling (recommended)
+
+`perf` profiles the default shared-library build and does not require `-pg` or
+`DR_EVT_GPROF`. Build the normal optimized configuration, then record a
+representative simulator invocation:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j4
+
+perf record -F 99 -g --call-graph dwarf -o perf.data -- \
+  ./build/simulator /path/to/trace.csv [options]
+perf report --stdio -i perf.data --dsos=libdr_evt.so > perf-report.txt
+perf annotate --stdio -i perf.data --dsos=libdr_evt.so > perf-annotated.txt
+```
+
+The report shows function-level costs, while the annotated output provides
+source-line and instruction-level detail when debug information is available.
+The project adds debug information independently of the selected optimized
+build type. Use a workload long enough to collect substantially more than a
+few hundred samples.
+
+See [Performance Analysis](../dev/PERFORMANCE_ANALYSIS.md) for a worked
+`perf` profile of the circular FCFS scheduler and its identified optimization
+targets.
+
+### GNU `gprof` profiling
+
+```bash
+cmake -S . -B build-gprof \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DDR_EVT_GPROF=ON
+cmake --build build-gprof -j4
+
+# Run outside the source tree; the instrumented process writes gmon.out here.
+mkdir -p profile-run
+cd profile-run
+../build-gprof/simulator /path/to/trace.csv [options]
+gprof ../build-gprof/simulator gmon.out > profile.txt
+```
+
+`DR_EVT_GPROF` adds `-pg` during both compilation and linking. It retains the
+selected build type's optimization level (`Release` therefore remains `-O3`),
+but disables LTO and GCC's identical-code folding so `gprof` does not assign
+samples from shared optimized code to an unrelated C++ template symbol.
+Because GNU `gprof` cannot profile application code in shared libraries,
+enabling `DR_EVT_GPROF` also makes `BUILD_SHARED_LIBS` effectively `OFF` for
+that configuration. The cached `BUILD_SHARED_LIBS` preference is not changed,
+so later non-gprof configurations retain the requested shared-library mode.
+Use a separate run directory for each process or run because each writes a
+file named `gmon.out` in its current working directory.
+
+See [Performance Analysis](../dev/PERFORMANCE_ANALYSIS.md) for the project's
+recorded profiling analysis. That snapshot was collected with Linux `perf`,
+but its workload documentation and interpretation guidance also apply when
+evaluating a `gprof` capture.
 
 **Complete example with all features:**
 ```bash

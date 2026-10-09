@@ -9,6 +9,9 @@ maintainer-facing build guidance. It is separate from the user documentation.
   and the circular and block queue guides.
 - [Simulation Pipeline and Job Lifecycle](JOB_LIFECYCLE.md) — How input moves
   through the job store, scheduler, event loop, resource accounting, and output.
+- [Performance Analysis](PERFORMANCE_ANALYSIS.md) — Linux `perf` breakdown of
+  the circular FCFS scheduler on the June 2022 RIKEN trace and its primary
+  optimization targets.
 - [Simulation vs. Replay Modes](design-decisions/SIMULATION_VS_REPLAY_MODES.md)
   — The two execution models and their trade-offs.
 - [Timezone Offset Support](design-decisions/TIMEZONE_SUPPORT.md) — ISO 8601

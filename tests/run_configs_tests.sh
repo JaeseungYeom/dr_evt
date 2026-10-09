@@ -11,11 +11,18 @@ set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
 
 cd "$REPO_ROOT"
 
 # Source common simulator path finder
 source "$SCRIPT_DIR/set_simulator_path.sh"
+source "$SCRIPT_DIR/select_python.sh"
+if ! select_python_interpreter 3 6; then
+    echo "Error: Python 3.6 or newer is required" >&2
+    exit 1
+fi
 
 echo "=========================================="
 echo "Configuration File Tests"
@@ -29,6 +36,7 @@ echo ""
 if ! $SIMULATOR --help 2>&1 | grep -q -- "--config"; then
     echo "Simulator built without Protobuf support (no --config option)"
     echo "Skipping config tests (require -DDR_EVT_ENABLE_PROTOBUF=ON)"
+    test_report_skip "simulator was built without Protobuf support"
     exit 0
 fi
 
@@ -43,7 +51,8 @@ fi
 PASS=0
 FAIL=0
 TEST_WORK_DIR=$(mktemp -d "/tmp/dr-evt-config.XXXXXXXX")
-trap 'rm -rf -- "$TEST_WORK_DIR"' EXIT INT TERM
+cleanup() { rm -rf -- "$TEST_WORK_DIR"; }
+test_report_set_cleanup cleanup
 
 # Test 1: Minimal config vs CLI
 echo "Test 1: Minimal config"
@@ -76,13 +85,18 @@ $SIMULATOR "$TEST_TRACE" \
     --backfill_policy easy \
     --priority_policy fcfs \
     --num_max_candidates 8 \
+    --cap_backfill_power \
+    --cap_fcfs_power \
     --outfile "$TEST_WORK_DIR/cli_full.csv"
 
 $SIMULATOR "$TEST_TRACE" \
     --config tests/test_configs/full_config.pb \
-    --outfile "$TEST_WORK_DIR/pb_full.csv"
+    --outfile "$TEST_WORK_DIR/pb_full.csv" \
+    > "$TEST_WORK_DIR/pb_full.log"
 
-if diff -q "$TEST_WORK_DIR/cli_full.csv" "$TEST_WORK_DIR/pb_full.csv" > /dev/null; then
+if diff -q "$TEST_WORK_DIR/cli_full.csv" "$TEST_WORK_DIR/pb_full.csv" > /dev/null &&
+   grep -q "cap_backfill_power: true" "$TEST_WORK_DIR/pb_full.log" &&
+   grep -q "cap_fcfs_power: true" "$TEST_WORK_DIR/pb_full.log"; then
     echo "  ✓ Full config matches CLI"
     PASS=$((PASS + 1))
 else
@@ -194,7 +208,7 @@ fi
 # trace-file argument - see tests/test_protobuf_config_doc_examples.py's
 # own docstring for the full story).
 echo "Test 7: protobuf-config.md's own documented examples"
-if SIMULATOR="$SIMULATOR" python3 tests/test_protobuf_config_doc_examples.py \
+if SIMULATOR="$SIMULATOR" "$PYTHON_BIN" tests/test_protobuf_config_doc_examples.py \
     > "$TEST_WORK_DIR/doc_examples.log" 2>&1; then
     echo "  ✓ all documented config examples parse and run correctly"
     PASS=$((PASS + 1))

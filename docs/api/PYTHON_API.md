@@ -40,8 +40,10 @@ For experimental external backfill selection, set
 `params.num_max_candidates`, then call
 `Simulation(params, job_cost_function, backfill_selector)`. The cost callback
 receives `(job_id, submit_time, runtime_estimate, nodes_requested)`. The
-selector receives a list of `(job_id, cost)` pairs and returns one offered ID
-or `None`.
+selector receives a list of `BackfillCandidate` objects and returns the list
+position of the selected candidate, or `None`. Each candidate exposes its
+ephemeral `queue_index` and floating-point scheduler `cost`. EASYPower uses
+that existing scalar as the candidate's predicted power.
 
 ## Configuration
 
@@ -50,7 +52,9 @@ or `None`.
 | Attribute | Type |
 |---|---|
 | `infile` | `str` |
-| `total_nodes` | `int` |
+| `redis_uri` | `str` |
+| `redis_key_prefix` | `str` |
+| `total_nodes` | `int`; file-loaded jobs requesting more are dropped and reported |
 | `capacity_schedule` | `str` |
 | `sim_start_time` | `float` |
 | `trace_format` | `str` |
@@ -58,12 +62,19 @@ or `None`.
 | `run_time_mode` | `RunTimeMode` |
 | `backfill_policy` | `BackfillPolicy` |
 | `num_max_candidates` | `int` |
+| `cap_backfill_power` | `bool` |
+| `cap_fcfs_power` | `bool` |
 | `priority_policy` | `PriorityPolicy` |
 | `verbose` | `bool` |
 
 `sim_start_time` is the global simulation boundary; it is distinct from each
 job's historical `begin_time`. A positive value enables replay-based warm start
 for replay input, while zero preserves ordinary full replay.
+
+Set both Redis fields to direct the simulated-job schedule to the searchable
+Redis schema and the resource history to `<redis_key_prefix>:resources:csv`, as
+documented in [Redis Output](../user-guide/redis-output.md). The extension must
+be built with `DR_EVT_WITH_REDIS=ON`.
 
 Other C++/CLI configuration fields are not exposed by the binding. Use the
 `simulator` executable when one of those settings is required; its options
@@ -91,10 +102,13 @@ Their scheduling semantics are documented in
 |---|---|
 | `run()` | Run a configured batch trace to completion. |
 | `initialize_trace(max_jobs=0)` | Load the configured trace and return the number loaded. |
-| `append_job(submit_time, num_nodes, queue, limit_time)` | Append and enqueue one live job; return its ID. |
+| `append_job(submit_time, num_nodes, queue, limit_time, actual_run_time=None)` | Append and enqueue one live job; return its ID. The limit must be a positive whole number of seconds; a known runtime must be positive and no greater than the limit. |
 | `append_jobs(requests)` | Atomically append and enqueue ordered `JobAppendRequest` values; return their IDs. |
+| `get_job_statuses(job_idxs)` | Return lifecycle and timing snapshots for appended job IDs. |
 | `advance_to(target_time)` | Process events at or before the target. |
 | `run_until_exclusive(target_time)` | Process events strictly before the target. |
+| `save_checkpoint(filename)` | Save complete simulation state to a same-build binary checkpoint. |
+| `load_checkpoint(filename)` | Replace current state from a compatible checkpoint. |
 | `get_current_time()` | Return current simulation time. |
 | `get_nodes_in_use()` | Return allocated nodes. |
 | `get_current_utilization()` | Return instantaneous usage of effective scheduled capacity. |
@@ -102,8 +116,8 @@ Their scheduling semantics are documented in
 | `get_available_nodes()` | Return free nodes. |
 | `get_active_job_count()` | Return waiting jobs. |
 | `get_fcfs_head_shadow_time()` | Return the FCFS-head reservation time, or `-1`. |
-| `get_backfill_window()` | Return the current FCFS/EASY reservation snapshot. |
-| `get_prediction_horizon(utilization)` | Estimate the Custom-FCFS/EASY waiting-queue drain time from the FCFS shadow time. |
+| `get_backfill_window()` | Return the current FCFS/EASY reservation snapshot, including all running-job releases. |
+| `get_prediction_horizon(utilization)` | On demand, estimate the supported FCFS/EASY waiting-queue drain time from the shadow time. |
 | `get_statistics()` | Return a `Statistics` snapshot. |
 | `write_simulated_trace()` | Write the configured job-schedule output. |
 | `print_stats()` | Print summary statistics. |
@@ -112,10 +126,33 @@ Their scheduling semantics are documented in
 Detailed time-advancement and job-submission contracts are defined in the
 [Streaming API](STREAMING_API.md).
 
+Checkpoint methods are present when DR_EVT is built with
+`DR_EVT_WITH_SER20=ON`, and files require matching `SimParams`. Custom FCFS is
+supported when the destination `Simulation` is constructed with equivalent
+cost and selection callbacks; callback objects and external state are not
+stored in the checkpoint. Standard and Pcon trace state are preserved. Custom
+scheduler subclasses and replay/warm-start are rejected rather than restored
+inexactly. Progressive file loading resumes at the next fully admitted input
+file. Output files remain external to the
+checkpoint; loading archives them into numbered pre-restart segments and opens
+fresh segments at the configured paths. Use `dr_evt_stitch_checkpoint_output`
+after the resumed run to reconstruct each logical output. Redis output uses
+numbered archived namespaces and the tool's `--redis-uri`/`--redis-prefix`
+mode.
+
 ## Supporting types
 
-`JobAppendRequest(submit_time, num_nodes, queue, limit_time)` represents one
-entry passed to `append_jobs()`.
+`JobAppendRequest(submit_time, num_nodes, queue, limit_time,
+actual_run_time=None)` represents one entry passed to `append_jobs()`. A known
+actual runtime lets `RunTimeMode.ACTUAL` complete a streamed job before its
+wall-time limit without any external per-job bookkeeping.
+
+`get_job_statuses()` preserves the requested ID order (including duplicates).
+A pending `JobStatus` has `state == JobState.PENDING` and an
+`expected_start_time` projected from current capacity, running-job limit-time
+releases, and the scheduler's current queue order. Running and completed jobs
+have `start_time` and `end_time`; rejected jobs have no timing. The compact
+timing record remains available after completed trace rows are flushed.
 
 `BackfillWindow` exposes `current_time`, `available_nodes`,
 `shadow_time`, and an ordered list of `ResourceRelease` values. Each release
@@ -127,8 +164,11 @@ contains `time` and `nodes_released`.
   `jobs_waiting`;
 - `current_time`, `total_nodes`, `nodes_in_use`, and
   `nodes_available`; and
-- `resource_area`, `utilization`, `avg_wait_time`, `avg_turnaround_time`, and
-  `makespan`.
+- `resource_area`, `utilization`, `avg_wait_time`, `avg_run_time`,
+  `avg_turnaround_time`, `avg_bounded_slowdown`, and `makespan`.
+
+`avg_bounded_slowdown` is the mean of
+`max(1, turnaround / max(run_time, 10 seconds))` over completed jobs.
 
 For simulations constructed with Custom-FCFS callbacks, `resource_area` is
 accumulated as `nodes_in_use * interval` between settled scheduling times.

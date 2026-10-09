@@ -33,15 +33,22 @@ job_submit_time,begin_time,end_time,num_nodes,exit_status,time_limit
 ```
 
 `begin_time` and `end_time` are the schedule produced by simulation.
-`exit_status` is written as `0`. Jobs rejected before scheduling are not
-written to this output. With
+`exit_status` is written as `0`. Jobs dropped during input admission are not
+written to this output; each drop is reported on standard error. With
 `-DDR_EVT_LEGACY_QUEUE_INPUT=ON`, the equivalent selected input/output column
 is the legacy named `queue` field instead of `q_id`.
+
+With `-DDR_EVT_WITH_REDIS=ON`, the schedule and resource history can instead be
+written to Redis. See [Redis Output](redis-output.md) for server setup, flush
+behavior, key layout, and queries.
 
 **TODO — user-defined queue names:** Preserve user-defined input queue names
 instead of emitting only DR_EVT's built-in canonical names.
 
 ## Resource-usage trace
+
+With Redis output enabled, this CSV is stored at
+`<redis_key_prefix>:resources:csv` rather than in a file.
 
 Use `--resource_trace` to name the resource-usage file explicitly:
 

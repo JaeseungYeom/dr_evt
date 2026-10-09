@@ -52,7 +52,7 @@ num_jobs_t num_jobs = sim.initialize_trace();
 std::cout << "Loaded " << num_jobs << " jobs\n";
 ```
 
-### `append_job(submit_time, num_nodes, queue, limit_time)`
+### `append_job(submit_time, num_nodes, queue, limit_time, actual_run_time)`
 
 Adds a genuinely new job - one the trace has never seen before - to the
 job store and immediately enqueues it for scheduling. This is how a job the
@@ -61,7 +61,8 @@ streaming simulation.
 
 ```cpp
 job_no_t append_job(sim_time_t submit_time, num_nodes_t num_nodes,
-                     const std::string& queue, tdiff_t limit_time);
+                     const std::string& queue, tdiff_t limit_time,
+                     std::optional<tdiff_t> actual_run_time = std::nullopt);
 ```
 
 **Parameters:**
@@ -69,7 +70,11 @@ job_no_t append_job(sim_time_t submit_time, num_nodes_t num_nodes,
 - `num_nodes`: Number of nodes the job requests
 - `queue`: Numeric queue ID (for example, `"1"`) in the default build, or a
   queue name (for example, `"pbatch"`) with `DR_EVT_LEGACY_QUEUE_INPUT`
-- `limit_time`: User-estimated time limit, in seconds
+- `limit_time`: Positive whole-number time limit, in seconds. Fractional,
+  non-finite, zero, and negative values are rejected.
+- `actual_run_time`: Optional known execution duration. It must be positive
+  and no greater than `limit_time`. When omitted, streaming jobs retain the
+  existing behavior of running for `limit_time`.
 
 **Returns:** the new job's `job_no`
 
@@ -82,13 +87,14 @@ sim.advance_to(10.0);
 ### `append_jobs(requests)`
 
 The batch counterpart to `append_job()` - several new jobs in one call,
-each as a `Job_Append_Request` (the same four fields `append_job()`
+each as a `Job_Append_Request` (the same fields `append_job()`
 takes, grouped). Resolves job-store capacity once for the whole batch
 rather than once per job, so it's the more efficient choice when several
 jobs are already known together (e.g. several arrivals collected in one
 polling interval), not just a loop over `append_job()`. All-or-nothing:
 requests must already be sorted by `submit_time` (non-decreasing), and
 either the whole batch is appended or, on any failure (unsorted input,
+an invalid or fractional `limit_time`,
 `--job_store_overflow=abort` with no room even after reclaiming, or
 `--check_memory_pressure` refusing the batch under real memory
 pressure - see [Command-Line Options](../user-guide/command-line.md)),
@@ -112,6 +118,18 @@ std::vector<Simulation::Job_Append_Request> batch = {
 };
 auto job_nos = sim.append_jobs(batch);
 ```
+
+### `get_job_statuses(job_nos)`
+
+Returns a status snapshot for each ID returned by `append_job()` or
+`append_jobs()`, preserving request order and duplicate IDs. Pending jobs
+include an on-demand `expected_start_time` projection. Once scheduled, a job
+instead includes its simulated `start_time` and `end_time` and is reported as
+running or completed according to the current simulation time. Rejected jobs
+have no timing. Status remains queryable after completed trace records are
+flushed; an ID not created by the append APIs raises `std::out_of_range`.
+This query uses simulation state and does not require a Redis-enabled build or
+a Redis server.
 
 ### `advance_to(target_time)`
 
@@ -156,6 +174,62 @@ sim.advance_to(checkpoint_time);
 sim.flush_completed_jobs();
 ```
 
+The `job_flush_interval` setting invokes the same operation periodically after
+processed departures. Setting it to `1` attempts a flush after every completed
+job. A later job that completes through backfill remains buffered behind any
+earlier unfinished job so permanent job-ID order is preserved.
+
+This output flush is not a restart checkpoint. Use `save_checkpoint()` when
+the simulation itself must resume later.
+
+### `save_checkpoint()` / `load_checkpoint()`
+
+Save all logical state at a settled API boundary and restore it into a newly
+constructed simulation with matching `Sim_Params`:
+
+```cpp
+sim.advance_to(500.0);
+sim.save_checkpoint("simulation.ckpt");
+
+Simulation resumed(params);
+resumed.load_checkpoint("simulation.ckpt");
+resumed.advance_to(1000.0);
+```
+
+The checkpoint includes resident job records, appended-job status history,
+scheduler queue state, running jobs, pending events, capacity and statistics
+accounting, resource history, and the random-number generator. If incremental
+output files were open, they are flushed when saved and reopened in append mode
+when loaded. For file output, the checkpoint stores each flushed byte boundary.
+Loading it renames the current file to `<path>.pre-restart.N`, records the
+boundary in an adjacent `.checkpoint-bytes` sidecar, and starts a fresh segment
+at the original path.
+
+After the resumed run, reconstruct either output with:
+
+```bash
+dr_evt_stitch_checkpoint_output output.csv output.stitched.csv
+```
+
+The tool discovers all numbered archives, retains each only through its saved
+checkpoint boundary, removes repeated CSV headers, and atomically writes the
+combined result. For Redis, rebuild the canonical namespace in place with
+`dr_evt_stitch_checkpoint_output --redis-uri URI --redis-prefix PREFIX`.
+
+Checkpoint/restart is compiled when `DR_EVT_WITH_SER20=ON`. Checkpoints are
+Ser20 binary, same-build artifacts rather than a portable exchange format. The
+destination must use matching scheduling, runtime, capacity, and output
+configuration. Callback-based Custom FCFS is supported when the destination
+simulation is constructed with equivalent cost and selection callbacks. The
+checkpoint restores its queue entries, previously computed costs, candidate
+state, and accounting without invoking the cost callback during load; callback
+objects and their externally owned state are not serialized. Custom scheduler
+subclasses remain unsupported because they may add unknown state. Standard and
+Pcon traces and progressive file loading are supported; replay/warm-start
+execution remains unsupported. Redis namespaces are archived as numbered
+`PREFIX:pre-restart:N` generations and rebuilt by the same stitch tool.
+`get_job_statuses()` remains independent of Redis.
+
 ### `run_until_exclusive(target_time)`
 
 Advances simulation to just before `target_time`, excluding events at that exact time.
@@ -195,8 +269,10 @@ BasicSimulation(const Sim_Params& params, job_cost_function_t cost_function,
 
 Set `params.m_num_max_candidates` before construction. The cost function is
 invoked as each job enters the wait queue. The selection function receives up
-to that many feasible `(job_id, cost)` pairs and returns one of those IDs, or
-`std::nullopt` to decline a backfill.
+to that many feasible `BackfillCandidate` records and returns the selected
+record's position in that vector, or `std::nullopt` to decline a backfill.
+Each record carries its ephemeral circular-queue index and scheduler scalar;
+EASYPower uses that scalar as predicted power.
 
 **Get current simulation time:**
 ```cpp
@@ -265,8 +341,11 @@ The snapshot contains `current_time`, immediately `available_nodes`, the
 same FCFS-head `shadow_time` (`-1` if the queue is empty), and chronologically
 ordered resource-change events in `releases`. Each event gives the simulation
 `time` at which capacity changes and the summed `nodes_released` then. Events
-use time-limit estimates and extend through the reservation; simultaneous
-releases are combined. This is an in-process API; it does not require gRPC.
+use time-limit estimates and include every currently running job, even when no
+FCFS head is waiting; simultaneous releases are combined. This is an
+in-process API; it does not require gRPC. The gRPC request returns the same
+full projection, which is useful when estimating when a prospective job could
+acquire enough nodes.
 
 ```cpp
 auto window = sim.get_backfill_window();
@@ -275,18 +354,20 @@ for (const auto& change : window.releases) {
 }
 ```
 
-**Estimate the Custom-FCFS waiting-queue prediction horizon:**
+**Estimate the waiting-queue prediction horizon:**
 
 ```cpp
 tdiff_t horizon = sim.get_prediction_horizon(utilization);
 ```
 
-This method is available only for a simulation created with the Custom-FCFS
-callback constructor and configured for EASY backfilling. Call it after the
-current backfilling cycle completes. At that point, the waiting queue contains
-only jobs that could not start, and the running set includes jobs dispatched by
-the cycle. The method holds those sets fixed: future arrivals are excluded and
-no additional waiting jobs are admitted during its forward replay.
+This method is available for the standard and Custom FCFS implementations with
+EASY backfilling. Call it after the current backfilling cycle completes. At
+that point, the waiting queue contains only jobs that could not start, and the
+running set includes jobs dispatched by the cycle. The method holds those sets
+fixed: future arrivals are excluded and no additional waiting jobs are admitted
+during its forward replay. Waiting resource-time is scanned from existing queue
+records only when this method is called; normal scheduling maintains no extra
+prediction state.
 
 Queued demand is `A_Q = sum(requested_nodes * estimated_runtime)`. Starting at
 the FCFS head's shadow time, the method integrates available nodes over each
@@ -300,9 +381,14 @@ The method returns the first completion-event offset at which accumulated
 usable area covers `A_Q`; it does not interpolate within an intermediate
 interval. If the final currently running job completes before the threshold
 is reached, the remaining area is converted to time using
-`utilization * total_nodes`. An empty queue returns zero.
+`utilization * total_nodes`. An empty queue returns zero. The gRPC
+`GetPredictionHorizonRequest` exposes the same calculation.
 
 **Get scheduling statistics** (wait times, turnaround, utilization):
+
+The returned statistics also include mean execution time and mean bounded
+slowdown. Bounded slowdown is computed per completed job as
+`max(1, turnaround / max(run_time, 10 seconds))`.
 ```cpp
 Simulation::Statistics get_statistics() const;
 ```

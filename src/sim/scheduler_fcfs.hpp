@@ -132,6 +132,29 @@ public:
   /** @copydoc SchedulerBase::has_eligible_jobs */
   bool has_eligible_jobs() override { return active_job_count() > 0; }
 
+  /** @copydoc SchedulerBase::pending_job_ids */
+  std::vector<job_no_t> pending_job_ids() const override {
+    std::vector<job_no_t> result;
+    for (const auto &job : m_wait_queue) {
+      if (!job.removed) {
+        result.push_back(job.job_id);
+      }
+    }
+    return result;
+  }
+
+  std::optional<tdiff_t> waiting_resource_area() const override {
+    tdiff_t area = 0.0;
+    for (size_t i = 0; i < m_eligible_end_idx; ++i) {
+      const auto &job = m_wait_queue[i];
+      if (!job.removed) {
+        area +=
+            static_cast<tdiff_t>(job.nodes_requested) * job.run_time_estimate;
+      }
+    }
+    return area;
+  }
+
 protected:
   /**
    * Return total size of wait queue (ALL jobs, all states).

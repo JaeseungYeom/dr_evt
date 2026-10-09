@@ -122,6 +122,54 @@ void test_append_with_empty_trace() {
   std::cout << "  PASSED" << std::endl;
 }
 
+void test_appended_job_statuses() {
+  std::cout << "\n=== Appended-job status query ===" << std::endl;
+  Sim_Params params = make_params();
+  params.m_total_nodes = 10;
+  params.m_job_store_capacity = 2;
+  params.m_job_flush_interval = 1;
+  params.set_outfile("/tmp/test_job_status_out.csv");
+  Simulation sim(params);
+  sim.get_trace().load_data(0);
+
+  const auto ids = sim.append_jobs(
+      {{0.0, 10, kTestQueueInput, 10.0}, {0.0, 10, kTestQueueInput, 5.0}});
+  const auto rejected_id = sim.append_job(0.0, 11, kTestQueueInput, 5.0);
+  const auto rejected = sim.get_job_statuses({rejected_id}).front();
+  assert(rejected.state == Simulation::Job_State::REJECTED);
+  assert(!rejected.start_time && !rejected.end_time &&
+         !rejected.expected_start_time);
+  auto pending = sim.get_job_statuses({ids[1], ids[0], ids[1]});
+  assert(pending.size() == 3);
+  assert(pending[0].state == Simulation::Job_State::PENDING);
+  assert(pending[0].expected_start_time == 10.0);
+  assert(pending[1].expected_start_time == 0.0);
+  assert(pending[2].job_idx == ids[1]);
+
+  sim.advance_to(0.0);
+  auto active = sim.get_job_statuses(ids);
+  assert(active[0].state == Simulation::Job_State::RUNNING);
+  assert(active[0].start_time == 0.0 && active[0].end_time == 10.0);
+  assert(active[1].state == Simulation::Job_State::PENDING);
+  assert(active[1].expected_start_time == 10.0);
+
+  sim.advance_to(15.0);
+  sim.flush_completed_jobs();
+  auto completed = sim.get_job_statuses(ids);
+  assert(completed[0].state == Simulation::Job_State::COMPLETED);
+  assert(completed[1].state == Simulation::Job_State::COMPLETED);
+  assert(completed[1].start_time == 10.0 && completed[1].end_time == 15.0);
+
+  bool invalid_rejected = false;
+  try {
+    (void)sim.get_job_statuses({999});
+  } catch (const std::out_of_range &) {
+    invalid_rejected = true;
+  }
+  assert(invalid_rejected);
+  std::cout << "  PASSED" << std::endl;
+}
+
 // Test 2: reclaim-before-grow at the actual insertion point (append_job(),
 // not load_data() - see OUTPUT_TRACE_BUFFERS.md's "Reclaim at the point
 // of need" section for why load_data() itself never needs this).
@@ -811,10 +859,10 @@ void test_resource_area_and_time_accounted_utilization() {
       [](job_no_t job_id, sim_time_t, tdiff_t, num_nodes_t) {
         return static_cast<job_cost_t>(job_id);
       },
-      [](const backfill_candidates_t &candidates) -> std::optional<job_no_t> {
+      [](const backfill_candidates_t &candidates) -> std::optional<size_t> {
         return candidates.empty()
                    ? std::nullopt
-                   : std::optional<job_no_t>{candidates.front().first};
+                   : std::optional<size_t>{0};
       });
   sim.get_trace().load_data(0);
 
@@ -870,10 +918,10 @@ void test_prediction_horizon() {
       [](job_no_t job_id, sim_time_t, tdiff_t, num_nodes_t) {
         return static_cast<job_cost_t>(job_id);
       },
-      [](const backfill_candidates_t &candidates) -> std::optional<job_no_t> {
+      [](const backfill_candidates_t &candidates) -> std::optional<size_t> {
         return candidates.empty()
                    ? std::nullopt
-                   : std::optional<job_no_t>{candidates.front().first};
+                   : std::optional<size_t>{0};
       });
   sim.get_trace().load_data(0);
 
@@ -940,24 +988,42 @@ void test_prediction_horizon() {
       [](job_no_t job_id, sim_time_t, tdiff_t, num_nodes_t) {
         return static_cast<job_cost_t>(job_id);
       },
-      [](const backfill_candidates_t &candidates) -> std::optional<job_no_t> {
+      [](const backfill_candidates_t &candidates) -> std::optional<size_t> {
         return candidates.empty()
                    ? std::nullopt
-                   : std::optional<job_no_t>{candidates.front().first};
+                   : std::optional<size_t>{0};
       });
   empty.get_trace().load_data(0);
   assert(approx_equal(empty.get_prediction_horizon(0.5), 0.0));
 
-  auto standard_params = make_params();
-  Simulation standard(standard_params);
-  standard.get_trace().load_data(0);
-  bool rejected_for_standard_scheduler = false;
-  try {
-    (void)standard.get_prediction_horizon(0.5);
-  } catch (const std::logic_error &) {
-    rejected_for_standard_scheduler = true;
+  // Every standard FCFS queue computes the same demand by scanning only its
+  // existing eligible entries when this query is made.
+  for (const auto queue_impl :
+       {QueueImplementation::CIRCULAR, QueueImplementation::DEQUE,
+        QueueImplementation::MULTIMAP, QueueImplementation::BLOCK}) {
+    auto standard_params = make_params();
+    standard_params.m_queue_impl = queue_impl;
+    Simulation standard(standard_params);
+    standard.get_trace().load_data(0);
+    standard.append_job(0.0, 100, kTestQueueInput, 40.0);
+    standard.advance_to(0.0);
+    standard.append_job(0.0, 50, kTestQueueInput, 8.0);
+    standard.advance_to(0.0);
+    assert(approx_equal(standard.get_fcfs_head_shadow_time(), 40.0));
+    assert(approx_equal(standard.get_prediction_horizon(0.5), 8.0));
   }
-  assert(rejected_for_standard_scheduler);
+
+  auto unsupported_params = make_params();
+  unsupported_params.m_priority_policy = PriorityPolicy::SJF;
+  Simulation unsupported(unsupported_params);
+  unsupported.get_trace().load_data(0);
+  bool rejected_for_unsupported_scheduler = false;
+  try {
+    (void)unsupported.get_prediction_horizon(0.5);
+  } catch (const std::logic_error &) {
+    rejected_for_unsupported_scheduler = true;
+  }
+  assert(rejected_for_unsupported_scheduler);
 
   auto no_backfill_params = make_params();
   no_backfill_params.m_backfill_policy = BackfillPolicy::NONE;
@@ -966,10 +1032,10 @@ void test_prediction_horizon() {
       [](job_no_t job_id, sim_time_t, tdiff_t, num_nodes_t) {
         return static_cast<job_cost_t>(job_id);
       },
-      [](const backfill_candidates_t &candidates) -> std::optional<job_no_t> {
+      [](const backfill_candidates_t &candidates) -> std::optional<size_t> {
         return candidates.empty()
                    ? std::nullopt
-                   : std::optional<job_no_t>{candidates.front().first};
+                   : std::optional<size_t>{0};
       });
   no_backfill.get_trace().load_data(0);
   bool rejected_without_easy = false;
@@ -983,6 +1049,81 @@ void test_prediction_horizon() {
   std::cout << "  PASSED" << std::endl;
 }
 
+void test_append_with_known_actual_runtime() {
+  std::cout << "\n=== Known actual runtime for streaming jobs ==="
+            << std::endl;
+  Sim_Params params = make_params();
+  Simulation sim(params);
+  sim.get_trace().load_data(0);
+
+  const auto job =
+      sim.append_job(0.0, 10, kTestQueueInput, 100.0, 25.0);
+  sim.advance_to(24.0);
+  assert(sim.get_job_statuses({job}).front().state ==
+         Simulation::Job_State::RUNNING);
+  sim.advance_to(25.0);
+  const auto completed = sim.get_job_statuses({job}).front();
+  assert(completed.state == Simulation::Job_State::COMPLETED);
+  assert(completed.end_time == 25.0);
+
+  bool rejected = false;
+  try {
+    sim.append_job(25.0, 10, kTestQueueInput, 10.0, 11.0);
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  assert(rejected);
+  std::cout << "  PASSED" << std::endl;
+}
+
+void test_fractional_streaming_limits_validate_stored_value() {
+  std::cout << "\n=== Fractional limits validate the stored value ==="
+            << std::endl;
+  Simulation sim(make_params());
+  sim.get_trace().load_data(0);
+
+  bool rejected = false;
+  try {
+    (void)sim.append_job(0.0, 1, kTestQueueInput, 10.25);
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  assert(rejected);
+  assert(sim.get_trace().data().empty());
+
+  const auto single = sim.append_job(0.0, 1, kTestQueueInput, 11, 10.25);
+  assert(sim.get_trace().job_at(single).get_limit_time() == 11);
+  assert(approx_equal(sim.get_trace().job_at(single).get_actual_run_time(),
+                      10.25));
+
+  const std::vector<Simulation::Job_Append_Request> invalid_batch = {
+      {1.0, 1, kTestQueueInput, 21, 20.01},
+      {2.0, 1, kTestQueueInput, 30.99},
+  };
+  rejected = false;
+  try {
+    (void)sim.append_jobs(invalid_batch);
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  assert(rejected);
+  assert(sim.get_trace().data().size() == 1);
+
+  const std::vector<Simulation::Job_Append_Request> batch = {
+      {1.0, 1, kTestQueueInput, 21, 20.01},
+      {2.0, 1, kTestQueueInput, 31, 30.99},
+  };
+  const auto jobs = sim.append_jobs(batch);
+  assert(sim.get_trace().job_at(jobs[0]).get_limit_time() == 21);
+  assert(sim.get_trace().job_at(jobs[1]).get_limit_time() == 31);
+  assert(approx_equal(sim.get_trace().job_at(jobs[0]).get_actual_run_time(),
+                      20.01));
+  assert(approx_equal(sim.get_trace().job_at(jobs[1]).get_actual_run_time(),
+                      30.99));
+
+  std::cout << "  PASSED" << std::endl;
+}
+
 int main() {
   std::cout << "====================================" << std::endl;
   std::cout << "Append-Job Test Suite" << std::endl;
@@ -992,6 +1133,7 @@ int main() {
 
   try {
     test_append_with_empty_trace();
+    test_appended_job_statuses();
     test_append_reclaims_before_growing();
     test_append_rejects_past_submit_time();
     test_append_jobs_batch();
@@ -1011,6 +1153,8 @@ int main() {
     test_append_jobs_memory_pressure();
     test_resource_area_and_time_accounted_utilization();
     test_prediction_horizon();
+    test_append_with_known_actual_runtime();
+    test_fractional_streaming_limits_validate_stored_value();
 
     std::cout << "\n====================================" << std::endl;
     std::cout << "ALL APPEND_JOB TESTS PASSED" << std::endl;
