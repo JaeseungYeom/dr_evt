@@ -16,13 +16,15 @@ Prediction cases:
 * ``knowledge_transfer_1_percent`` uses ``--knowledge-transfer-1``.
 * ``knowledge_transfer_3_percent`` uses ``--knowledge-transfer-3``.
 * ``knowledge_transfer_5_percent`` uses ``--knowledge-transfer-5``.
-* ``app_average_5_percent`` uses the optional ``--app-average-5-percent``
-  table built only from the five-percent training subset.
 * ``app_average_per_machine`` is generated from ground truth. Each prediction
   is the arithmetic mean for the same (application, ranks, execution mode).
 * ``sys_bench`` is generated from ``--machine-rep``. For each execution mode,
   the mean Borax-time / target-time ratio across shared benchmark positions is
   assigned to every workload.
+
+The optional ``app_average_5_percent`` case uses ``--app-average-5-percent``
+and is run only when explicitly selected with ``--case``. It is not part of
+the seven-case default campaign.
 
 EXAMPLE
 =======
@@ -164,6 +166,16 @@ import run_prediction_study as study
 
 
 IDENTITY = ("App", "Args", "Ranks")
+DEFAULT_CASES = (
+    "ideal",
+    "fully_trained",
+    "knowledge_transfer_1_percent",
+    "knowledge_transfer_3_percent",
+    "knowledge_transfer_5_percent",
+    "app_average_per_machine",
+    "sys_bench",
+)
+SUPPORTED_CASES = (*DEFAULT_CASES, "app_average_5_percent")
 
 
 def configured_modes(path):
@@ -331,10 +343,10 @@ def write_table(path, modes, rows):
 
 def prepare_tables(args):
     """Create normalized tables for all requested prediction cases."""
-    selected = set(args.case) if args.case else None
+    selected = set(args.case or DEFAULT_CASES)
 
     def requested(case):
-        return selected is None or case in selected
+        return case in selected
 
     modes = configured_modes(args.systems)
     truth_rows = load_ground_truth(args.ground_truth_source, modes)
@@ -469,7 +481,14 @@ def main():
     parser.add_argument("--knowledge-transfer-1", type=pathlib.Path)
     parser.add_argument("--knowledge-transfer-3", type=pathlib.Path)
     parser.add_argument("--knowledge-transfer-5", type=pathlib.Path)
-    parser.add_argument("--app-average-5-percent", type=pathlib.Path)
+    parser.add_argument(
+        "--app-average-5-percent",
+        type=pathlib.Path,
+        help=(
+            "five-percent-training application-average table; used only with "
+            "--case app_average_5_percent"
+        ),
+    )
     parser.add_argument(
         "--ignore-extra-predictions",
         action="store_true",
@@ -515,17 +534,11 @@ def main():
     parser.add_argument(
         "--case",
         action="append",
-        choices=(
-            "ideal",
-            "fully_trained",
-            "knowledge_transfer_1_percent",
-            "knowledge_transfer_3_percent",
-            "knowledge_transfer_5_percent",
-            "app_average_per_machine",
-            "app_average_5_percent",
-            "sys_bench",
+        choices=SUPPORTED_CASES,
+        help=(
+            "prediction case to run; repeat as needed (default: the seven "
+            "standard cases; app_average_5_percent is opt-in)"
         ),
-        help="prediction case to run; repeat as needed (default: all available)",
     )
     parser.add_argument(
         "--prepare-only", action="store_true", help="prepare inputs without simulations"

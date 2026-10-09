@@ -53,10 +53,18 @@ def parse_overall(text):
 def prediction_cases(root, model_prediction):
     """Return ordered (case, prediction table) pairs for this study."""
     experiment = root / "experimental/multi-cluster"
+    relative_performance = experiment / "relative_performance_tables"
     cases = [
         ("ideal", experiment / "ground_truth.csv"),
-        ("app_avg", experiment / "prediction.app_avg.csv"),
-        ("rajaperf", experiment / "prediction.rajaperf.csv"),
+        (
+            "app_avg",
+            relative_performance
+            / "application_average_relative_performance_borax.csv",
+        ),
+        (
+            "rajaperf",
+            relative_performance / "rajaperf_relative_performance_borax.csv",
+        ),
     ]
     if model_prediction is not None:
         cases.insert(1, ("model", model_prediction.resolve()))
