@@ -932,6 +932,20 @@ class PerformanceDispatchTests(unittest.TestCase):
             },
         )
 
+    def test_prediction_study_uses_named_relative_performance_tables(self):
+        root = pathlib.Path("/source")
+        cases = dict(prediction_study.prediction_cases(root, None))
+        table_dir = root / "experimental/multi-cluster/relative_performance_tables"
+
+        self.assertEqual(
+            cases["app_avg"],
+            table_dir / "application_average_relative_performance_borax.csv",
+        )
+        self.assertEqual(
+            cases["rajaperf"],
+            table_dir / "rajaperf_relative_performance_borax.csv",
+        )
+
     def test_summary_plot_uses_only_adapted_limit_results(self):
         rows = [
             {"wall_time_policy": "adapted-limit", "case": "ideal"},
@@ -1062,6 +1076,45 @@ class PerformanceDispatchTests(unittest.TestCase):
 
         self.assertEqual(rows[0]["dane"], "1.25")
         self.assertEqual(rejected, [])
+
+    def test_kt_study_defaults_exclude_five_percent_app_average(self):
+        truth = [
+            {"App": "app", "Args": "-n 1", "Ranks": "2", "dane": "1.5"}
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            args = SimpleNamespace(
+                case=None,
+                systems=root / "systems.csv",
+                ground_truth_source=root / "ground-truth.csv",
+                output_dir=root / "output",
+                fully_trained=root / "fully-trained.csv",
+                knowledge_transfer_1=root / "kt-1.csv",
+                knowledge_transfer_3=root / "kt-3.csv",
+                knowledge_transfer_5=root / "kt-5.csv",
+                app_average_5_percent=None,
+                machine_rep=root / "machine-rep.csv",
+                ignore_extra_predictions=False,
+            )
+            with (
+                patch.object(kt_study, "configured_modes", return_value=["dane"]),
+                patch.object(kt_study, "load_ground_truth", return_value=truth),
+                patch.object(kt_study, "load_prediction", return_value=(truth, [])),
+                patch.object(kt_study, "write_table"),
+                patch.object(
+                    kt_study.baselines,
+                    "application_average_rows",
+                    return_value=truth,
+                ),
+                patch.object(
+                    kt_study.baselines, "rajaperf_speedups", return_value={}
+                ),
+                patch.object(kt_study.baselines, "rajaperf_rows", return_value=truth),
+            ):
+                _, cases, _ = kt_study.prepare_tables(args)
+
+        self.assertEqual([case for case, _ in cases], list(kt_study.DEFAULT_CASES))
+        self.assertNotIn("app_average_5_percent", {case for case, _ in cases})
 
     def test_wait_study_runs_one_case_per_trace(self):
         cases = [

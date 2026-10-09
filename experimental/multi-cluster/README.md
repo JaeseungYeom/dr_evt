@@ -200,17 +200,17 @@ python3 experimental/multi-cluster/build_performance_tables.py \
   --applications experimental/multi-cluster/apps.csv \
   --systems experimental/multi-cluster/machines.csv \
   --ground-truth-output experimental/multi-cluster/ground_truth.csv \
-  --prediction-output experimental/multi-cluster/prediction.csv
+  --prediction-output experimental/multi-cluster/relative_performance_tables/model_relative_performance_borax.csv
 ```
 
 The join key is `(app, args, ranks)` after lowercasing the application and
 removing whitespace and case differences from `args`; commas inside quoted
 argument fields remain part of the argument. Ground truth retains every
-compatible target-mode measurement and normalizes it to the first measured
-non-dispatch reference in table order (normally Borax), falling back to a
-compatible target mode only when needed. Model predictions are emitted only
-when they can use that same reference, so missing model coverage never removes
-ground-truth measurements. Quartz data is not required. In `merged.txt`, the
+compatible target-mode measurement. The documented tables use Borax as their
+normalization reference. Model predictions are emitted only when they can use
+the same reference, so missing model coverage never removes ground-truth
+measurements. In
+[`merged.txt`](https://github.com/llnl/ice4hpc_data/blob/50ea5c5b7479c98c7bcf98eaed42d02f1a7891a3/data/merged.txt), the
 unsuffixed `matrix`, `tioga`, and `tuolumne` measurements represent their GPU
 modes; their `-cpu` rows represent CPU modes.
 
@@ -221,8 +221,8 @@ source docs/venv/bin/activate
 python3 experimental/multi-cluster/build_prediction_baselines.py \
   --ground-truth experimental/multi-cluster/ground_truth.csv \
   --machine-rep /data/machine_rep.csv \
-  --rajaperf-output experimental/multi-cluster/prediction.rajaperf.csv \
-  --app-avg-output experimental/multi-cluster/prediction.app_avg.csv
+  --rajaperf-output experimental/multi-cluster/relative_performance_tables/rajaperf_relative_performance_borax.csv \
+  --app-avg-output experimental/multi-cluster/relative_performance_tables/application_average_relative_performance_borax.csv
 ```
 
 The RAJAPerf baseline computes `borax_time / machine_time` for every shared
@@ -244,7 +244,7 @@ does not refer to the simulator's `run_time_mode` option:
 source docs/venv/bin/activate
 python3 experimental/multi-cluster/plot_relative_performance.py \
   --ground-truth experimental/multi-cluster/ground_truth.csv \
-  --prediction experimental/multi-cluster/prediction.csv \
+  --prediction experimental/multi-cluster/relative_performance_tables/model_relative_performance_borax.csv \
   --output experimental/multi-cluster/relative-performance.png
 ```
 
@@ -359,7 +359,7 @@ cmake --build build --target mpi_performance_dispatch-bin
 mpirun -np 6 build/mpi_performance_dispatch \
   --jobs multi-cluster/job_stream.csv \
   --ground-truth experimental/multi-cluster/ground_truth.csv \
-  --prediction experimental/multi-cluster/prediction.csv \
+  --prediction experimental/multi-cluster/relative_performance_tables/model_relative_performance_borax.csv \
   --applications experimental/multi-cluster/apps.csv \
   --systems experimental/multi-cluster/machines.csv \
   --seed 7 \
@@ -429,11 +429,13 @@ in vector form. `metrics_per_run.csv` is retained as a compatibility copy of
 
 ### Knowledge-transfer campaign
 
-The knowledge-transfer workflow has four explicit stages. Keeping preparation,
-execution, replay analysis, and cross-campaign plotting separate allows inputs
-to be validated or figures regenerated without consuming a new MPI allocation.
+The standard knowledge-transfer workflow runs seven prediction cases, followed
+by a separate WaitTimeOnly baseline that does not depend on a prediction table.
+Keeping preparation, execution, replay analysis, and cross-campaign plotting
+separate allows inputs to be validated or figures regenerated without consuming
+a new MPI allocation.
 
-#### 1. Build the five-percent application-average input
+#### Optional: Build the five-percent application-average input
 
 `build_app_average_from_training.py` converts long-form training data into the
 wide prediction-table format used by the dispatcher:
@@ -442,7 +444,7 @@ wide prediction-table format used by the dispatcher:
 python experimental/multi-cluster/build_app_average_from_training.py \
   --training /data/combined_train_5percent.csv \
   --ground-truth /data/ground_truth_borax.csv \
-  --output /data/prediction.app_avg.5pct.csv
+  --output /data/application_average_5pct_training_relative_performance_borax.csv
 ```
 
 The training CSV requires the case-sensitive columns
@@ -452,8 +454,11 @@ the matching `target_machine=borax` row by default; change that name with
 `--reference`. The ground-truth CSV begins with `App,Args,Ranks` followed by
 execution-mode columns. The output repeats that schema and row order, leaving
 a cell empty where training or ground-truth coverage is missing.
+This case is not part of the standard campaign. To run it, supply the generated
+table with `--app-average-5-percent` and explicitly select
+`--case app_average_5_percent`.
 
-#### 2. Prepare or run the campaign
+#### 1. Prepare or run the prediction campaign
 
 Use `--prepare-only` first to validate and normalize inputs without launching
 simulations:
@@ -465,7 +470,6 @@ python experimental/multi-cluster/run_kt_scheduling_study.py \
   --knowledge-transfer-1 /data/knowledge_transfer_1-percent.csv \
   --knowledge-transfer-3 /data/knowledge_transfer_3-percent.csv \
   --knowledge-transfer-5 /data/knowledge_transfer_5-percent.csv \
-  --app-average-5-percent /data/prediction.app_avg.5pct.csv \
   --machine-rep /data/machine_rep.txt \
   --applications experimental/multi-cluster/apps.csv \
   --systems experimental/multi-cluster/machines.csv \
@@ -473,6 +477,11 @@ python experimental/multi-cluster/run_kt_scheduling_study.py \
   --output-dir /results/kt-scheduling \
   --prepare-only
 ```
+
+By default, the runner prepares the seven standard cases: ideal, fully trained,
+knowledge transfer at 1%, 3%, and 5%, the full-data application average, and
+the system-benchmark baseline. The optional five-percent-training application
+average is prepared only when selected with `--case app_average_5_percent`.
 
 The quoted glob must match exactly ten trace CSVs. Each trace contains a
 header and `--jobs-per-trace` rows (100,000 by default) in the job-stream
@@ -494,6 +503,23 @@ summary CSVs, `summary.md`, and PNG/PDF plots. A completion marker is reused
 only when its fingerprint, output files, dispatch-row count, and reported job
 total validate. `--aggregate-only` regenerates summaries from completed runs.
 Repeat `--case`, `--dispatch-policy`, or `--wall-time-policy` to run a subset.
+
+#### 2. Run the WaitTimeOnly baseline
+
+Run WaitTimeOnly separately so it executes only once per trace instead of once
+per prediction table. For the usual adapted-limit baseline, repeat the campaign
+command with a separate output directory and add:
+
+```bash
+--case ideal \
+--dispatch-policy WaitTimeOnly \
+--wall-time-policy adapted-limit
+```
+
+Selecting only `ideal` avoids preparing unused prediction tables; the runner
+renames it `wait_time_only` for this policy. This produces ten simulations for
+ten traces. WaitTimeOnly uses ground truth for realized runtime and feasibility
+but does not use relative-performance predictions for placement.
 
 #### 3. Replay and analyze recorded placements
 
@@ -613,7 +639,7 @@ python3 python/grpc_mpi_launcher.py --mpi-ranks 6 \
   --client-script experimental/multi-cluster/grpc_performance_dispatch.py -- \
   --jobs multi-cluster/job_stream.csv \
   --ground-truth experimental/multi-cluster/ground_truth.csv \
-  --prediction experimental/multi-cluster/prediction.csv \
+  --prediction experimental/multi-cluster/relative_performance_tables/model_relative_performance_borax.csv \
   --applications experimental/multi-cluster/apps.csv \
   --systems experimental/multi-cluster/machines.csv \
   --seed 7 \

@@ -17,7 +17,7 @@ Example::
     python build_app_average_from_training.py \
       --training combined_train_5percent.csv \
       --ground-truth ground_truth.csv \
-      --output prediction.app_avg.5pct.csv
+      --output application_average_5pct_training_relative_performance_borax.csv
 """
 
 import argparse
