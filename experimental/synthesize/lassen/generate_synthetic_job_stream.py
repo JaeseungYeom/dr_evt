@@ -1,16 +1,10 @@
 #!/usr/bin/env python3
-"""Generate a synthetic scheduling trace from a historical job trace.
+"""Generate a statistical scheduling trace from a historical job trace.
 
-The input must contain these columns:
-
-    submit_time,num_nodes,duration,time_limit,exit_status
-
-The output contains:
-
-    submit_time,num_nodes,time_limit,duration
-
-The four output values are assembled in three deliberately separate sampling
-steps.  See ``generate_jobs`` below for the detailed process and rationale.
+The generated trace preserves a consecutive historical submission-time
+sequence. Node count and duration are sampled together, and time limits are
+sampled conditionally on duration. The sampling population can be the whole
+eligible trace (global) or the selected arrival window (local).
 """
 
 import argparse
@@ -18,28 +12,12 @@ import csv
 import random
 import sys
 from collections import defaultdict
+from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-
-REQUIRED_COLUMNS = {
-    "submit_time",
-    "num_nodes",
-    "duration",
-    "time_limit",
-}
-OUTPUT_COLUMNS = ("submit_time", "num_nodes", "time_limit", "duration")
-
-
-def decimal_value(text, field, line_number):
-    """Parse a finite numeric field without losing fractional precision."""
-    try:
-        value = Decimal(text)
-    except InvalidOperation as exc:
-        raise ValueError(f"line {line_number}: invalid {field}: {text!r}") from exc
-    if not value.is_finite():
-        raise ValueError(f"line {line_number}: non-finite {field}: {text!r}")
-    return value
+from sample_job_stream import OUTPUT_COLUMNS, read_eligible_jobs
 
 
 def duration_bucket(duration):
@@ -49,93 +27,35 @@ def duration_bucket(duration):
     return int(duration.to_integral_value(rounding=ROUND_CEILING))
 
 
-def read_eligible_jobs(
-    path, minimum_duration, successful_only, maximum_time_limit=None
+def submission_regime(submit_time, timezone, work_hours_start, work_hours_end):
+    """Classify an epoch submission as work hours, off hours, or weekend."""
+    local_time = datetime.fromtimestamp(float(submit_time), timezone)
+    if local_time.weekday() >= 5:
+        return "weekend"
+    if work_hours_start <= local_time.hour < work_hours_end:
+        return "work_hours"
+    return "off_hours"
+
+
+def generate_jobs(
+    eligible,
+    count,
+    rng,
+    sampling_scope="global",
+    with_replacement=False,
+    time_binning="none",
+    timezone=None,
+    work_hours_start=9,
+    work_hours_end=17,
 ):
-    """Read, normalize/filter jobs, and sort them by submit time."""
-    eligible = []
-    with open(path, newline="", encoding="utf-8") as source:
-        reader = csv.DictReader(source)
-        if reader.fieldnames is None:
-            raise ValueError("input CSV has no header")
-        missing = REQUIRED_COLUMNS - set(reader.fieldnames)
-        if successful_only and "exit_status" not in reader.fieldnames:
-            missing.add("exit_status")
-        if missing:
-            raise ValueError("missing columns: " + ", ".join(sorted(missing)))
+    """Generate jobs from empirical arrival, duration, and limit distributions.
 
-        for line_number, row in enumerate(reader, 2):
-            duration = decimal_value(row["duration"], "duration", line_number)
-            if duration <= 0:
-                raise ValueError(
-                    f"line {line_number}: duration must be greater than zero"
-                )
-            if successful_only and row["exit_status"].strip() != "0":
-                continue
-
-            time_limit = decimal_value(
-                row["time_limit"], "time_limit", line_number
-            )
-            if time_limit <= 0:
-                raise ValueError(
-                    f"line {line_number}: time_limit must be greater than zero"
-                )
-            time_limit_text = row["time_limit"]
-            if maximum_time_limit is not None and time_limit > maximum_time_limit:
-                time_limit = maximum_time_limit
-                time_limit_text = str(maximum_time_limit)
-
-            # A synthetic job cannot run beyond its effective time limit.
-            # Normalize the duration before applying the duration filter and
-            # before assigning the job to a duration bucket.
-            if duration > time_limit:
-                duration = time_limit
-                duration_text = time_limit_text
-            else:
-                duration_text = row["duration"]
-
-            # "Ignore jobs shorter than X" means a job of exactly X seconds
-            # remains eligible. Use the normalized duration here so every
-            # emitted job still satisfies the requested minimum.
-            if duration < minimum_duration:
-                continue
-
-            eligible.append(
-                {
-                    "submit_time": row["submit_time"],
-                    "submit_time_decimal": decimal_value(
-                        row["submit_time"], "submit_time", line_number
-                    ),
-                    "num_nodes": row["num_nodes"],
-                    "duration": duration_text,
-                    "duration_decimal": duration,
-                    "time_limit": time_limit_text,
-                }
-            )
-    # A general trace need not already be ordered.  Sorting makes a consecutive
-    # slice below represent a real interval of the historical arrival stream.
-    # Python's stable sort retains source order for simultaneous submissions.
-    eligible.sort(key=lambda job: job["submit_time_decimal"])
-    return eligible
-
-
-def generate_jobs(eligible, count, rng, with_replacement=False):
-    """Construct synthetic jobs using the requested independent sampling.
-
-    1. Choose one uniformly random starting index and copy ``count``
-       consecutive submit times from the time-sorted eligible trace.  Keeping
-       a contiguous window preserves the historical arrival pattern and
-       interarrival gaps.
-
-    2. Independently sample ``count`` historical jobs uniformly, and retain
-       each selected job's (num_nodes, duration) pair.  The pair stays intact
-       so the observed relationship between job size and runtime is preserved.
-
-    3. Put every eligible historical job into ceil(duration) one-second
-       buckets: (0,1] is bucket 1, (1,2] is bucket 2, etc.  For each sampled
-       duration, independently choose a time_limit uniformly from historical
-       jobs in the same bucket.  Sampling records rather than distinct limit
-       values preserves the empirical frequency of repeated time limits.
+    A contiguous historical window supplies the submission-time sequence.
+    ``(num_nodes, duration)`` pairs are sampled together from either all
+    eligible jobs or that local window. With work-cycle binning enabled, pairs
+    are additionally conditioned on whether submission occurs during weekday
+    work hours, weekday off hours, or a weekend. Time limits are sampled from
+    the same regime, conditional on the selected duration's one-second bucket.
     """
     if count <= 0:
         raise ValueError("number of jobs must be greater than zero")
@@ -143,43 +63,83 @@ def generate_jobs(eligible, count, rng, with_replacement=False):
         raise ValueError(
             f"requested {count} jobs, but only {len(eligible)} are eligible"
         )
+    if sampling_scope not in {"global", "local"}:
+        raise ValueError(
+            "sampling_scope must be either 'global' or 'local', got "
+            f"{sampling_scope!r}"
+        )
+    if time_binning not in {"none", "work-cycle"}:
+        raise ValueError(
+            "time_binning must be either 'none' or 'work-cycle', got "
+            f"{time_binning!r}"
+        )
+    if not 0 <= work_hours_start < work_hours_end <= 24:
+        raise ValueError(
+            "work-hour boundaries must satisfy "
+            "0 <= work_hours_start < work_hours_end <= 24"
+        )
+    if timezone is None:
+        timezone = ZoneInfo("America/Los_Angeles")
 
-    # Stage 1: the window contains consecutive *eligible* jobs in submit-time
-    # order. If filtering removes rows, those gaps are simply skipped.
     start = rng.randrange(len(eligible) - count + 1)
-    submit_times = [job["submit_time"] for job in eligible[start : start + count]]
+    arrival_window = eligible[start : start + count]
+    population = eligible if sampling_scope == "global" else arrival_window
 
-    # Stage 2: sampling is without replacement by default because the request
-    # is to pick N eligible historical jobs.  --with-replacement enables
-    # bootstrap-style resampling when repeated pairs are desirable.
+    def regime(job):
+        if time_binning == "none":
+            return "all"
+        return submission_regime(
+            job["submit_time_decimal"],
+            timezone,
+            work_hours_start,
+            work_hours_end,
+        )
+
+    pairs_by_regime = defaultdict(list)
+    for job in population:
+        pairs_by_regime[regime(job)].append(job)
+
     if with_replacement:
-        pair_samples = [rng.choice(eligible) for _ in range(count)]
+        pair_samples = [
+            rng.choice(pairs_by_regime[regime(arrival)])
+            for arrival in arrival_window
+        ]
     else:
-        pair_samples = rng.sample(eligible, count)
+        requested_by_regime = defaultdict(int)
+        for arrival in arrival_window:
+            requested_by_regime[regime(arrival)] += 1
+        sampled_by_regime = {
+            key: iter(rng.sample(pairs_by_regime[key], requested))
+            for key, requested in requested_by_regime.items()
+        }
+        pair_samples = [
+            next(sampled_by_regime[regime(arrival)])
+            for arrival in arrival_window
+        ]
 
-    # Build buckets from all eligible jobs, not merely from Stage 2's sample.
     limits_by_bucket = defaultdict(list)
-    for job in eligible:
-        bucket = duration_bucket(job["duration_decimal"])
-        limits_by_bucket[bucket].append(job["time_limit"])
+    for job in population:
+        key = (regime(job), duration_bucket(job["duration_decimal"]))
+        limits_by_bucket[key].append(job["time_limit"])
 
     synthetic = []
-    for submit_time, pair in zip(submit_times, pair_samples):
-        bucket = duration_bucket(pair["duration_decimal"])
-        time_limit_text = rng.choice(limits_by_bucket[bucket])
-        time_limit = Decimal(time_limit_text)
-        if pair["duration_decimal"] > time_limit:
-            duration_text = time_limit_text
-        else:
-            duration_text = pair["duration"]
+    for arrival, pair_sample in zip(arrival_window, pair_samples):
+        duration = pair_sample["duration_decimal"]
+        limit_key = (regime(arrival), duration_bucket(duration))
+        limit_text = rng.choice(limits_by_bucket[limit_key])
+        limit = Decimal(limit_text)
+        if duration > limit:
+            limit = duration.to_integral_value(rounding=ROUND_CEILING)
+            limit_text = str(limit)
         synthetic.append(
             {
-                "submit_time": submit_time,
-                "num_nodes": pair["num_nodes"],
-                "time_limit": time_limit_text,
-                "duration": duration_text,
+                "submit_time": arrival["submit_time"],
+                "num_nodes": pair_sample["num_nodes"],
+                "time_limit": limit_text,
+                "duration": pair_sample["duration"],
             }
         )
+
     return synthetic, start
 
 
@@ -188,6 +148,43 @@ def main():
     parser.add_argument("input_csv", help="historical scheduling trace CSV")
     parser.add_argument("output_csv", help="synthetic trace to create")
     parser.add_argument("num_jobs", type=int, help="number of synthetic jobs")
+    parser.add_argument(
+        "--sampling-scope",
+        choices=("global", "local"),
+        default="global",
+        help=(
+            "population for node/duration-pair and conditional time-limit sampling "
+            "(default: global)"
+        ),
+    )
+    parser.add_argument(
+        "--time-binning",
+        choices=("none", "work-cycle"),
+        default="none",
+        help=(
+            "optionally separate sampling into work-hours, off-hours, and "
+            "weekend populations (default: none)"
+        ),
+    )
+    parser.add_argument(
+        "--timezone",
+        default="America/Los_Angeles",
+        help="timezone used by work-cycle binning (default: America/Los_Angeles)",
+    )
+    parser.add_argument(
+        "--work-hours-start",
+        type=int,
+        default=9,
+        metavar="HOUR",
+        help="inclusive weekday work-hour start, 0-23 (default: 9)",
+    )
+    parser.add_argument(
+        "--work-hours-end",
+        type=int,
+        default=17,
+        metavar="HOUR",
+        help="exclusive weekday work-hour end, 1-24 (default: 17)",
+    )
     parser.add_argument(
         "--min-duration",
         default="0",
@@ -225,6 +222,7 @@ def main():
         parser.error(f"invalid --min-duration: {args.min_duration!r}")
     if not minimum_duration.is_finite() or minimum_duration < 0:
         parser.error("--min-duration must be a finite, nonnegative number")
+
     maximum_time_limit = None
     if args.max_time_limit is not None:
         try:
@@ -235,6 +233,15 @@ def main():
             parser.error("--max-time-limit must be a finite, positive number")
     if args.num_jobs <= 0:
         parser.error("num_jobs must be greater than zero")
+    if not 0 <= args.work_hours_start < args.work_hours_end <= 24:
+        parser.error(
+            "work-hour boundaries must satisfy "
+            "0 <= --work-hours-start < --work-hours-end <= 24"
+        )
+    try:
+        timezone = ZoneInfo(args.timezone)
+    except ZoneInfoNotFoundError:
+        parser.error(f"unknown --timezone: {args.timezone!r}")
 
     input_path = Path(args.input_csv).resolve()
     output_path = Path(args.output_csv).resolve()
@@ -252,7 +259,12 @@ def main():
             eligible,
             args.num_jobs,
             random.Random(args.seed),
+            args.sampling_scope,
             args.with_replacement,
+            args.time_binning,
+            timezone,
+            args.work_hours_start,
+            args.work_hours_end,
         )
     except (OSError, ValueError) as exc:
         raise SystemExit(f"error: {exc}") from exc
@@ -267,7 +279,9 @@ def main():
     seed_text = "system randomness" if args.seed is None else str(args.seed)
     print(
         f"wrote {len(synthetic)} jobs to {args.output_csv}; "
-        f"eligible={len(eligible)}, submit-window-start={window_start}, seed={seed_text}",
+        f"eligible={len(eligible)}, submit-window-start={window_start}, "
+        f"sampling-scope={args.sampling_scope}, "
+        f"time-binning={args.time_binning}, seed={seed_text}",
         file=sys.stderr,
     )
 

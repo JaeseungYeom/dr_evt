@@ -2,9 +2,13 @@
 """Unit tests for the platform-ranking baseline dispatcher."""
 
 import pathlib
+import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
+
+# Production scripts live one directory above this test suite.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from grpc_baseline_dispatch import (ApplicationType, PlatformType,
                                     choose_system, read_arrivals)
@@ -70,7 +74,7 @@ class BaselineDispatchTests(unittest.TestCase):
                                [window(2), window(20)], [0, 0], 5)
         self.assertEqual(choice["system_id"], "system-0")
 
-    def test_zero_tolerance_considers_wait_only(self):
+    def test_zero_tolerance_considers_wait_time_only(self):
         systems = [
             system(0, PlatformType.CPU_ONLY, 2),
             system(1, PlatformType.CPU_ONLY, 1),

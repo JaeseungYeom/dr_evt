@@ -74,7 +74,13 @@ def main():
     if Path(mpiexec).name == "srun" and "SLURM_JOB_ID" not in os.environ:
         print("SKIP: srun requires an active Slurm allocation")
         return 77
-    fixture_dir = Path(source_dir) / "experimental" / "multi-cluster" / "testdata"
+    fixture_dir = (
+        Path(source_dir)
+        / "experimental"
+        / "multi-cluster"
+        / "tests"
+        / "testdata"
+    )
     requirements = {
         "cpu-solver": "CPU-only",
         "gpu-trainer": "GPU-only",
@@ -134,10 +140,10 @@ def main():
         assert first_output == second_output
         assert metrics == second_metrics
 
-        ipdps24_output = temp_dir / "ipdps24.csv"
+        rel_perf_only_output = temp_dir / "rel-perf-only.csv"
         run_dispatch(
-            command + ["--dispatch-policy", "IPDPS24"],
-            ipdps24_output,
+            command + ["--dispatch-policy", "RelPerfOnly"],
+            rel_perf_only_output,
             expected_jobs,
         )
 
@@ -185,6 +191,7 @@ def main():
                 assert mode == "CPU"
             ground_truth = float(row["ground_truth_relative_performance"])
             predicted = float(row["predicted_relative_performance"])
+            assert row["prediction_fallback"] == "false"
             duration = float(row["duration"])
             limit = float(row["time_limit"])
             estimated = float(row["estimated_duration"])
@@ -201,6 +208,32 @@ def main():
             assert submitted_limit >= actual
             assert int(row["time_limit_doublings"]) >= 0
             assert abs(turnaround - (wait + estimated)) < 1e-9
+
+        missing_prediction = temp_dir / "missing-prediction.csv"
+        with (fixture_dir / "prediction.csv").open(newline="") as source:
+            reader = csv.DictReader(source)
+            fieldnames = reader.fieldnames
+            missing_rows = list(reader)
+        for row in missing_rows:
+            for field in fieldnames[3:]:
+                row[field] = ""
+        with missing_prediction.open("w", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(missing_rows)
+        fallback_command = list(command)
+        fallback_command[fallback_command.index("--prediction") + 1] = str(
+            missing_prediction
+        )
+        fallback_output = temp_dir / "fallback.csv"
+        run_dispatch(fallback_command, fallback_output, expected_jobs)
+        with fallback_output.open(newline="") as stream:
+            fallback_rows = list(csv.DictReader(stream))
+        assert all(row["prediction_fallback"] == "true" for row in fallback_rows)
+        assert all(
+            float(row["predicted_relative_performance"]) == 1.0
+            for row in fallback_rows
+        )
 
         allowed_applications = temp_dir / "allowed-applications.csv"
         with allowed_applications.open("w", newline="") as stream:
@@ -229,6 +262,31 @@ def main():
         )
         assert dropped_bytes.count(b"\n") == 1
         assert dropped_metrics["average_run_time"] == 0
+
+        slow_prediction = temp_dir / "slow-prediction.csv"
+        with (fixture_dir / "prediction.csv").open(newline="") as source:
+            reader = csv.DictReader(source)
+            fieldnames = reader.fieldnames
+            rows = list(reader)
+        for row in rows:
+            for field in fieldnames[3:]:
+                if row[field]:
+                    row[field] = "0.5"
+        with slow_prediction.open("w", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+        predicted_cap_command = list(command)
+        predicted_cap_command[predicted_cap_command.index("--prediction") + 1] = str(
+            slow_prediction
+        )
+        predicted_cap_output = temp_dir / "predicted-cap.csv"
+        run_dispatch(
+            predicted_cap_command + ["--max-time-limit", "100"],
+            predicted_cap_output,
+            0,
+            expected_jobs,
+        )
 
 
 if __name__ == "__main__":

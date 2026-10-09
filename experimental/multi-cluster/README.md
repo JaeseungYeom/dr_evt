@@ -17,6 +17,28 @@ corresponding Python implementation uses gRPC for dispatcher-worker
 communication, while MPI starts the worker processes that host the gRPC
 servers.
 
+## Script guide
+
+The scripts stay in one directory because the campaign tools import shared
+helpers from one another. They are grouped by purpose here so the intended
+workflow is explicit:
+
+| Stage | Script | Purpose |
+|---|---|---|
+| Prepare | `build_performance_tables.py` | Join model predictions to measurements and create normalized ground-truth/prediction tables. |
+| Prepare | `build_prediction_baselines.py` | Create full-data application-average and system-benchmark baselines. |
+| Prepare | `build_app_average_from_training.py` | Create an application-average baseline from a long-form training subset. |
+| Inspect | `plot_relative_performance.py` | Compare one prediction table with ground truth by execution mode. |
+| Run | `mpi_performance_dispatch.cpp` | Native MPI online dispatcher; installed as `mpi_performance_dispatch`. |
+| Run | `grpc_performance_dispatch.py` | Equivalent Python controller for independent gRPC simulation servers. |
+| Campaign | `run_prediction_study.py` | Run the standard ideal/application-average/RAJAPerf matrix. |
+| Campaign | `run_kt_scheduling_study.py` | Prepare and run the knowledge-transfer matrix, with resumable completion markers. |
+| Analyze | `analyze_kt_scheduling_campaign.py` | Validate a KT campaign, replay recorded placements, and report wait/placement results. |
+| Compare | `plot_trace_scale_comparison.py` | Compare caller-selected trace-scale campaigns in publication plots. |
+
+Every command supports `--help`. The sections below define the common input
+model first, then document the run and campaign workflows.
+
 ## Input model
 
 The experiment has five CSV inputs. Column names are case-sensitive.
@@ -62,10 +84,10 @@ runtime input; the `#` prefix on its first header is accepted.
 
 ```text
 #machine,size,GPU
-dane,256,CPU-only
+dane,514,CPU-only
 mammoth,64,CPU-only
 tioga,30,GPU-enabled
-tuolumne,256,GPU-enabled
+tuolumne,384,GPU-enabled
 matrix,26,GPU-enabled
 ```
 
@@ -78,7 +100,8 @@ an otherwise idle machine and therefore overstates real-world availability.
 A job is considered for every compatible machine whose configured size can
 host it. With the table above, requests of 27 through 30 nodes can also run on
 Tioga, and requests through 64 nodes can run on Mammoth. Only requests of 65
-through 256 nodes are limited by capacity to Dane and Tuolumne. A request
+through 384 nodes are limited by capacity to Dane and Tuolumne, while larger
+requests can run only on Dane. A request
 larger than the largest configured machine is truncated to that largest size
 so it remains runnable. The dispatcher writes a warning to standard error for
 each truncated request. Both the original and effective node counts are
@@ -114,11 +137,66 @@ allowing that table to act as an application sampling allowlist.
 Generate the production table by joining the prediction matrix to measured
 target runtimes:
 
+The first four options identify existing input files:
+
+- `--predictions`: input model-prediction matrix
+- `--measurements`: input measured-runtime data
+- `--applications`: input application compatibility/allowlist table
+- `--systems`: input system configuration table
+
+The final two options identify files created by the command:
+
+- `--ground-truth-output`: output CSV of normalized measured performance
+- `--prediction-output`: output CSV of normalized predicted performance
+
+In particular, `--predictions` is an input, while `--prediction-output` is an
+output.
+
+#### Prediction-matrix input format
+
+`--predictions` expects a CSV with the identity columns `app`, `args`, and
+`ranks`, followed by performance columns. It must contain a performance column
+for every mode derived from `--systems`: a CPU-only machine produces a
+`<machine>` column, while a GPU-enabled machine produces `<machine>-cpu` and
+`<machine>-gpu` columns. Additional columns, such as a non-dispatch reference
+machine, are allowed.
+
+```text
+app,args,ranks,borax,dane,matrix-cpu,matrix-gpu,tioga-cpu,tioga-gpu,tuolumne-cpu,tuolumne-gpu,mammoth
+amg,-problem1-p442-n12812864,32,0.9738,0.9821,1.0943,,1.2496,,2.2508,,1.0446
+```
+
+`ranks` must be an integer. Every populated performance cell must be a finite,
+positive number; an empty cell means that no prediction is available. Quote an
+`args` field using normal CSV quoting when it contains a comma.
+
+#### Measurement input format
+
+`--measurements` expects a CSV with the columns `machine`, `rank`, `app`,
+`args`, and `actual_run_time`. Additional columns are ignored. The first header
+may optionally begin with `#`, so both `machine` and `#machine` are accepted.
+
+```text
+#machine,rank,app,args,actual_run_time
+borax,32,amg,"-problem 1 -P 4 4 2 -n 128 128 64",27.971479
+```
+
+`rank` must be an integer, and `actual_run_time` must be a finite, positive
+number. For a GPU-enabled system, an unsuffixed measurement-machine name such
+as `matrix` supplies the `matrix-gpu` mode, while `matrix-cpu` supplies the CPU
+mode. Measurement machines that are neither a performance column in the
+prediction matrix nor a mode mapped from `--systems` are ignored.
+
+The two inputs are joined on `(app, args, ranks)`. Application names are
+matched case-insensitively, and argument strings are matched after removing
+whitespace and ignoring case; the measurement column is named `rank`, whereas
+the prediction-matrix column is named `ranks`.
+
 ```bash
 source docs/venv/bin/activate
 python3 experimental/multi-cluster/build_performance_tables.py \
-  --predictions multi-cluster/relative_runtime_matrix_quartz_new.csv \
-  --measurements multi-cluster/merged.txt \
+  --predictions /data/model_predictions.csv \
+  --measurements /data/measured_runtimes.csv \
   --applications experimental/multi-cluster/apps.csv \
   --systems experimental/multi-cluster/machines.csv \
   --ground-truth-output experimental/multi-cluster/ground_truth.csv \
@@ -142,7 +220,7 @@ Generate two interchangeable prediction baselines:
 source docs/venv/bin/activate
 python3 experimental/multi-cluster/build_prediction_baselines.py \
   --ground-truth experimental/multi-cluster/ground_truth.csv \
-  --machine-rep multi-cluster/machine_rep.txt \
+  --machine-rep /data/machine_rep.csv \
   --rajaperf-output experimental/multi-cluster/prediction.rajaperf.csv \
   --app-avg-output experimental/multi-cluster/prediction.app_avg.csv
 ```
@@ -198,10 +276,11 @@ bookkeeping to the DR_EVT simulations.
 | `GPU-only` | Incompatible | GPU measurement |
 | `GPU-portable` | CPU measurement | Faster predicted CPU or GPU measurement |
 
-A missing required ground-truth/predicted pair makes that mode unavailable. A
+A missing ground-truth value makes that mode unavailable. A missing prediction
+excludes the mode from normal prediction-based placement, but ground truth is
+retained so the mode can be used by the wait-time fallback described below. A
 machine is also excluded when its configured size is smaller than the job's
-effective node request. Dispatch fails clearly when an arrival has no
-compatible execution mode with paired values.
+effective node request.
 
 ## Online dispatch
 
@@ -228,20 +307,35 @@ record to standard error and does not submit the job. Dropped jobs are excluded
 from simulation statistics. This intentionally optimistic assumption isolates
 placement quality from the cost of discovering a sufficient wall-time limit.
 
-Candidate systems whose ground-truth runtime exceeds `--max-time-limit` are
-discarded before placement, regardless of their waiting time. If no measured,
-capacity-compatible system can finish within the maximum, the job is dropped.
+During prediction-based placement, candidate systems whose predicted or
+ground-truth runtime exceeds `--max-time-limit` are discarded regardless of
+their waiting time. If a prediction exists but no candidate passes these
+checks, the job is dropped. When no prediction is available at all, the
+fallback below requires only a ground-truth runtime within the maximum.
 
-`--dispatch-policy` selects one of two placement rules:
+`--dispatch-policy` selects one of three placement rules:
 
 - `turnaround` chooses the smallest predicted turnaround, breaking ties by
   estimated wait and then systems-table order.
-- `IPDPS24` implements Algorithm 2 from D. Nichols et al., "Predicting
+- `RelPerfOnly` implements Algorithm 2 from D. Nichols et al., "Predicting
   Cross-Architecture Performance of Parallel Programs," IEEE IPDPS'24. It
   chooses the highest predicted relative performance among feasible systems
   with enough nodes available immediately. If every feasible system is full,
   it chooses the highest predicted relative performance over all feasible
   systems and lets that system queue the job. Ties use systems-table order.
+- `WaitTimeOnly` ignores the prediction table's relative-performance values and
+  chooses the feasible system with the smallest estimated wait, breaking ties
+  by systems-table order. GPU-portable workloads use a feasible GPU mode when
+  available. Ground truth is still used to determine feasibility and the
+  realized runtime, but not to rank candidate systems.
+
+For `turnaround` and `RelPerfOnly`, if no capacity-compatible,
+ground-truth-feasible execution mode has a prediction for the arriving
+workload, dispatch falls back to `WaitTimeOnly` for that job. A neutral
+predicted speedup of 1.0 is used to calculate its submitted limit, and the
+decision is marked by `prediction_fallback=true`. The fallback is not used
+when any otherwise feasible prediction exists, even if that prediction is
+later rejected by the predicted-runtime limit.
 
 `--wall-time-policy adapted-limit` uses the doubling behavior described
 above. `--wall-time-policy actual-duration` instead submits the smallest
@@ -270,7 +364,7 @@ mpirun -np 6 build/mpi_performance_dispatch \
   --systems experimental/multi-cluster/machines.csv \
   --seed 7 \
   --max-time-limit 43200 \
-  --dispatch-policy IPDPS24 \
+  --dispatch-policy RelPerfOnly \
   --wall-time-policy adapted-limit \
   --output dispatch-decisions.csv
 ```
@@ -281,14 +375,35 @@ allocation. MPI and Ser20 are required; gRPC and Python are not.
 ### Prediction-study matrix
 
 The prediction-study runner executes both dispatch policies (`turnaround` and
-`IPDPS24`) with both wall-time policies (`adapted-limit` and
+`RelPerfOnly`) with both wall-time policies (`adapted-limit` and
 `actual-duration`) for the ideal, application-average, and RAJAPerf prediction
 tables. Each of these 12 configurations runs on all ten synthetic traces, for
 120 runs by default:
 
 ```bash
 python experimental/multi-cluster/run_prediction_study.py \
-  --executable "${CMAKE_INSTALL_PREFIX}/bin/mpi_performance_dispatch"
+  --executable "${CMAKE_INSTALL_PREFIX}/bin/mpi_performance_dispatch" \
+  --systems experimental/multi-cluster/machines.csv
+```
+
+Use `--systems` to run the whole matrix with another machine configuration,
+The MPI rank count must be one dispatcher plus one rank for each machine row;
+`--ranks` defaults to six.
+
+To run the adapted-limit matrix, including the non-duplicated WaitTimeOnly
+baseline, on the ten 25,000-job traces:
+
+```bash
+python experimental/multi-cluster/run_prediction_study.py \
+  --executable "${CMAKE_INSTALL_PREFIX}/bin/mpi_performance_dispatch" \
+  --systems /data/machines-even.csv \
+  --jobs-glob 'experimental/synthesize/lassen/synthetic_traces/25000/*.csv' \
+  --jobs-per-trace 25000 \
+  --output-dir /results/dispatch-even-25000 \
+  --dispatch-policy turnaround \
+  --dispatch-policy RelPerfOnly \
+  --dispatch-policy WaitTimeOnly \
+  --wall-time-policy adapted-limit
 ```
 
 Repeat `--dispatch-policy` or `--wall-time-policy` to select a subset. For
@@ -297,7 +412,7 @@ example, the paper policy with oracle wall times is:
 ```bash
 python experimental/multi-cluster/run_prediction_study.py \
   --executable "${CMAKE_INSTALL_PREFIX}/bin/mpi_performance_dispatch" \
-  --dispatch-policy IPDPS24 \
+  --dispatch-policy RelPerfOnly \
   --wall-time-policy actual-duration
 ```
 
@@ -311,6 +426,135 @@ the 12 ten-trace mean/standard-deviation records. `summary.png` plots those
 aggregate metrics in four panels, and `summary.pdf` contains the same figure
 in vector form. `metrics_per_run.csv` is retained as a compatibility copy of
 `summary.csv`.
+
+### Knowledge-transfer campaign
+
+The knowledge-transfer workflow has four explicit stages. Keeping preparation,
+execution, replay analysis, and cross-campaign plotting separate allows inputs
+to be validated or figures regenerated without consuming a new MPI allocation.
+
+#### 1. Build the five-percent application-average input
+
+`build_app_average_from_training.py` converts long-form training data into the
+wide prediction-table format used by the dispatcher:
+
+```bash
+python experimental/multi-cluster/build_app_average_from_training.py \
+  --training /data/combined_train_5percent.csv \
+  --ground-truth /data/ground_truth_borax.csv \
+  --output /data/prediction.app_avg.5pct.csv
+```
+
+The training CSV requires the case-sensitive columns
+`app,args,ranks,source_machine,target_machine,true_relative_runtime`.
+`true_relative_runtime` must be positive and finite. Values are normalized to
+the matching `target_machine=borax` row by default; change that name with
+`--reference`. The ground-truth CSV begins with `App,Args,Ranks` followed by
+execution-mode columns. The output repeats that schema and row order, leaving
+a cell empty where training or ground-truth coverage is missing.
+
+#### 2. Prepare or run the campaign
+
+Use `--prepare-only` first to validate and normalize inputs without launching
+simulations:
+
+```bash
+python experimental/multi-cluster/run_kt_scheduling_study.py \
+  --ground-truth /data/ground_truth_borax.csv \
+  --fully-trained /data/fully_trained.csv \
+  --knowledge-transfer-1 /data/knowledge_transfer_1-percent.csv \
+  --knowledge-transfer-3 /data/knowledge_transfer_3-percent.csv \
+  --knowledge-transfer-5 /data/knowledge_transfer_5-percent.csv \
+  --app-average-5-percent /data/prediction.app_avg.5pct.csv \
+  --machine-rep /data/machine_rep.txt \
+  --applications experimental/multi-cluster/apps.csv \
+  --systems experimental/multi-cluster/machines.csv \
+  --jobs-glob '/data/traces/synthetic_jobs_*.csv' \
+  --output-dir /results/kt-scheduling \
+  --prepare-only
+```
+
+The quoted glob must match exactly ten trace CSVs. Each trace contains a
+header and `--jobs-per-trace` rows (100,000 by default) in the job-stream
+format documented above. Prediction tables begin with `App,Args,Ranks` and
+include every execution mode implied by the systems CSV. The applications CSV
+requires `app,sys_requirement`; the systems CSV requires `machine,size,GPU`.
+The command's `--help` text documents the model-table and system-benchmark
+formats and all selectable cases.
+
+To run the matrix, repeat the same command without `--prepare-only` and add:
+
+```bash
+--executable "${CMAKE_INSTALL_PREFIX}/bin/mpi_performance_dispatch"
+```
+
+The output directory contains normalized inputs under `input_tables/`, one
+`.dispatch.csv`, `.log`, and `.complete` file per run, per-run and aggregate
+summary CSVs, `summary.md`, and PNG/PDF plots. A completion marker is reused
+only when its fingerprint, output files, dispatch-row count, and reported job
+total validate. `--aggregate-only` regenerates summaries from completed runs.
+Repeat `--case`, `--dispatch-policy`, or `--wall-time-policy` to run a subset.
+
+#### 3. Replay and analyze recorded placements
+
+```bash
+python experimental/multi-cluster/analyze_kt_scheduling_campaign.py \
+  --output-dir /results/kt-scheduling \
+  --systems experimental/multi-cluster/machines.csv \
+  --jobs-per-trace 100000
+```
+
+The directory must contain the runner's matching `.complete`, `.log`, and
+`.dispatch.csv` triplets. Analysis validates the expected ten-run groups and
+replays the recorded assignments; it does not make new dispatch choices. It
+writes `replay_metrics_per_run.csv`, `average_wait_by_system.csv`,
+`application_execution_mode_counts.csv`, `analysis.md`, and PNG/PDF wait plots
+into the campaign directory. `--plot-baseline-summary` adds a separately run
+WaitTimeOnly aggregate CSV to the summary plots.
+
+#### 4. Compare the named trace-scale campaigns
+
+Pass each plot panel as `--campaign LABEL=CSV[,CSV]`. The CSV inputs are
+`summary_aggregate.csv` files that collectively contain ten-run adapted-limit
+records for Turnaround, RelPerfOnly, and WaitTimeOnly:
+
+```bash
+python experimental/multi-cluster/plot_trace_scale_comparison.py \
+  --campaign 100K=/results/100k/summary_aggregate.csv,/results/100k-wait/summary_aggregate.csv \
+  --campaign 25K=/results/25k/summary_aggregate.csv \
+  --campaign 100K-even=/results/100k-even/summary_aggregate.csv \
+  --campaign 25K-even=/results/25k-even/summary_aggregate.csv \
+  --output-dir /results/trace-scale-comparison
+```
+
+It writes `trace-scale-comparison-data.csv` (the exact records plotted) and
+turnaround/slowdown figures as PNG and PDF. No campaign path is built into the
+script.
+
+### Turnaround-estimation error
+
+For a completed prediction-utilization study, replay the recorded placements
+and compare each dispatch-time turnaround prediction with its realized
+submit-to-completion time:
+
+```bash
+CMAKE_INSTALL_PREFIX=/path/to/install \
+python experimental/multi-cluster/analyze_turnaround_estimation.py
+```
+
+The script resolves the installed Python module beneath
+`CMAKE_INSTALL_PREFIX`, using `CMAKE_INSTALL_LIBDIR` when it is exported and
+otherwise checking both `lib` and `lib64`. By default it analyzes utilization
+values 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, and 1.0 in
+`prediction-utilization-study`. It writes
+`turnaround-estimation-error.csv`, `.png`, and `.pdf` there. Use
+`--study-dir`, `--systems`, `--utilizations`, or `--output-prefix` to override
+those defaults.
+
+MAPE and SMAPE are calculated per job. The CSV retains both the mean derived
+from replayed per-job timestamps and the aggregate mean reported by the
+original run. The script warns if those means differ, so an inconsistency is
+not hidden by the summary plot.
 
 ## Output
 
@@ -328,6 +572,7 @@ recorded in the log instead:
 | `execution_mode` | Selected `CPU` or `GPU` implementation. |
 | `ground_truth_relative_performance` | Selected mode's ground-truth speedup. |
 | `predicted_relative_performance` | Selected mode's predicted speedup used for dispatch. |
+| `prediction_fallback` | `true` when missing predictions caused Turnaround or RelPerfOnly to use wait-only placement for this job. |
 | `estimated_wait` | Wait predicted from current worker state. |
 | `estimated_duration` | Duration predicted for the dispatch decision. |
 | `actual_duration` | Ground-truth duration submitted to DR_EVT. |
@@ -373,7 +618,7 @@ python3 python/grpc_mpi_launcher.py --mpi-ranks 6 \
   --systems experimental/multi-cluster/machines.csv \
   --seed 7 \
   --max-time-limit 43200 \
-  --dispatch-policy IPDPS24 \
+  --dispatch-policy RelPerfOnly \
   --wall-time-policy adapted-limit \
   --output grpc-dispatch-decisions.csv
 ```
@@ -387,7 +632,7 @@ Run the Python policy tests directly:
 
 ```bash
 source docs/venv/bin/activate
-python3 experimental/multi-cluster/test_performance_dispatch.py
+python3 experimental/multi-cluster/tests/test_performance_dispatch.py
 ```
 
 The native dispatcher's end-to-end regression is registered separately with
@@ -400,5 +645,5 @@ and wait tolerance rather than workload-specific performance measurements. Its
 focused tests are unrelated to either profile-based implementation:
 
 ```bash
-python3 experimental/multi-cluster/test_baseline_dispatch.py
+python3 experimental/multi-cluster/tests/test_baseline_dispatch.py
 ```
