@@ -161,7 +161,7 @@ for every mode derived from `--systems`: a CPU-only machine produces a
 `<machine>-gpu` columns. Additional columns, such as a non-dispatch reference
 machine, are allowed.
 
-```csv
+```text
 app,args,ranks,borax,dane,matrix-cpu,matrix-gpu,tioga-cpu,tioga-gpu,tuolumne-cpu,tuolumne-gpu,mammoth
 amg,-problem1-p442-n12812864,32,0.9738,0.9821,1.0943,,1.2496,,2.2508,,1.0446
 ```
@@ -176,7 +176,7 @@ positive number; an empty cell means that no prediction is available. Quote an
 `args`, and `actual_run_time`. Additional columns are ignored. The first header
 may optionally begin with `#`, so both `machine` and `#machine` are accepted.
 
-```csv
+```text
 #machine,rank,app,args,actual_run_time
 borax,32,amg,"-problem 1 -P 4 4 2 -n 128 128 64",27.971479
 ```

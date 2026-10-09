@@ -74,7 +74,13 @@ def main():
     if Path(mpiexec).name == "srun" and "SLURM_JOB_ID" not in os.environ:
         print("SKIP: srun requires an active Slurm allocation")
         return 77
-    fixture_dir = Path(source_dir) / "experimental" / "multi-cluster" / "testdata"
+    fixture_dir = (
+        Path(source_dir)
+        / "experimental"
+        / "multi-cluster"
+        / "tests"
+        / "testdata"
+    )
     requirements = {
         "cpu-solver": "CPU-only",
         "gpu-trainer": "GPU-only",
