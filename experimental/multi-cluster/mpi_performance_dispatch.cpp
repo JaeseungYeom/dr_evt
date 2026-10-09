@@ -56,7 +56,11 @@ constexpr int kSizeTag = 100;
 constexpr int kPayloadTag = 101;
 
 enum class Operation : std::uint8_t { Snapshot, Append, Finish };
-enum class DispatchPolicy : std::uint8_t { Turnaround, Ipdps24 };
+enum class DispatchPolicy : std::uint8_t {
+  Turnaround,
+  RelPerfOnly,
+  WaitTimeOnly
+};
 enum class WallTimePolicy : std::uint8_t {
   AdaptedLimit,
   ActualDuration
@@ -187,7 +191,8 @@ struct Options {
             << "  --prediction-utilization U  value in [0,1] (default: 1)\n"
             << "  --max-time-limit SECONDS  maximum submitted wall time "
                "(default: unlimited)\n"
-            << "  --dispatch-policy POLICY  turnaround or IPDPS24 "
+            << "  --dispatch-policy POLICY  turnaround, RelPerfOnly, or "
+               "WaitTimeOnly "
                "(default: turnaround)\n"
             << "  --wall-time-policy POLICY adapted-limit or "
                "actual-duration (default: adapted-limit)\n"
@@ -227,10 +232,13 @@ Options parse_options(int argc, char **argv) {
       const auto value = option_value(i, argc, argv, arg);
       if (value == "turnaround")
         options.dispatch_policy = DispatchPolicy::Turnaround;
-      else if (value == "IPDPS24")
-        options.dispatch_policy = DispatchPolicy::Ipdps24;
+      else if (value == "RelPerfOnly")
+        options.dispatch_policy = DispatchPolicy::RelPerfOnly;
+      else if (value == "WaitTimeOnly")
+        options.dispatch_policy = DispatchPolicy::WaitTimeOnly;
       else
-        usage(argv[0], "--dispatch-policy must be turnaround or IPDPS24");
+        usage(argv[0], "--dispatch-policy must be turnaround, RelPerfOnly, "
+                       "or WaitTimeOnly");
     } else if (arg == "--wall-time-policy") {
       const auto value = option_value(i, argc, argv, arg);
       if (value == "adapted-limit")
@@ -484,7 +492,7 @@ std::vector<System> read_systems(const std::string &path) {
 
 struct PerformancePair {
   double ground_truth;
-  double predicted;
+  std::optional<double> predicted;
 };
 
 struct SystemPerformance {
@@ -521,31 +529,36 @@ std::optional<double> read_performance(const std::vector<std::string> &row,
   return value;
 }
 
-/** Read matching values for one execution mode from two table rows.
+/** Read ground truth and an optional prediction for one execution mode.
  * @param[in] row Ground-truth row.
  * @param[in] header Ground-truth header lookup.
- * @param[in] prediction_row Prediction row with the same workload identity.
+ * @param[in] prediction_row Prediction row with the same workload identity, or
+ * null when that workload has no prediction row.
  * @param[in] prediction_header Prediction header lookup.
  * @param[in] column Execution-mode column name.
  * @param[in] context Diagnostic context.
- * @return The pair, or no value when both cells are empty.
- * @throws std::runtime_error if only one cell is present or a value is invalid.
+ * @return Ground truth with its optional prediction, or no value when ground
+ * truth is unavailable.
+ * @throws std::runtime_error if a present value is invalid.
  */
 std::optional<PerformancePair>
 read_performance_pair(const std::vector<std::string> &row,
                       const Header &header,
-                      const std::vector<std::string> &prediction_row,
+                      const std::vector<std::string> *prediction_row,
                       const Header &prediction_header,
                       const std::string &column,
                       const std::string &context) {
   if (column.empty())
     return std::nullopt;
   const auto ground_truth = read_performance(row, header, column, context);
-  const auto predicted = read_performance(prediction_row, prediction_header,
-                                          column, context);
-  if (!ground_truth || !predicted)
+  if (!ground_truth)
     return std::nullopt;
-  return PerformancePair{*ground_truth, *predicted};
+  const auto predicted = prediction_row == nullptr
+                             ? std::nullopt
+                             : read_performance(*prediction_row,
+                                                prediction_header, column,
+                                                context);
+  return PerformancePair{*ground_truth, predicted};
 }
 
 /** Join ground truth and predictions by workload identity.
@@ -638,10 +651,9 @@ WorkloadCatalog read_workloads(
                                ": duplicate workload at row " +
                                std::to_string(row_number));
     const auto prediction = predictions.find(workload_identity);
-    if (prediction == predictions.end())
-      throw std::runtime_error(prediction_path +
-                               ": missing workload found in ground truth");
-    const auto &prediction_row = prediction->second;
+    const auto *prediction_row = prediction == predictions.end()
+                                     ? nullptr
+                                     : &prediction->second;
     Workload workload{
         app, field(row, header, identity[1]),
         static_cast<std::uint32_t>(std::stoul(field(row, header, identity[2]))),
@@ -671,7 +683,8 @@ WorkloadCatalog read_workloads(
                    performance.gpu.has_value();
       workload.performance.push_back(performance);
     }
-    predictions.erase(prediction);
+    if (prediction != predictions.end())
+      predictions.erase(prediction);
     if (!runnable) {
       ++unavailable_rows;
       continue;
@@ -739,6 +752,7 @@ struct Choice {
   const char *execution_mode;
   double ground_truth_relative_performance;
   double predicted_relative_performance;
+  bool prediction_fallback;
   double estimated_wait;
   double estimated_duration;
   double actual_duration;
@@ -777,10 +791,14 @@ adjust_time_limit(double predicted_limit, double actual_duration,
  * @param[in] systems Configured execution systems.
  * @param[in] snapshots Current scheduler state for each system.
  * @param[in] max_time_limit Maximum permitted submitted wall-time limit.
- * @param[in] dispatch_policy System-selection policy.
+ * @param[in] dispatch_policy System-selection policy. Wait-only dispatch does
+ * not use predicted relative performance to rank systems. Turnaround and
+ * RelPerfOnly fall back to wait-only selection when no feasible execution mode
+ * has a prediction.
  * @param[in] wall_time_policy Submitted wall-time calculation policy.
- * @return Best compatible system whose predicted and ground-truth runtimes
- * are within the maximum, or no choice if none qualifies.
+ * @return Best compatible system whose ground-truth runtime is within the
+ * maximum and, when a prediction is available, whose predicted runtime is also
+ * within the maximum; returns no choice if none qualifies.
  */
 std::optional<Choice>
 choose_system(const Job &job, const Workload &workload,
@@ -788,6 +806,29 @@ choose_system(const Job &job, const Workload &workload,
               const std::vector<Response> &snapshots, double max_time_limit,
               DispatchPolicy dispatch_policy,
               WallTimePolicy wall_time_policy) {
+  bool prediction_available = dispatch_policy == DispatchPolicy::WaitTimeOnly;
+  for (std::size_t i = 0; !prediction_available && i < systems.size(); ++i) {
+    if (job.num_nodes > systems[i].physical_nodes)
+      continue;
+    const auto available = [&](const auto &performance) {
+      return performance && performance->predicted &&
+             job.duration / performance->ground_truth <= max_time_limit;
+    };
+    if (workload.requirement == SystemRequirement::CpuOnly)
+      prediction_available = available(workload.performance[i].cpu);
+    else if (workload.requirement == SystemRequirement::GpuOnly)
+      prediction_available = systems[i].gpu_enabled &&
+                             available(workload.performance[i].gpu);
+    else
+      prediction_available = available(workload.performance[i].cpu) ||
+                             (systems[i].gpu_enabled &&
+                              available(workload.performance[i].gpu));
+  }
+  const bool prediction_fallback =
+      dispatch_policy != DispatchPolicy::WaitTimeOnly && !prediction_available;
+  const auto effective_policy = prediction_fallback
+                                    ? DispatchPolicy::WaitTimeOnly
+                                    : dispatch_policy;
   std::optional<Choice> best;
   bool best_available_now = false;
   for (std::size_t i = 0; i < systems.size(); ++i) {
@@ -797,35 +838,54 @@ choose_system(const Job &job, const Workload &workload,
     const char *execution_mode = "CPU";
     if (workload.requirement == SystemRequirement::CpuOnly) {
       performance = workload.performance[i].cpu;
+      if (effective_policy != DispatchPolicy::WaitTimeOnly &&
+          performance && !performance->predicted)
+        performance = std::nullopt;
     } else if (workload.requirement == SystemRequirement::GpuOnly) {
       if (!systems[i].gpu_enabled)
         continue;
       performance = workload.performance[i].gpu;
+      if (effective_policy != DispatchPolicy::WaitTimeOnly &&
+          performance && !performance->predicted)
+        performance = std::nullopt;
       execution_mode = "GPU";
     } else if (!systems[i].gpu_enabled) {
       performance = workload.performance[i].cpu;
+      if (effective_policy != DispatchPolicy::WaitTimeOnly &&
+          performance && !performance->predicted)
+        performance = std::nullopt;
     } else {
       if (workload.performance[i].cpu &&
+          (effective_policy == DispatchPolicy::WaitTimeOnly ||
+           workload.performance[i].cpu->predicted) &&
           job.duration / workload.performance[i].cpu->ground_truth <=
               max_time_limit)
         performance = workload.performance[i].cpu;
       if (workload.performance[i].gpu &&
+          (effective_policy == DispatchPolicy::WaitTimeOnly ||
+           workload.performance[i].gpu->predicted) &&
           job.duration / workload.performance[i].gpu->ground_truth <=
               max_time_limit &&
-          (!performance || workload.performance[i].gpu->predicted >
-                               performance->predicted)) {
+          (!performance || effective_policy == DispatchPolicy::WaitTimeOnly ||
+           *workload.performance[i].gpu->predicted >
+               *performance->predicted)) {
         performance = workload.performance[i].gpu;
         execution_mode = "GPU";
       }
     }
     if (!performance)
       continue;
-    const double predicted_duration = job.duration / performance->predicted;
+    const double predicted_speedup =
+        effective_policy == DispatchPolicy::WaitTimeOnly
+            ? 1.0
+            : *performance->predicted;
+    const double predicted_duration = job.duration / predicted_speedup;
     const double actual_duration = job.duration / performance->ground_truth;
-    if (predicted_duration > max_time_limit ||
+    if ((effective_policy != DispatchPolicy::WaitTimeOnly &&
+         predicted_duration > max_time_limit) ||
         actual_duration > max_time_limit)
       continue;
-    const double predicted_limit = job.limit_time / performance->predicted;
+    const double predicted_limit = job.limit_time / predicted_speedup;
     const double actual_limit = job.limit_time / performance->ground_truth;
     auto [submitted_limit, doublings] =
         wall_time_policy == WallTimePolicy::ActualDuration
@@ -838,12 +898,13 @@ choose_system(const Job &job, const Workload &workload,
     const double wait =
         estimate_wait(snapshots[i].window, job.num_nodes, submitted_limit,
                       snapshots[i].prediction_horizon);
-    if (dispatch_policy == DispatchPolicy::Turnaround && !std::isfinite(wait))
+    if (effective_policy != DispatchPolicy::RelPerfOnly && !std::isfinite(wait))
       continue;
     Choice choice{i,
                   execution_mode,
                   performance->ground_truth,
-                  performance->predicted,
+                  predicted_speedup,
+                  prediction_fallback,
                   wait,
                   predicted_duration,
                   actual_duration,
@@ -854,8 +915,8 @@ choose_system(const Job &job, const Workload &workload,
                   wait + predicted_duration};
     const bool available_now =
         snapshots[i].window.available_nodes >= job.num_nodes;
-    const bool ipdps24_better =
-        dispatch_policy == DispatchPolicy::Ipdps24 &&
+    const bool rel_perf_only_better =
+        effective_policy == DispatchPolicy::RelPerfOnly &&
         (!best || (available_now && !best_available_now) ||
          (available_now == best_available_now &&
           (choice.predicted_relative_performance >
@@ -864,12 +925,16 @@ choose_system(const Job &job, const Workload &workload,
                 best->predicted_relative_performance &&
             choice.index < best->index))));
     const bool turnaround_better =
-        dispatch_policy == DispatchPolicy::Turnaround &&
+        effective_policy == DispatchPolicy::Turnaround &&
         (!best || std::tie(choice.predicted_turnaround, choice.estimated_wait,
                           choice.index) <
                      std::tie(best->predicted_turnaround,
                               best->estimated_wait, best->index));
-    if (ipdps24_better || turnaround_better) {
+    const bool wait_better =
+        effective_policy == DispatchPolicy::WaitTimeOnly &&
+        (!best || std::tie(choice.estimated_wait, choice.index) <
+                     std::tie(best->estimated_wait, best->index));
+    if (rel_perf_only_better || turnaround_better || wait_better) {
       best = choice;
       best_available_now = available_now;
     }
@@ -969,8 +1034,12 @@ void controller(const Options &options, const std::vector<System> &systems,
                 int worker_count) {
   const auto jobs = read_jobs(options.jobs);
   const auto requirements = read_application_requirements(options.applications);
-  const auto catalog = read_workloads(options.ground_truth, options.prediction,
-                                      systems, requirements);
+  const auto prediction =
+      options.dispatch_policy == DispatchPolicy::WaitTimeOnly
+          ? options.ground_truth
+          : options.prediction;
+  const auto catalog = read_workloads(options.ground_truth, prediction, systems,
+                                      requirements);
   const auto largest_system = std::max_element(
       systems.begin(), systems.end(), [](const auto &left, const auto &right) {
         return left.physical_nodes < right.physical_nodes;
@@ -989,6 +1058,7 @@ void controller(const Options &options, const std::vector<System> &systems,
              "execution_mode,"
              "ground_truth_relative_performance,"
              "predicted_relative_performance,"
+             "prediction_fallback,"
              "estimated_wait,estimated_duration,actual_duration,"
              "predicted_time_limit,actual_time_limit,submitted_time_limit,"
              "time_limit_doublings,"
@@ -1050,6 +1120,7 @@ void controller(const Options &options, const std::vector<System> &systems,
             << choice.execution_mode << ','
             << choice.ground_truth_relative_performance << ','
             << choice.predicted_relative_performance << ','
+            << (choice.prediction_fallback ? "true" : "false") << ','
             << choice.estimated_wait << ',' << choice.estimated_duration << ','
             << choice.actual_duration << ',' << choice.predicted_time_limit
             << ',' << choice.actual_time_limit << ','

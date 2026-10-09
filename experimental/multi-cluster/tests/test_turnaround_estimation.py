@@ -4,8 +4,12 @@
 import csv
 import os
 import pathlib
+import sys
 import tempfile
 import unittest
+
+# Production scripts live one directory above this test suite.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 import analyze_turnaround_estimation as analysis
 

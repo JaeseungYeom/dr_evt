@@ -134,10 +134,10 @@ def main():
         assert first_output == second_output
         assert metrics == second_metrics
 
-        ipdps24_output = temp_dir / "ipdps24.csv"
+        rel_perf_only_output = temp_dir / "rel-perf-only.csv"
         run_dispatch(
-            command + ["--dispatch-policy", "IPDPS24"],
-            ipdps24_output,
+            command + ["--dispatch-policy", "RelPerfOnly"],
+            rel_perf_only_output,
             expected_jobs,
         )
 
@@ -185,6 +185,7 @@ def main():
                 assert mode == "CPU"
             ground_truth = float(row["ground_truth_relative_performance"])
             predicted = float(row["predicted_relative_performance"])
+            assert row["prediction_fallback"] == "false"
             duration = float(row["duration"])
             limit = float(row["time_limit"])
             estimated = float(row["estimated_duration"])
@@ -201,6 +202,32 @@ def main():
             assert submitted_limit >= actual
             assert int(row["time_limit_doublings"]) >= 0
             assert abs(turnaround - (wait + estimated)) < 1e-9
+
+        missing_prediction = temp_dir / "missing-prediction.csv"
+        with (fixture_dir / "prediction.csv").open(newline="") as source:
+            reader = csv.DictReader(source)
+            fieldnames = reader.fieldnames
+            missing_rows = list(reader)
+        for row in missing_rows:
+            for field in fieldnames[3:]:
+                row[field] = ""
+        with missing_prediction.open("w", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(missing_rows)
+        fallback_command = list(command)
+        fallback_command[fallback_command.index("--prediction") + 1] = str(
+            missing_prediction
+        )
+        fallback_output = temp_dir / "fallback.csv"
+        run_dispatch(fallback_command, fallback_output, expected_jobs)
+        with fallback_output.open(newline="") as stream:
+            fallback_rows = list(csv.DictReader(stream))
+        assert all(row["prediction_fallback"] == "true" for row in fallback_rows)
+        assert all(
+            float(row["predicted_relative_performance"]) == 1.0
+            for row in fallback_rows
+        )
 
         allowed_applications = temp_dir / "allowed-applications.csv"
         with allowed_applications.open("w", newline="") as stream:

@@ -872,7 +872,7 @@ if(DR_EVT_WITH_UNIT_TESTING)
       NAME test_python_performance_dispatch
       COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
         ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/experimental/multi-cluster/test_performance_dispatch.py)
+        ${CMAKE_CURRENT_SOURCE_DIR}/experimental/multi-cluster/tests/test_performance_dispatch.py)
     set_tests_properties(test_python_performance_dispatch PROPERTIES
       LABELS "unit;scripts;multi-cluster"
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})

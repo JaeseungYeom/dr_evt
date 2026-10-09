@@ -197,18 +197,18 @@ def read_workloads(ground_truth_path, prediction_path, systems, requirements):
         for identity, values in prediction.items()
         if identity[0] in requirements
     }
-    if ground_truth.keys() != prediction.keys():
-        missing_prediction = ground_truth.keys() - prediction.keys()
-        missing_truth = prediction.keys() - ground_truth.keys()
+    extra_prediction = prediction.keys() - ground_truth.keys()
+    if extra_prediction:
         raise ValueError(
-            "ground-truth and prediction workload identities differ "
-            f"(missing prediction: {len(missing_prediction)}, missing ground truth: {len(missing_truth)})"
+            "prediction contains workload identities absent from ground truth "
+            f"(extra prediction: {len(extra_prediction)})"
         )
 
     workloads = {}
     unavailable_rows = 0
     for identity, truth_values in ground_truth.items():
         app, workload_args, ranks = identity
+        prediction_values = prediction.get(identity, {})
         workload = {
             "app": app,
             "args": workload_args,
@@ -227,10 +227,10 @@ def read_workloads(ground_truth_path, prediction_path, systems, requirements):
                     performance[mode] = None
                     continue
                 actual = truth_values[column]
-                predicted = prediction[identity][column]
+                predicted = prediction_values.get(column)
                 performance[mode] = (
                     None
-                    if actual is None or predicted is None
+                    if actual is None
                     else {"ground_truth": actual, "predicted": predicted}
                 )
             if workload["sys_requirement"] == "CPU-only":
@@ -292,26 +292,44 @@ def estimate_wait(window, required_nodes, runtime, prediction_horizon):
 
 
 def execution_performance(
-    workload, system, index, duration=0.0, max_time_limit=math.inf
+    workload,
+    system,
+    index,
+    duration=0.0,
+    max_time_limit=math.inf,
+    prefer_gpu=False,
+    require_prediction=True,
 ):
-    """Return the fastest predicted compatible mode that meets the runtime cap."""
+    """Return a compatible mode, optionally requiring a prediction."""
     performance = workload["performance"][index]
     requirement = workload["sys_requirement"]
+
+    def eligible(value):
+        return (
+            value is not None
+            and duration / value["ground_truth"] <= max_time_limit
+            and (not require_prediction or value["predicted"] is not None)
+        )
+
     if requirement == "CPU-only":
         value = performance["CPU"]
-        return ("CPU", value) if value is not None else None
+        return ("CPU", value) if eligible(value) else None
     if requirement == "GPU-only":
         value = performance["GPU"] if system["gpu_enabled"] else None
-        return ("GPU", value) if value is not None else None
+        return ("GPU", value) if eligible(value) else None
     if not system["gpu_enabled"]:
         value = performance["CPU"]
-        return ("CPU", value) if value is not None else None
+        return ("CPU", value) if eligible(value) else None
     candidates = [
         (mode, performance[mode])
         for mode in ("CPU", "GPU")
-        if performance[mode] is not None
-        and duration / performance[mode]["ground_truth"] <= max_time_limit
+        if eligible(performance[mode])
     ]
+    if prefer_gpu:
+        return next(
+            (candidate for candidate in reversed(candidates)),
+            None,
+        )
     return max(candidates, key=lambda item: item[1]["predicted"], default=None)
 
 
@@ -335,11 +353,26 @@ def choose_system(
     dispatch_policy="turnaround",
     wall_time_policy="adapted-limit",
 ):
-    """Choose a feasible system using turnaround or paper Algorithm 2."""
-    if dispatch_policy not in {"turnaround", "IPDPS24"}:
+    """Choose a system, falling back to wait when no prediction is available."""
+    if dispatch_policy not in {"turnaround", "RelPerfOnly", "WaitTimeOnly"}:
         raise ValueError(f"unknown dispatch policy: {dispatch_policy}")
     if wall_time_policy not in {"adapted-limit", "actual-duration"}:
         raise ValueError(f"unknown wall-time policy: {wall_time_policy}")
+    prediction_available = dispatch_policy == "WaitTimeOnly" or any(
+        job["num_nodes"] <= system["capacity"]
+        and execution_performance(
+            workload,
+            system,
+            index,
+            job["duration"],
+            max_time_limit,
+            require_prediction=True,
+        )
+        is not None
+        for index, system in enumerate(systems)
+    )
+    fallback_used = dispatch_policy != "WaitTimeOnly" and not prediction_available
+    effective_policy = "WaitTimeOnly" if fallback_used else dispatch_policy
     candidates = []
     for index, (system, window, horizon) in enumerate(
         zip(systems, windows, horizons)
@@ -347,19 +380,29 @@ def choose_system(
         if job["num_nodes"] > system["capacity"]:
             continue
         execution = execution_performance(
-            workload, system, index, job["duration"], max_time_limit
+            workload,
+            system,
+            index,
+            job["duration"],
+            max_time_limit,
+            prefer_gpu=effective_policy == "WaitTimeOnly",
+            require_prediction=effective_policy != "WaitTimeOnly",
         )
         if execution is None:
             continue
         mode, performance = execution
-        predicted_speedup = performance["predicted"]
+        predicted_speedup = (
+            1.0
+            if effective_policy == "WaitTimeOnly"
+            else performance["predicted"]
+        )
         ground_truth_speedup = performance["ground_truth"]
         predicted_duration = job["duration"] / predicted_speedup
         actual_duration = job["duration"] / ground_truth_speedup
         if (
-            predicted_duration > max_time_limit
-            or actual_duration > max_time_limit
-        ):
+            effective_policy != "WaitTimeOnly"
+            and predicted_duration > max_time_limit
+        ) or actual_duration > max_time_limit:
             continue
         predicted_limit = job["limit_time"] / predicted_speedup
         actual_limit = job["limit_time"] / ground_truth_speedup
@@ -373,7 +416,7 @@ def choose_system(
         if submitted_limit > max_time_limit:
             continue
         wait = estimate_wait(window, job["num_nodes"], submitted_limit, horizon)
-        if math.isfinite(wait) or dispatch_policy == "IPDPS24":
+        if math.isfinite(wait) or effective_policy == "RelPerfOnly":
             candidates.append(
                 {
                     "index": index,
@@ -389,10 +432,11 @@ def choose_system(
                     "submitted_time_limit": submitted_limit,
                     "time_limit_doublings": doublings,
                     "predicted_turnaround": wait + predicted_duration,
+                    "prediction_fallback": fallback_used,
                     "available_now": window.available_nodes >= job["num_nodes"],
                 }
             )
-    if dispatch_policy == "IPDPS24":
+    if effective_policy == "RelPerfOnly":
         available = [candidate for candidate in candidates if candidate["available_now"]]
         pool = available or candidates
         return max(
@@ -401,6 +445,12 @@ def choose_system(
                 item["predicted_relative_performance"],
                 -item["index"],
             ),
+            default=None,
+        )
+    if effective_policy == "WaitTimeOnly":
+        return min(
+            candidates,
+            key=lambda item: (item["estimated_wait"], item["index"]),
             default=None,
         )
     return min(
@@ -430,7 +480,12 @@ def run_experiment(args, grpc, pb, service):
         raise ValueError("--systems must contain exactly one row per --server")
     jobs = read_arrivals(args.jobs)
     requirements = read_applications(args.applications)
-    workloads = read_workloads(args.ground_truth, args.prediction, systems, requirements)
+    prediction = (
+        args.ground_truth
+        if args.dispatch_policy == "WaitTimeOnly"
+        else args.prediction
+    )
+    workloads = read_workloads(args.ground_truth, prediction, systems, requirements)
     generator = random.Random(args.seed)
     largest_system = max(system["capacity"] for system in systems)
     sessions = [ServerSession(address, grpc, pb, service) for address in args.server]
@@ -557,6 +612,7 @@ def run_experiment(args, grpc, pb, service):
                                 "execution_mode",
                                 "ground_truth_relative_performance",
                                 "predicted_relative_performance",
+                                "prediction_fallback",
                                 "estimated_wait",
                                 "estimated_duration",
                                 "actual_duration",
@@ -603,6 +659,7 @@ def write_results(stream, decisions):
         "execution_mode",
         "ground_truth_relative_performance",
         "predicted_relative_performance",
+        "prediction_fallback",
         "estimated_wait",
         "estimated_duration",
         "actual_duration",
@@ -615,7 +672,13 @@ def write_results(stream, decisions):
     )
     writer = csv.DictWriter(stream, fieldnames=fields)
     writer.writeheader()
-    writer.writerows(decisions)
+    for decision in decisions:
+        writer.writerow(
+            {
+                **decision,
+                "prediction_fallback": str(decision["prediction_fallback"]).lower(),
+            }
+        )
 
 
 def evaluation_metrics(decisions, statistics):
@@ -713,11 +776,12 @@ def main():
     )
     parser.add_argument(
         "--dispatch-policy",
-        choices=("turnaround", "IPDPS24"),
+        choices=("turnaround", "RelPerfOnly", "WaitTimeOnly"),
         default="turnaround",
         help=(
-            "system selection policy: minimum predicted turnaround or "
-            "IPDPS24 Algorithm 2 (default: turnaround)"
+            "system selection policy: minimum predicted turnaround, "
+            "relative-performance-only, or waiting-time-only "
+            "(default: turnaround)"
         ),
     )
     parser.add_argument(

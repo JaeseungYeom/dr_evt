@@ -5,15 +5,20 @@ import io
 import math
 import pathlib
 import random
+import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+# Production scripts live one directory above this test suite.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+
 import grpc_performance_dispatch as dispatch
 import build_performance_tables as build_table
 import build_prediction_baselines as baselines
 import plot_relative_performance as performance_plot
+import run_kt_scheduling_study as kt_study
 import run_prediction_study as prediction_study
 from grpc_performance_dispatch import (
     adjusted_time_limit,
@@ -177,7 +182,7 @@ class PerformanceDispatchTests(unittest.TestCase):
             )
         self.assertEqual(set(workloads), {"cpu-solver", "portable-md"})
 
-    def test_workload_ignores_modes_without_a_prediction(self):
+    def test_workload_retains_ground_truth_without_a_prediction(self):
         requirements = read_applications(_FIXTURES / "applications.csv")
         contents = (_FIXTURES / "prediction.csv").read_text(encoding="utf-8")
         contents = contents.replace("0.9,1.3", ",1.3", 1)
@@ -187,7 +192,28 @@ class PerformanceDispatchTests(unittest.TestCase):
             workloads = read_workloads(
                 _FIXTURES / "ground_truth.csv", path, self.systems, requirements
             )
-        self.assertIsNone(workloads["cpu-solver"][0]["performance"][0]["CPU"])
+        performance = workloads["cpu-solver"][0]["performance"][0]["CPU"]
+        self.assertEqual(performance["ground_truth"], 1.0)
+        self.assertIsNone(performance["predicted"])
+
+    def test_workload_accepts_missing_prediction_row(self):
+        requirements = read_applications(_FIXTURES / "applications.csv")
+        contents = (_FIXTURES / "prediction.csv").read_text(encoding="utf-8")
+        contents = "\n".join(
+            line
+            for line in contents.splitlines()
+            if "--mesh-small" not in line
+        ) + "\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "prediction.csv"
+            path.write_text(contents, encoding="utf-8")
+            workloads = read_workloads(
+                _FIXTURES / "ground_truth.csv", path, self.systems, requirements
+            )
+
+        performance = workloads["cpu-solver"][0]["performance"][0]["CPU"]
+        self.assertEqual(performance["ground_truth"], 1.0)
+        self.assertIsNone(performance["predicted"])
 
     def test_workload_builder_normalizes_quoted_comma_arguments(self):
         identity = build_table.normalized_identity(
@@ -468,7 +494,7 @@ class PerformanceDispatchTests(unittest.TestCase):
         self.assertEqual(choice["estimated_duration"], 20)
         self.assertEqual(choice["actual_duration"], 160)
 
-    def test_ipdps24_chooses_fastest_system_that_is_available_now(self):
+    def test_rel_perf_only_chooses_fastest_system_that_is_available_now(self):
         systems = self.systems[:2]
         workload = {
             **self.workloads["cpu-solver"][0],
@@ -479,7 +505,7 @@ class PerformanceDispatchTests(unittest.TestCase):
         }
         choice = choose_system(
             {
-                "job_id": "ipdps24-available",
+                "job_id": "rel-perf-only-available",
                 "num_nodes": 8,
                 "duration": 80,
                 "limit_time": 100,
@@ -488,11 +514,11 @@ class PerformanceDispatchTests(unittest.TestCase):
             systems,
             [window(0, 0, ((20, 8),)), window(0, systems[1]["capacity"])],
             [0, 0],
-            dispatch_policy="IPDPS24",
+            dispatch_policy="RelPerfOnly",
         )
         self.assertEqual(choice["system_id"], "mammoth")
 
-    def test_ipdps24_chooses_fastest_system_when_all_are_full(self):
+    def test_rel_perf_only_chooses_fastest_system_when_all_are_full(self):
         systems = self.systems[:2]
         workload = {
             **self.workloads["cpu-solver"][0],
@@ -503,7 +529,7 @@ class PerformanceDispatchTests(unittest.TestCase):
         }
         choice = choose_system(
             {
-                "job_id": "ipdps24-full",
+                "job_id": "rel-perf-only-full",
                 "num_nodes": 8,
                 "duration": 80,
                 "limit_time": 100,
@@ -512,9 +538,118 @@ class PerformanceDispatchTests(unittest.TestCase):
             systems,
             [window(0, 0, ((20, 8),)), window(0, 0, ((2, 8),))],
             [0, 0],
-            dispatch_policy="IPDPS24",
+            dispatch_policy="RelPerfOnly",
         )
         self.assertEqual(choice["system_id"], "dane")
+
+    def test_wait_policy_chooses_shortest_wait_and_ignores_prediction(self):
+        systems = self.systems[:2]
+        workload = {
+            **self.workloads["cpu-solver"][0],
+            "performance": [
+                {"CPU": {"ground_truth": 1.0, "predicted": 100.0}, "GPU": None},
+                {"CPU": {"ground_truth": 1.0, "predicted": 0.1}, "GPU": None},
+            ],
+        }
+        choice = choose_system(
+            {
+                "job_id": "wait-time-only",
+                "num_nodes": 8,
+                "duration": 80,
+                "limit_time": 100,
+            },
+            workload,
+            systems,
+            [window(0, 0, ((20, 8),)), window(0, 0, ((2, 8),))],
+            [0, 0],
+            dispatch_policy="WaitTimeOnly",
+        )
+
+        self.assertEqual(choice["system_id"], "mammoth")
+        self.assertEqual(choice["estimated_wait"], 2)
+        self.assertEqual(choice["predicted_relative_performance"], 1.0)
+        self.assertEqual(choice["estimated_duration"], 80)
+        self.assertFalse(choice["prediction_fallback"])
+
+    def test_missing_predictions_fall_back_to_shortest_wait(self):
+        systems = self.systems[:2]
+        workload = {
+            **self.workloads["cpu-solver"][0],
+            "performance": [
+                {"CPU": {"ground_truth": 2.0, "predicted": None}, "GPU": None},
+                {"CPU": {"ground_truth": 1.0, "predicted": None}, "GPU": None},
+            ],
+        }
+        choice = choose_system(
+            {
+                "job_id": "prediction-fallback",
+                "num_nodes": 8,
+                "duration": 80,
+                "limit_time": 100,
+            },
+            workload,
+            systems,
+            [window(0, 0, ((20, 8),)), window(0, 0, ((2, 8),))],
+            [0, 0],
+            dispatch_policy="turnaround",
+        )
+
+        self.assertEqual(choice["system_id"], "mammoth")
+        self.assertEqual(choice["estimated_wait"], 2)
+        self.assertEqual(choice["predicted_relative_performance"], 1.0)
+        self.assertTrue(choice["prediction_fallback"])
+
+    def test_available_prediction_prevents_wait_fallback(self):
+        systems = self.systems[:2]
+        workload = {
+            **self.workloads["cpu-solver"][0],
+            "performance": [
+                {"CPU": {"ground_truth": 1.0, "predicted": 2.0}, "GPU": None},
+                {"CPU": {"ground_truth": 1.0, "predicted": None}, "GPU": None},
+            ],
+        }
+        choice = choose_system(
+            {
+                "job_id": "partial-prediction",
+                "num_nodes": 8,
+                "duration": 80,
+                "limit_time": 100,
+            },
+            workload,
+            systems,
+            [window(0, 0, ((20, 8),)), window(0, systems[1]["capacity"])],
+            [0, 0],
+            dispatch_policy="turnaround",
+        )
+
+        self.assertEqual(choice["system_id"], "dane")
+        self.assertFalse(choice["prediction_fallback"])
+
+    def test_prediction_rejected_by_limit_does_not_trigger_fallback(self):
+        systems = self.systems[:2]
+        workload = {
+            **self.workloads["cpu-solver"][0],
+            "performance": [
+                {"CPU": {"ground_truth": 2.0, "predicted": 0.5}, "GPU": None},
+                {"CPU": {"ground_truth": 1.0, "predicted": None}, "GPU": None},
+            ],
+        }
+        choice = choose_system(
+            {
+                "job_id": "prediction-over-limit",
+                "num_nodes": 8,
+                "duration": 80,
+                "limit_time": 100,
+            },
+            workload,
+            systems,
+            [window(0, system["capacity"]) for system in systems],
+            [0, 0],
+            max_time_limit=100,
+            dispatch_policy="turnaround",
+        )
+
+        self.assertIsNone(choice)
 
     def test_predicted_time_limit_is_doubled_and_capped(self):
         self.assertEqual(adjusted_time_limit(10, 35, 100), (40, 2))
@@ -659,6 +794,7 @@ class PerformanceDispatchTests(unittest.TestCase):
             [decision["submitted_time_limit"] for decision in decisions],
         )
         for decision in decisions:
+            self.assertFalse(decision["prediction_fallback"])
             self.assertAlmostEqual(
                 decision["actual_duration"],
                 decision["duration"]
@@ -673,6 +809,9 @@ class PerformanceDispatchTests(unittest.TestCase):
                 decision["time_limit"]
                 / decision["ground_truth_relative_performance"],
             )
+        output = io.StringIO()
+        dispatch.write_results(output, decisions)
+        self.assertIn(",false,", output.getvalue())
         self.assertTrue(
             all(job.actual_run_time <= job.limit_time for job in submitted)
         )
@@ -793,12 +932,54 @@ class PerformanceDispatchTests(unittest.TestCase):
             },
         )
 
+    def test_summary_plot_uses_only_adapted_limit_results(self):
+        rows = [
+            {"wall_time_policy": "adapted-limit", "case": "ideal"},
+            {"wall_time_policy": "actual-duration", "case": "ideal"},
+        ]
+
+        self.assertEqual(prediction_study.rows_for_summary_plot(rows), rows[:1])
+
+    def test_prediction_study_uses_analysis_policy_labels(self):
+        records = []
+        for dispatch_policy, case in (
+            ("RelPerfOnly", "ideal"),
+            ("WaitTimeOnly", "wait_time_only"),
+            ("turnaround", "app_average_per_machine"),
+            ("turnaround", "app_average_5_percent"),
+        ):
+            for run in range(1, 11):
+                records.append(
+                    {
+                        "dispatch_policy": dispatch_policy,
+                        "wall_time_policy": "adapted-limit",
+                        "case": case,
+                        "run": run,
+                        "jobs": 100,
+                        "dropped_jobs": 0,
+                        **{metric: float(run) for metric in prediction_study.METRICS},
+                    }
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = pathlib.Path(directory)
+            prediction_study.write_results(output, records)
+            summary = (output / "summary.md").read_text()
+
+        self.assertIn("| RelPerfOnly | adapted-limit |", summary)
+        self.assertIn("| WaitTimeOnly | adapted-limit | WaitTimeOnly |", summary)
+        self.assertIn("| turnaround | adapted-limit | App average (100%) |", summary)
+        self.assertIn("| turnaround | adapted-limit | App average (5% train) |", summary)
+        self.assertNotIn("| wait |", summary)
+
     def test_prediction_study_command_uses_selected_systems(self):
         args = SimpleNamespace(
             launcher=["srun"],
             ranks=6,
             executable=pathlib.Path("/install/bin/mpi_performance_dispatch"),
             systems=pathlib.Path("/inputs/custom-machines.csv"),
+            ground_truth=pathlib.Path("/inputs/custom-ground-truth.csv"),
+            applications=pathlib.Path("/inputs/custom-applications.csv"),
             seed=7,
             max_time_limit=43200.0,
         )
@@ -814,6 +995,155 @@ class PerformanceDispatchTests(unittest.TestCase):
 
         systems_index = command.index("--systems")
         self.assertEqual(command[systems_index + 1], "/inputs/custom-machines.csv")
+        ground_truth_index = command.index("--ground-truth")
+        self.assertEqual(
+            command[ground_truth_index + 1], "/inputs/custom-ground-truth.csv"
+        )
+        applications_index = command.index("--applications")
+        self.assertEqual(
+            command[applications_index + 1], "/inputs/custom-applications.csv"
+        )
+
+    def test_kt_study_blanks_nonpositive_predictions(self):
+        truth = [{"App": "app", "Args": "-n 1", "Ranks": "2", "dane": "1.5"}]
+        with tempfile.TemporaryDirectory() as directory:
+            prediction = pathlib.Path(directory) / "prediction.csv"
+            prediction.write_text(
+                "source_machine,app,args,ranks,dane\n"
+                "borax,APP,-n1,2,-0.25\n",
+                encoding="utf-8",
+            )
+            rows, rejected = kt_study.load_prediction(
+                prediction, truth, ["dane"]
+            )
+
+        self.assertEqual(
+            rows, [{"App": "app", "Args": "-n 1", "Ranks": "2", "dane": ""}]
+        )
+        self.assertEqual(len(rejected), 1)
+        self.assertEqual(rejected[0]["mode"], "dane")
+        self.assertEqual(rejected[0]["value"], "-0.25")
+
+    def test_kt_study_accepts_missing_prediction_workload(self):
+        truth = [
+            {"App": "app", "Args": "-n 1", "Ranks": "2", "dane": "1.5"},
+            {"App": "app", "Args": "-n 2", "Ranks": "2", "dane": "2.0"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            prediction = pathlib.Path(directory) / "prediction.csv"
+            prediction.write_text(
+                "app,args,ranks,dane\n"
+                "app,-n1,2,1.25\n",
+                encoding="utf-8",
+            )
+            rows, rejected = kt_study.load_prediction(
+                prediction, truth, ["dane"]
+            )
+
+        self.assertEqual(rows[0]["dane"], "1.25")
+        self.assertEqual(rows[1]["dane"], "")
+        self.assertEqual(rejected, [])
+
+    def test_kt_study_can_ignore_prediction_only_workloads(self):
+        truth = [{"App": "app", "Args": "-n 1", "Ranks": "2", "dane": "1.5"}]
+        with tempfile.TemporaryDirectory() as directory:
+            prediction = pathlib.Path(directory) / "prediction.csv"
+            prediction.write_text(
+                "app,args,ranks,dane\n"
+                "app,-n1,2,1.25\n"
+                "extra,-n2,2,2.0\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "absent from ground truth"):
+                kt_study.load_prediction(prediction, truth, ["dane"])
+            rows, rejected = kt_study.load_prediction(
+                prediction, truth, ["dane"], ignore_extra=True
+            )
+
+        self.assertEqual(rows[0]["dane"], "1.25")
+        self.assertEqual(rejected, [])
+
+    def test_wait_study_runs_one_case_per_trace(self):
+        cases = [
+            ("ideal", pathlib.Path("/inputs/ground-truth.csv")),
+            ("fully_trained", pathlib.Path("/inputs/fully-trained.csv")),
+        ]
+
+        self.assertEqual(
+            kt_study.cases_for_dispatch_policy("WaitTimeOnly", cases),
+            [("wait_time_only", pathlib.Path("/inputs/ground-truth.csv"))],
+        )
+        self.assertIs(
+            kt_study.cases_for_dispatch_policy("turnaround", cases), cases
+        )
+
+        self.assertEqual(
+            prediction_study.cases_for_dispatch_policy("WaitTimeOnly", cases),
+            [("wait_time_only", pathlib.Path("/inputs/ground-truth.csv"))],
+        )
+        self.assertIs(
+            prediction_study.cases_for_dispatch_policy("turnaround", cases), cases
+        )
+
+    def test_kt_study_accepts_configured_jobs_per_trace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            executable = root / "dispatcher"
+            applications = root / "applications.csv"
+            systems = root / "systems.csv"
+            prediction = root / "prediction.csv"
+            for path in (executable, applications, systems, prediction):
+                path.write_text("fixture\n", encoding="utf-8")
+            for index in range(10):
+                (root / f"trace-{index:02d}.csv").write_text(
+                    "submit_time,num_nodes,time_limit,duration\n"
+                    "0,1,10,5\n"
+                    "20,1,10,5\n",
+                    encoding="utf-8",
+                )
+            args = SimpleNamespace(
+                executable=executable,
+                applications=applications,
+                systems=systems,
+                jobs_glob=str(root / "trace-*.csv"),
+                jobs_per_trace=2,
+            )
+
+            traces = kt_study.validate_run_inputs(
+                args, [("ideal", prediction)]
+            )
+
+        self.assertEqual(len(traces), 10)
+
+    def test_prediction_study_accepts_configured_jobs_per_trace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            experiment = root / "experimental/multi-cluster"
+            experiment.mkdir(parents=True)
+            executable = root / "dispatcher"
+            systems = root / "systems.csv"
+            applications = experiment / "apps.csv"
+            prediction = root / "prediction.csv"
+            for path in (executable, systems, applications, prediction):
+                path.write_text("fixture\n", encoding="utf-8")
+            for index in range(10):
+                (root / f"trace-{index:02d}.csv").write_text(
+                    "submit_time,num_nodes,time_limit,duration\n"
+                    "0,1,10,5\n"
+                    "20,1,10,5\n",
+                    encoding="utf-8",
+                )
+
+            traces = prediction_study.validate_inputs(
+                root,
+                executable,
+                systems,
+                [("ideal", prediction)],
+                str(root / "trace-*.csv"),
+                2,
+            )
+
+        self.assertEqual(len(traces), 10)
 
 if __name__ == "__main__":
     unittest.main()

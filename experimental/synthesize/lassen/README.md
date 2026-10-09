@@ -1,21 +1,23 @@
 # Job trace conversion, sampling, and synthetic generation
 
-This directory is supported by five scripts:
+This directory is supported by six scripts:
 
 1. `convert_job_stream_to_epoch.py` extracts Lassen `pbatch` jobs from the raw
    CSM allocation history, converts local timestamps to Unix epoch seconds,
    and can calculate job duration.
 2. `sample_job_stream.py` selects a contiguous eligible historical workload
    window without separating its correlated job properties.
-3. `generate_synthetic_job_stream.py` preserves a historical sequence of
+3. `downsample_job_stream.py` retains one unchanged row from each fixed-size
+   block, reducing offered load while preserving the trace's time span.
+4. `generate_synthetic_job_stream.py` preserves a historical sequence of
    submission times and node counts, then statistically samples durations and
    conditional time limits from a global or local population.
-4. `../analyze_job_stream.py` calculates capacity and scheduling metrics from
+5. `../analyze_job_stream.py` calculates capacity and scheduling metrics from
    any completed trace containing submit, begin, end, and node-count columns.
-5. `../convert_completed_trace_to_simulation.sh` converts such a completed
+6. `../convert_completed_trace_to_simulation.sh` converts such a completed
    trace into four-column DR_EVT simulation input.
 
-All five scripts use Python's standard library and require Python 3.9 or
+All six scripts use Python's standard library and require Python 3.9 or
 newer.
 
 ## Convert a completed trace to simulation input
@@ -306,3 +308,31 @@ done
 ```
 
 Using the loop index as the seed makes every selected window reproducible.
+
+### Reduce campaign load by a factor of four
+
+To retain the first job from every four-row block in each 100,000-job trace:
+
+```bash
+python experimental/synthesize/lassen/downsample_job_stream.py \
+  experimental/synthesize/lassen/synthetic_traces/100000/*.csv \
+  --output-dir experimental/synthesize/lassen/synthetic_traces/25000 \
+  --stride 4
+```
+
+Each output has the same filename and header as its input followed by 25,000
+unchanged job rows. Submission timestamps are not compressed, so the offered
+load is reduced over the original time interval. Use `--offset 1`, `2`, or `3`
+to retain a different position within each four-row block. Existing output
+files are protected unless `--overwrite` is supplied.
+
+Run the knowledge-transfer campaign on these traces with a new output
+directory and the matching validation count:
+
+```bash
+python experimental/multi-cluster/run_kt_scheduling_study.py \
+  [the existing table and machine options] \
+  --jobs-glob 'experimental/synthesize/lassen/synthetic_traces/25000/*.csv' \
+  --jobs-per-trace 25000 \
+  --output-dir /results/kt-scheduling-25000
+```
