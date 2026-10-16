@@ -268,6 +268,14 @@ struct Swf_Trace_Policy {
   }
   /// @brief Reset runtime accounting before restoring running jobs (no-op).
   void reset_runtime_state() {}
+  /// @brief Scheduling power for a job. @return Empty; SWF has no power data.
+  static std::optional<double> scheduler_power(const record_type &) {
+    return std::nullopt;
+  }
+  /// @brief Maximum power for a job. @return Empty; SWF has no power data.
+  static std::optional<double> scheduler_maximum_power(const record_type &) {
+    return std::nullopt;
+  }
   /// @brief Hook called when a job starts (no-op for SWF).
   void on_start(const record_type &) {}
   /// @brief Hook called when a job finishes (no-op for SWF).
