@@ -93,6 +93,7 @@ static const struct option sim_longopts[] = {
 Sim_Params::Sim_Params()
     : m_seed(0u), m_max_jobs(10u), m_max_time(dr_evt::max_sim_time),
       m_sim_start_time(0.0), m_is_jobs_set(false), m_is_time_set(false),
+      m_is_nodes_set(false),
       m_backfill_policy(BackfillPolicy::EASY), m_num_max_candidates(1),
       m_cap_backfill_power(false), m_cap_fcfs_power(false),
       m_priority_policy(PriorityPolicy::FCFS),
@@ -105,7 +106,6 @@ Sim_Params::Sim_Params()
       m_memory_pressure_fraction(0.0),
       m_resource_history_capacity(0), m_total_nodes(dr_evt::total_nodes),
       m_trace_type(TraceType::STANDARD), m_cores_per_node(0u),
-      m_is_nodes_set(false),
       m_trace_format("simple"),    // Default to simple format
       m_timestamp_format("epoch"), // Retained timestamp compatibility value
       m_timezone("America/Los_Angeles"),    // Default timezone
