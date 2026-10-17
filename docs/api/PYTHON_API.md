@@ -40,8 +40,10 @@ For experimental external backfill selection, set
 `params.num_max_candidates`, then call
 `Simulation(params, job_cost_function, backfill_selector)`. The cost callback
 receives `(job_id, submit_time, runtime_estimate, nodes_requested)`. The
-selector receives a list of `(job_id, cost)` pairs and returns one offered ID
-or `None`.
+selector receives a list of `BackfillCandidate` objects and returns the list
+position of the selected candidate, or `None`. Each candidate exposes its
+ephemeral `queue_index` and floating-point scheduler `cost`. EASYPower uses
+that existing scalar as the candidate's predicted power.
 
 ## Configuration
 
@@ -54,7 +56,7 @@ or `None`.
 | `redis_key_prefix` | `str` |
 | `checkpoint_file` | `str` |
 | `checkpoint_interval_jobs` | `int` |
-| `total_nodes` | `int` |
+| `total_nodes` | `int`; file-loaded jobs requesting more are dropped and reported |
 | `capacity_schedule` | `str` |
 | `sim_start_time` | `float` |
 | `trace_format` | `str` |
@@ -62,6 +64,8 @@ or `None`.
 | `run_time_mode` | `RunTimeMode` |
 | `backfill_policy` | `BackfillPolicy` |
 | `num_max_candidates` | `int` |
+| `cap_backfill_power` | `bool` |
+| `cap_fcfs_power` | `bool` |
 | `priority_policy` | `PriorityPolicy` |
 | `verbose` | `bool` |
 

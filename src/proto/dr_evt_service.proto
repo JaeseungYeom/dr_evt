@@ -57,6 +57,7 @@ message ClientMessage {
 // from a flat Sim_Params-equivalent config (same fields as the existing
 // protobuf --config schema). Must be sent before any other request.
 message InitRequest {
+    // System node limit; larger file-loaded jobs are dropped before storage.
     uint32 total_nodes = 1;
     string trace_format = 2;       // "simple", "lassen", or "swf" (default: "simple")
     string timestamp_format = 3;   // retained "epoch"/"iso" compatibility value
@@ -94,10 +95,15 @@ message InitRequest {
     // Global simulation start time. A positive value selects native replay
     // warm-start execution for RunRequest; zero preserves ordinary execution.
     double sim_start_time = 15;
+
     // When set together, job and resource-history output is written to Redis.
     string redis_uri = 16;
     string redis_key_prefix = 17;
     uint64 job_flush_interval = 18; // 0 follows job-store capacity
+
+    // Optional hard EASYPower admission controls (default: false).
+    bool cap_backfill_power = 19;
+    bool cap_fcfs_power = 20;
 }
 
 // Runs the configured input trace to completion. Unlike AdvanceToRequest,

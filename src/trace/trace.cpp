@@ -130,7 +130,8 @@ int BasicTrace<Policy>::load_data(num_jobs_t n_lines_to_read) {
   // m_job_store_overflow's abort/grow fallback applies here exactly
   // as it would mid-run.
   std::vector<trace_record_t<Policy>> loaded;
-  int rc = Policy::load_records(m_fname, m_dcols, loaded, n_lines_to_read);
+  int rc = Policy::load_records(m_fname, m_dcols, loaded, n_lines_to_read,
+                                m_admission_limits);
 
 #if LIMIT_VS_EXEC_TIME_ONLY
   print_limit_vs_exec_time(m_dcols.get_cols_to_read(), loaded);
@@ -520,7 +521,8 @@ std::vector<job_no_t>
 BasicTrace<Policy>::load_next_file(sim_time_t current_time,
                                    const std::string &fname) {
   std::vector<trace_record_t<Policy>> loaded;
-  int rc = Policy::load_records(fname, m_dcols, loaded, 0);
+  int rc = Policy::load_records(fname, m_dcols, loaded, 0,
+                                m_admission_limits);
   if (rc != EXIT_SUCCESS) {
     throw std::runtime_error("Trace::load_next_file(): failed to load '" +
                              fname + "'");
@@ -913,6 +915,24 @@ Job_Record &BasicTrace<Policy>::job_at(job_no_t job_no) {
 template <typename Policy>
 const Job_Record &BasicTrace<Policy>::job_at(job_no_t job_no) const {
   return const_cast<BasicTrace<Policy> *>(this)->job_at(job_no);
+}
+
+template <typename Policy>
+std::optional<double>
+BasicTrace<Policy>::scheduler_power(job_no_t job_no) const {
+  // job_at() performs the permanent-ID bounds checks. The physical offset is
+  // then safe and retains the policy-specific record type (including Pcon).
+  (void)job_at(job_no);
+  const size_t idx = static_cast<size_t>(job_no - m_num_reclaimed);
+  return Policy::scheduler_power(m_data[idx]);
+}
+
+template <typename Policy>
+std::optional<double>
+BasicTrace<Policy>::scheduler_maximum_power(job_no_t job_no) const {
+  (void)job_at(job_no);
+  const size_t idx = static_cast<size_t>(job_no - m_num_reclaimed);
+  return Policy::scheduler_maximum_power(m_data[idx]);
 }
 
 template <typename Policy>
