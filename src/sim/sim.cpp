@@ -2029,35 +2029,77 @@ std::vector<typename BasicSimulation<TraceType>::Job_Status>
 BasicSimulation<TraceType>::get_job_statuses(
     const std::vector<job_no_t> &job_idxs) const {
   std::map<job_no_t, sim_time_t> expected_starts;
-  std::map<sim_time_t, num_nodes_t> releases;
-  num_nodes_t available = get_available_nodes();
-  for (const auto &[job_idx, running] : m_running_jobs) {
-    (void)job_idx;
-    const sim_time_t end = running.start_time + running.run_time;
-    if (end > m_current_time) {
-      releases[end] += running.nodes;
+
+  // Free-node profile: each key starts a segment that keeps its value until
+  // the next key. Seeded from running-job releases at their limit times, the
+  // same estimate the schedulers reserve against. Pending jobs are then
+  // placed in queue order at their earliest fit for their full time limit,
+  // and each placement is carved out of the profile, so a short job behind
+  // a blocked head may be projected ahead of it, as a backfill scheduler's
+  // own reservation walk would do.
+  std::map<sim_time_t, num_nodes_t> profile;
+  {
+    std::map<sim_time_t, num_nodes_t> releases;
+    for (const auto &[job_idx, running] : m_running_jobs) {
+      (void)job_idx;
+      const sim_time_t end = running.start_time + running.run_time;
+      if (end > m_current_time) {
+        releases[end] += running.nodes;
+      }
+    }
+    num_nodes_t free_nodes = get_available_nodes();
+    profile[m_current_time] = free_nodes;
+    for (const auto &[time, nodes] : releases) {
+      free_nodes += nodes;
+      profile[time] = free_nodes;
     }
   }
 
-  sim_time_t projection_time = m_current_time;
+  // Insert a segment boundary at t, inheriting the enclosing segment's value.
+  const auto split_at = [&profile](sim_time_t t) {
+    auto lb = profile.lower_bound(t);
+    if (lb == profile.end() || lb->first != t) {
+      profile.emplace_hint(lb, t, std::prev(lb)->second);
+    }
+  };
+
   for (const job_no_t pending_id : m_scheduler->pending_job_ids()) {
     const auto &record = m_trace.job_at(pending_id);
-    const sim_time_t submit_time =
-        convert_epoch<sim_time_t>(record.get_submit_time());
-    projection_time = std::max(projection_time, submit_time);
-    auto release = releases.begin();
-    while (release != releases.end() && release->first <= projection_time) {
-      available += release->second;
-      release = releases.erase(release);
+    const num_nodes_t nodes = record.get_num_nodes();
+    const tdiff_t limit = record.get_limit_time();
+    sim_time_t start = std::max(
+        m_current_time, convert_epoch<sim_time_t>(record.get_submit_time()));
+
+    // Earliest fit: scan segments covering [start, start + limit); on the
+    // first segment that is too small, restart from the next segment that
+    // is large enough. Every segment is visited at most once per job.
+    auto segment = std::prev(profile.upper_bound(start));
+    bool fits = true;
+    for (;;) {
+      auto scan = segment;
+      while (scan != profile.end() &&
+             (scan == segment || scan->first < start + limit) &&
+             scan->second >= nodes) {
+        ++scan;
+      }
+      if (scan == profile.end() ||
+          (scan != segment && scan->first >= start + limit)) {
+        break;
+      }
+      do {
+        ++scan;
+      } while (scan != profile.end() && scan->second < nodes);
+      if (scan == profile.end()) {
+        fits = false;
+        break;
+      }
+      segment = scan;
+      start = scan->first;
     }
-    while (available < record.get_num_nodes() && !releases.empty()) {
-      projection_time = releases.begin()->first;
-      available += releases.begin()->second;
-      releases.erase(releases.begin());
-    }
-    if (available < record.get_num_nodes()) {
+    if (!fits) {
       continue;
     }
+
     const bool is_appended =
         pending_id >= m_first_appended_job_idx &&
         pending_id - m_first_appended_job_idx <
@@ -2065,11 +2107,17 @@ BasicSimulation<TraceType>::get_job_statuses(
         m_appended_job_query_records[pending_id - m_first_appended_job_idx]
             .tracked;
     if (is_appended) {
-      expected_starts[pending_id] = projection_time;
+      expected_starts[pending_id] = start;
     }
-    available -= record.get_num_nodes();
-    releases[projection_time + record.get_limit_time()] +=
-        record.get_num_nodes();
+    if (limit <= 0) {
+      continue; // Nothing to reserve for a zero-length placement.
+    }
+    split_at(start);
+    split_at(start + limit);
+    for (auto it = profile.find(start);
+         it != profile.end() && it->first < start + limit; ++it) {
+      it->second -= nodes;
+    }
   }
 
   std::vector<Job_Status> result;
@@ -2127,7 +2175,8 @@ void BasicSimulation<TraceType>::submit_job(job_no_t job_idx,
   tdiff_t run_time_estimate = job.get_limit_time();
   num_nodes_t nodes = job.get_num_nodes();
 
-  if (nodes > m_job_rejection_capacity) {
+  const bool exceeds_total = nodes > m_job_rejection_capacity;
+  if (exceeds_total || !m_scheduler->can_ever_run(nodes)) {
     // This job can never be scheduled, regardless of how long the
     // simulation runs - total_nodes is fixed for the whole run, so
     // no future state ever frees up enough capacity. Reject it here,
@@ -2135,7 +2184,8 @@ void BasicSimulation<TraceType>::submit_job(job_no_t job_idx,
     // silently block every job behind it in FCFS order, and its
     // begin_time/end_time would stay at unscheduled_sentinel()
     // forever - exactly the "reaches output still unresolved" state
-    // that shouldn't be possible.
+    // that shouldn't be possible. A scheduler that partitions the
+    // capacity declines through can_ever_run() for the same reason.
     //
     // Also mark submit_time as the sentinel: m_data's front-reclaim
     // sweep treats that as "skip immediately, will never resolve" -
@@ -2143,8 +2193,13 @@ void BasicSimulation<TraceType>::submit_job(job_no_t job_idx,
     // forever, since end_time never resolves for it either.
     job.set_submit_time(Job_Record::unscheduled_sentinel());
     std::cerr << "Job " << job_idx << " rejected: requests " << nodes
-              << " nodes, exceeds total_nodes (" << m_job_rejection_capacity
-              << "); this job can never be scheduled." << std::endl;
+              << " nodes, ";
+    if (exceeds_total) {
+      std::cerr << "exceeds total_nodes (" << m_job_rejection_capacity << ")";
+    } else {
+      std::cerr << "declined by the scheduler";
+    }
+    std::cerr << "; this job can never be scheduled." << std::endl;
     return;
   }
 
