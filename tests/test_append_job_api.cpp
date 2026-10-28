@@ -1123,14 +1123,12 @@ void test_prediction_horizon() {
 }
 
 void test_append_with_known_actual_runtime() {
-  std::cout << "\n=== Known actual runtime for streaming jobs ==="
-            << std::endl;
+  std::cout << "\n=== Known actual runtime for streaming jobs ===" << std::endl;
   Sim_Params params = make_params();
   Simulation sim(params);
   sim.get_trace().load_data(0);
 
-  const auto job =
-      sim.append_job(0.0, 10, kTestQueueInput, 100.0, 25.0);
+  const auto job = sim.append_job(0.0, 10, kTestQueueInput, 100.0, 25.0);
   sim.advance_to(24.0);
   assert(sim.get_job_statuses({job}).front().state ==
          Simulation::Job_State::RUNNING);

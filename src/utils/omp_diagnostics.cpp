@@ -114,9 +114,7 @@ void my_omp_affinity::print() const {
 #if defined(_OPENMP)
   if (omp_get_level()) {
 #pragma omp critical
-    {
-      std::cout << msg;
-    }
+    { std::cout << msg; }
   } else {
     std::cout << msg;
   }

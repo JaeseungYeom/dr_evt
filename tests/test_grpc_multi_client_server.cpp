@@ -538,8 +538,8 @@ int run_client_rank(int my_rank, int paired_server_rank,
   const auto &finish = finish_resp.finish_simulation();
   const auto &stats = finish.statistics();
 
-  std::cout << "[client rank " << my_rank << "] final stats: "
-            << "submitted=" << stats.jobs_submitted()
+  std::cout << "[client rank " << my_rank
+            << "] final stats: " << "submitted=" << stats.jobs_submitted()
             << " completed=" << stats.jobs_completed()
             << " makespan=" << stats.makespan() << " (FinishSimulation)"
             << std::endl;

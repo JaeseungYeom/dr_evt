@@ -97,10 +97,9 @@ Sim_Params::Sim_Params()
       m_job_store_capacity(0), // 0 = size of job trace (never overflows)
       m_job_store_overflow(CircularOverflowPolicy::GROW),
       m_job_flush_interval(0), m_checkpoint_interval_jobs(0),
-      m_memory_pressure_fraction(0.0),
-      m_resource_history_capacity(0), m_total_nodes(dr_evt::total_nodes),
-      m_trace_type(TraceType::STANDARD), m_cores_per_node(0u),
-      m_is_nodes_set(false),
+      m_memory_pressure_fraction(0.0), m_resource_history_capacity(0),
+      m_total_nodes(dr_evt::total_nodes), m_trace_type(TraceType::STANDARD),
+      m_cores_per_node(0u), m_is_nodes_set(false),
       m_trace_format("simple"),    // Default to simple format
       m_timestamp_format("epoch"), // Retained timestamp compatibility value
       m_timezone("America/Los_Angeles"),    // Default timezone
@@ -201,13 +200,12 @@ void Sim_Params::getopt(int &argc, char **&argv) {
     case 'j': /* --max_jobs */
       // The type maximum is the internal "unlimited" sentinel; stop one below.
       m_max_jobs = static_cast<dr_evt::num_jobs_t>(parse_uint(
-          "--max_jobs",
-          std::numeric_limits<dr_evt::num_jobs_t>::max() - 1));
+          "--max_jobs", std::numeric_limits<dr_evt::num_jobs_t>::max() - 1));
       m_is_jobs_set = true;
       break;
     case 'n': /* --total_nodes */
-      m_total_nodes = static_cast<num_nodes_t>(parse_uint(
-          "--total_nodes", std::numeric_limits<num_nodes_t>::max()));
+      m_total_nodes = static_cast<num_nodes_t>(
+          parse_uint("--total_nodes", std::numeric_limits<num_nodes_t>::max()));
       m_is_nodes_set = true;
       break;
     case OPT_CAPACITY_SCHEDULE: /* --capacity_schedule */
@@ -224,9 +222,9 @@ void Sim_Params::getopt(int &argc, char **&argv) {
       m_checkpoint_file = optarg;
       break;
     case OPT_CHECKPOINT_INTERVAL_JOBS:
-      m_checkpoint_interval_jobs = parse_uint(
-          "--checkpoint_interval_jobs",
-          std::numeric_limits<dr_evt::num_jobs_t>::max());
+      m_checkpoint_interval_jobs =
+          parse_uint("--checkpoint_interval_jobs",
+                     std::numeric_limits<dr_evt::num_jobs_t>::max());
       if (m_checkpoint_interval_jobs == 0) {
         std::cerr
             << "Error: --checkpoint_interval_jobs must be greater than zero\n";
@@ -264,8 +262,8 @@ void Sim_Params::getopt(int &argc, char **&argv) {
       }
     } break;
     case OPT_NUM_MAX_CANDIDATES: /* --num_max_candidates */
-      m_num_max_candidates = parse_uint(
-          "--num_max_candidates", std::numeric_limits<size_t>::max());
+      m_num_max_candidates = parse_uint("--num_max_candidates",
+                                        std::numeric_limits<size_t>::max());
       if (m_num_max_candidates == 0) {
         std::cerr << "Error: --num_max_candidates must be greater than zero"
                   << std::endl;
@@ -327,8 +325,8 @@ void Sim_Params::getopt(int &argc, char **&argv) {
     } break;
     case 'A': /* --wait_queue_capacity */
     {
-      m_wait_queue_capacity = parse_uint(
-          "--wait_queue_capacity", std::numeric_limits<size_t>::max());
+      m_wait_queue_capacity = parse_uint("--wait_queue_capacity",
+                                         std::numeric_limits<size_t>::max());
     } break;
     case 'G': /* --wait_queue_overflow */
     {
@@ -348,8 +346,8 @@ void Sim_Params::getopt(int &argc, char **&argv) {
     } break;
     case 'K': /* --job_store_capacity */
     {
-      m_job_store_capacity = parse_uint(
-          "--job_store_capacity", std::numeric_limits<size_t>::max());
+      m_job_store_capacity = parse_uint("--job_store_capacity",
+                                        std::numeric_limits<size_t>::max());
     } break;
     case 'W': /* --job_store_overflow */
     {
@@ -368,8 +366,8 @@ void Sim_Params::getopt(int &argc, char **&argv) {
       }
     } break;
     case OPT_JOB_FLUSH_INTERVAL: /* --job_flush_interval */
-      m_job_flush_interval = parse_uint(
-          "--job_flush_interval", std::numeric_limits<size_t>::max());
+      m_job_flush_interval = parse_uint("--job_flush_interval",
+                                        std::numeric_limits<size_t>::max());
       break;
     case 'm': /* --check_memory_pressure */
     {

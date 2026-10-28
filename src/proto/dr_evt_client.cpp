@@ -63,8 +63,7 @@ void print_usage(const char *program_name) {
   std::cerr
       << "Usage: " << program_name
       << " <server_address> <job_data_file> [options]\n"
-      << "  e.g., " << program_name
-      << " localhost:50051 /path/to/jobs.csv\n"
+      << "  e.g., " << program_name << " localhost:50051 /path/to/jobs.csv\n"
       << "  Redis status example:\n    " << program_name
       << " localhost:50051 /path/to/jobs.csv"
          " --redis-uri redis://127.0.0.1:6379"
@@ -89,7 +88,8 @@ void print_usage(const char *program_name) {
  */
 ClientOptions parse_options(int argc, char **argv) {
   if (argc < 3) {
-    throw std::invalid_argument("server address and job data file are required");
+    throw std::invalid_argument(
+        "server address and job data file are required");
   }
 
   ClientOptions options;
@@ -352,9 +352,8 @@ int main(int argc, char **argv) {
     }
   }
 
-  SimulationClient client(
-      grpc::CreateChannel(options.server_address,
-                          grpc::InsecureChannelCredentials()));
+  SimulationClient client(grpc::CreateChannel(
+      options.server_address, grpc::InsecureChannelCredentials()));
 
   try {
     // 1. Initialize the simulation on the server. infile is only
@@ -409,8 +408,8 @@ int main(int argc, char **argv) {
       std::vector<RedisJob> finalized_jobs;
       if (!options.redis_uri.empty()) {
         sw::redis::Redis redis(options.redis_uri);
-        finalized_jobs = get_finalized_jobs(
-            redis, options.redis_key_prefix, append_resp.job_idx());
+        finalized_jobs = get_finalized_jobs(redis, options.redis_key_prefix,
+                                            append_resp.job_idx());
         for (int i = 0; i < append_resp.job_idx_size(); ++i) {
           if (finalized_jobs[static_cast<std::size_t>(i)].empty()) {
             status_ids->add_job_idx(append_resp.job_idx(i));

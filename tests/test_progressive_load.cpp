@@ -127,7 +127,8 @@ void test_progressive_matches_single_file() {
   }
   {
     std::ofstream out(queue_part2);
-    out << "job_submit_time,num_nodes,time_limit\n" << "2,100,10\n";
+    out << "job_submit_time,num_nodes,time_limit\n"
+        << "2,100,10\n";
   }
   {
     std::ofstream out(queue_combined);
