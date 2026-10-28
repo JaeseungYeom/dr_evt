@@ -62,6 +62,7 @@ or `None`.
 | `run_time_mode` | `RunTimeMode` |
 | `backfill_policy` | `BackfillPolicy` |
 | `num_max_candidates` | `int` |
+| `reservation_depth` | `int` |
 | `priority_policy` | `PriorityPolicy` |
 | `verbose` | `bool` |
 

@@ -87,6 +87,20 @@ Use `--priority_policy fcfs_conservative --backfill_policy conservative` for
 the full FCFS conservative-reservation implementation. It currently uses the
 `deque` wait queue.
 
+### Hybrid
+
+`--backfill_policy hybrid --reservation_depth N` gives reservations to the
+first `N` waiting jobs in queue order. A candidate deeper than `N` may start
+only if it fits now and completes before the earliest reservation among
+those `N`; it holds no reservation itself, so later candidates may pass it.
+`N = 1` reproduces EASY and a depth of at least the queue length is
+conservative. Slurm behaves this way when `bf_job_part_count_reserve` is
+set, and Fluxion's `hybrid` queue policy does the same with
+`reservation-depth`. Hybrid is implemented by the conservative FCFS
+scheduler and accepts `fcfs` or `fcfs_conservative` ordering. The Python
+oracle `scripts/python_conservative_scheduler.py` accepts the same depth via
+`--reservation-depth`.
+
 ## Runtime estimates and completion
 
 Reservations and backfill checks use each job's requested `time_limit`, which
@@ -104,6 +118,7 @@ the protected reservation is not accepted as a backfill job.
 |---|---:|---|
 | None | Queue order only | No backfill utilization benefit |
 | EASY | Blocked queue head | More backfill opportunities; no guarantee for deeper jobs |
+| Hybrid | First N waiting jobs | Tunable between the two; jobs beyond N are unprotected |
 | Conservative | All earlier waiting jobs | Stronger start-time protection; more scheduling work and fewer opportunities |
 
 The priority policy determines which job is considered "earlier" in this

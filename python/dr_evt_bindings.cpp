@@ -48,6 +48,7 @@ PYBIND11_MODULE(dr_evt, m) {
       .value("NONE", BackfillPolicy::NONE)
       .value("EASY", BackfillPolicy::EASY)
       .value("CONSERVATIVE", BackfillPolicy::CONSERVATIVE)
+      .value("HYBRID", BackfillPolicy::HYBRID)
       .export_values();
 
   py::enum_<PriorityPolicy>(m, "PriorityPolicy",
@@ -99,6 +100,10 @@ PYBIND11_MODULE(dr_evt, m) {
       .def_readwrite("num_max_candidates", &Sim_Params::m_num_max_candidates,
                      "int: Maximum feasible jobs offered to the experimental "
                      "backfill selector.")
+      .def_readwrite("reservation_depth", &Sim_Params::m_reservation_depth,
+                     "int: Waiting jobs holding reservations under HYBRID "
+                     "backfilling; must be positive with HYBRID, ignored "
+                     "otherwise. 1 reproduces EASY.")
       .def_readwrite("priority_policy", &Sim_Params::m_priority_policy,
                      "PriorityPolicy: Waiting-job ordering policy.")
       .def_readwrite("verbose", &Sim_Params::m_verbose,

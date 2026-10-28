@@ -142,7 +142,24 @@ create_scheduler(num_nodes_t total_nodes, size_t initial_job_count,
                  BackfillPolicy backfill_policy, PriorityPolicy priority_policy,
                  QueueImplementation queue_impl, size_t block_size,
                  size_t wait_queue_capacity,
-                 CircularOverflowPolicy wait_queue_overflow) {
+                 CircularOverflowPolicy wait_queue_overflow,
+                 size_t reservation_depth) {
+  if (backfill_policy == BackfillPolicy::HYBRID) {
+    // Hybrid reservations are implemented by the conservative FCFS
+    // scheduler only; route FCFS there and reject other orderings.
+    if (reservation_depth == 0) {
+      throw std::invalid_argument(
+          "hybrid backfilling requires reservation_depth > 0");
+    }
+    if (priority_policy != PriorityPolicy::FCFS &&
+        priority_policy != PriorityPolicy::FCFS_CONSERVATIVE) {
+      throw std::invalid_argument(
+          "hybrid backfilling is supported with FCFS ordering only");
+    }
+    return std::make_unique<FCFSConservativeScheduler>(
+        total_nodes, backfill_policy, reservation_depth);
+  }
+
   switch (priority_policy) {
   case PriorityPolicy::FCFS:
     // FCFS has 4 queue options
@@ -236,8 +253,8 @@ create_scheduler(num_nodes_t total_nodes, size_t initial_job_count,
                 << "' not supported for FCFS_CONSERVATIVE, only deque is "
                    "implemented. Using deque.\n";
     }
-    return std::make_unique<FCFSConservativeScheduler>(total_nodes,
-                                                       backfill_policy);
+    return std::make_unique<FCFSConservativeScheduler>(
+        total_nodes, backfill_policy, reservation_depth);
 
   case PriorityPolicy::SJF:
     // SJF only uses multimap (already efficient)

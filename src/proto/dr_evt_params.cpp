@@ -112,6 +112,10 @@ set_sim_options(const dr_evt_proto::DR_EVT_Params::Simulation_Params &cfg,
     sp.m_num_max_candidates = cfg.num_max_candidates();
   }
 
+  // Reservation depth for hybrid backfilling; zero is also the Sim_Params
+  // default and is rejected when the policy is hybrid.
+  sp.m_reservation_depth = cfg.reservation_depth();
+
   // Backfill policy (default: EASY)
   if (!cfg.backfill_policy().empty()) {
     std::string policy = cfg.backfill_policy();
@@ -119,6 +123,8 @@ set_sim_options(const dr_evt_proto::DR_EVT_Params::Simulation_Params &cfg,
       sp.m_backfill_policy = BackfillPolicy::EASY;
     } else if (policy == "conservative") {
       sp.m_backfill_policy = BackfillPolicy::CONSERVATIVE;
+    } else if (policy == "hybrid") {
+      sp.m_backfill_policy = BackfillPolicy::HYBRID;
     } else if (policy == "none") {
       sp.m_backfill_policy = BackfillPolicy::NONE;
     } else {
