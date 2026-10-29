@@ -19,7 +19,11 @@ def run_dispatch(command, output, expected_jobs, expected_dropped=0):
         text=True,
         env={
             **os.environ,
+            # Six ranks exceed the CI runner's cores. Open MPI 4 reads the
+            # OMPI_ setting; Open MPI 5 launches through PRRTE, which only
+            # honors the PRTE_ mapping policy.
             "OMPI_MCA_rmaps_base_oversubscribe": "1",
+            "PRTE_MCA_rmaps_default_mapping_policy": ":oversubscribe",
             "OMPI_ALLOW_RUN_AS_ROOT": "1",
             "OMPI_ALLOW_RUN_AS_ROOT_CONFIRM": "1",
         },
