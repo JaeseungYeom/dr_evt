@@ -224,6 +224,8 @@ public:
             sp.m_backfill_policy = dr_evt::BackfillPolicy::EASY;
           else if (r.backfill_policy() == "conservative")
             sp.m_backfill_policy = dr_evt::BackfillPolicy::CONSERVATIVE;
+          else if (r.backfill_policy() == "hybrid")
+            sp.m_backfill_policy = dr_evt::BackfillPolicy::HYBRID;
           else if (r.backfill_policy() == "none")
             sp.m_backfill_policy = dr_evt::BackfillPolicy::NONE;
           else {
@@ -282,6 +284,7 @@ public:
             sp.m_block_size = r.block_size();
           if (r.wait_queue_capacity() != 0)
             sp.m_wait_queue_capacity = r.wait_queue_capacity();
+          sp.m_reservation_depth = r.reservation_depth();
 
           if (r.wait_queue_overflow().empty())
             sp.m_wait_queue_overflow = dr_evt::CircularOverflowPolicy::GROW;

@@ -116,6 +116,19 @@ echo "=== Running CONSERVATIVE Backfilling ==="
     --outfile "$OUTDIR/conservative.csv" \
     > "$OUTDIR/conservative.log" 2>&1
 
+# HYBRID with one reservation protects only the queue head, so its schedule
+# must coincide with EASY on the same trace.
+echo "=== Running HYBRID Backfilling (reservation depth 1) ==="
+"$SIMULATOR" "$TRACE" \
+    --total_nodes $NODES \
+    --priority_policy fcfs_conservative \
+    --backfill_policy hybrid \
+    --reservation_depth 1 \
+    --run_time_mode limit \
+    --trace_format simple \
+    --outfile "$OUTDIR/hybrid1.csv" \
+    > "$OUTDIR/hybrid1.log" 2>&1
+
 echo ""
 echo "=== Comparing Results Against Expected ==="
 echo ""
@@ -234,6 +247,28 @@ else:
         print("  - Key behavioral difference not observed")
     sys.exit(1)
 
+PYTHON_SCRIPT
+
+echo ""
+echo "=== Checking HYBRID (depth 1) Against Expected EASY ==="
+"$PYTHON_BIN" - "$OUTDIR/hybrid1.csv" "$EXPECTED_EASY" << 'PYTHON_SCRIPT'
+import csv
+import sys
+
+def read_schedule(filename):
+    with open(filename, 'r') as f:
+        return [(float(r['begin_time']), float(r['end_time']), int(r['num_nodes']))
+                for r in csv.DictReader(f)]
+
+hybrid = read_schedule(sys.argv[1])
+easy = read_schedule(sys.argv[2])
+if hybrid != easy:
+    print("❌ HYBRID with reservation depth 1 differs from the EASY schedule")
+    for i, (h, e) in enumerate(zip(hybrid, easy)):
+        if h != e:
+            print(f"  Job {i}: hybrid start={h[0]} end={h[1]}, easy start={e[0]} end={e[1]}")
+    sys.exit(1)
+print("✅ HYBRID with reservation depth 1 reproduces the EASY schedule")
 PYTHON_SCRIPT
 
 echo ""

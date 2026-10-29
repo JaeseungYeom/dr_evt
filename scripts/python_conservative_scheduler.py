@@ -79,9 +79,13 @@ class ConservativeBackfillingScheduler:
     so we can manually verify it's correct.
     """
 
-    def __init__(self, total_nodes: int, verbose: bool = False):
+    def __init__(self, total_nodes: int, verbose: bool = False,
+                 reservation_depth: int = 0):
         self.total_nodes = total_nodes
         self.verbose = verbose
+        # Waiting jobs that hold reservations; 0 means every waiting job,
+        # 1 reproduces EASY (hybrid depth as in Slurm and Fluxion).
+        self.reservation_depth = reservation_depth
 
         # State
         self.current_time = 0.0
@@ -164,8 +168,10 @@ class ConservativeBackfillingScheduler:
             return None
 
         earliest_reservation = float('inf')
+        reserved = 0
 
-        # Check all jobs ahead of this position
+        # Check the reserved jobs ahead of this position: all of them, or
+        # only the first reservation_depth when a depth is configured
         for i in range(backfill_pos):
             if i >= len(self.wait_queue):
                 break
@@ -174,6 +180,9 @@ class ConservativeBackfillingScheduler:
             # Skip jobs that were already backfilled
             if job.idx in exclude_jobs:
                 continue
+            if self.reservation_depth and reserved >= self.reservation_depth:
+                break
+            reserved += 1
 
             # Calculate reservation using effective running jobs
             reservation = self.calculate_job_reservation_time_with_running(job, effective_running)
@@ -410,7 +419,7 @@ def write_resource_trace(jobs: List[Job], filename: str, total_nodes: int):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python_conservative_scheduler.py <trace.csv> [--verbose] [--nodes N] [--outdir DIR]")
+        print("Usage: python_conservative_scheduler.py <trace.csv> [--verbose] [--nodes N] [--outdir DIR] [--reservation-depth N]")
         print()
         print("Python reference CONSERVATIVE backfilling scheduler for verification")
         print()
@@ -418,6 +427,8 @@ def main():
         print("  --verbose    Show detailed simulation progress")
         print("  --nodes N    Total nodes in system (default: 1000)")
         print("  --outdir DIR Output directory for generated files (default: /tmp)")
+        print("  --reservation-depth N  Reserve for only the first N waiting jobs")
+        print("               (default: 0 = all; 1 reproduces EASY)")
         print()
         print("Generates reference output for CONSERVATIVE backfilling verification")
         print("Output files are written to /tmp by default to avoid directory pollution")
@@ -438,10 +449,17 @@ def main():
         idx = sys.argv.index('--outdir')
         outdir = sys.argv[idx + 1]
 
+    # Parse reservation depth (0 = every waiting job holds a reservation)
+    reservation_depth = 0
+    if '--reservation-depth' in sys.argv:
+        idx = sys.argv.index('--reservation-depth')
+        reservation_depth = int(sys.argv[idx + 1])
+
     print(f"=== Python Reference CONSERVATIVE Backfilling Scheduler ===", file=sys.stderr)
     print(f"Trace: {trace_file}", file=sys.stderr)
     print(f"Total nodes: {total_nodes}", file=sys.stderr)
     print(f"Output directory: {outdir}", file=sys.stderr)
+    print(f"Reservation depth: {reservation_depth or 'all'}", file=sys.stderr)
     print(f"Verbose: {verbose}", file=sys.stderr)
     print(file=sys.stderr)
 
@@ -450,7 +468,8 @@ def main():
     print(f"Loaded {len(jobs)} jobs", file=sys.stderr)
 
     # Run scheduler
-    scheduler = ConservativeBackfillingScheduler(total_nodes, verbose=verbose)
+    scheduler = ConservativeBackfillingScheduler(total_nodes, verbose=verbose,
+                                                 reservation_depth=reservation_depth)
     jobs = scheduler.simulate(jobs)
 
     # Write output files to specified directory

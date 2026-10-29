@@ -54,6 +54,16 @@ fi
 TRACE="${1:-tests/test_traces/scale/xlarge_500jobs.csv}"
 NODES="${2:-400}"
 OUTDIR="${3:-}"
+# Optional hybrid reservation depth; 0 compares full conservative
+# reservations, N > 0 compares --backfill_policy hybrid against the oracle's
+# --reservation-depth.
+DEPTH="${4:-0}"
+PY_DEPTH_ARGS=()
+CPP_BACKFILL_ARGS=(--backfill_policy conservative)
+if [ "$DEPTH" != "0" ]; then
+    PY_DEPTH_ARGS=(--reservation-depth "$DEPTH")
+    CPP_BACKFILL_ARGS=(--backfill_policy hybrid --reservation_depth "$DEPTH")
+fi
 if [ -z "$OUTDIR" ]; then
     OUTDIR=$(mktemp -d "/tmp/dr-evt-conservative-comparison.XXXXXXXX")
 fi
@@ -64,6 +74,7 @@ echo "Configuration:"
 echo "  Trace:        $TRACE"
 echo "  Total nodes:  $NODES"
 echo "  Output dir:   $OUTDIR"
+echo "  Depth:        $DEPTH (0 = conservative, N = hybrid with N reservations)"
 echo "  Python:       $PYTHON_BIN ($("$PYTHON_BIN" --version 2>&1))"
 echo ""
 
@@ -80,6 +91,7 @@ START_PY=$(date +%s)
 if ! "$PYTHON_BIN" scripts/python_conservative_scheduler.py "$TRACE" \
     --nodes "$NODES" \
     --outdir "$OUTDIR" \
+    ${PY_DEPTH_ARGS[@]+"${PY_DEPTH_ARGS[@]}"} \
     > "$OUTDIR/python.log" 2>&1; then
     echo -e "${RED}✗ Python reference process failed${NC}"
     sed 's/^/  /' "$OUTDIR/python.log"
@@ -109,7 +121,7 @@ START_CPP=$(date +%s)
 if ! "$SIMULATOR" "$TRACE" \
     --total_nodes "$NODES" \
     --priority_policy fcfs_conservative \
-    --backfill_policy conservative \
+    "${CPP_BACKFILL_ARGS[@]}" \
     --run_time_mode limit \
     --max_jobs 999999 \
     --trace_format simple \

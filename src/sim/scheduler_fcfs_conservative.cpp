@@ -46,12 +46,20 @@ sim_time_t FCFSConservativeScheduler::calculate_conservative_window(
 
   sim_time_t earliest_conflict = std::numeric_limits<sim_time_t>::max();
 
-  // Check all jobs from the front up to (but not including) this backfill
-  // candidate
+  // Check the reserved jobs ahead of this backfill candidate: every waiting
+  // job ahead of it under CONSERVATIVE, or only the first
+  // m_reservation_depth of them under HYBRID.
+  const size_t depth = m_backfill_policy == BackfillPolicy::HYBRID
+                           ? m_reservation_depth
+                           : 0;
+  size_t reserved = 0;
   for (size_t i = 0; i < backfill_index; ++i) {
     const auto &job = m_wait_queue[i];
     if (job.removed)
       continue;
+    if (depth != 0 && reserved >= depth)
+      break;
+    ++reserved;
 
     // Calculate when this job could start
     sim_time_t job_reservation = calculate_fcfs_reservation(
@@ -154,8 +162,10 @@ FCFSConservativeScheduler::schedule(num_nodes_t free_nodes,
           break;
       }
     }
-  } else if (m_backfill_policy == BackfillPolicy::CONSERVATIVE) {
-    // CONSERVATIVE backfilling: Must not delay ANY waiting job
+  } else if (m_backfill_policy == BackfillPolicy::CONSERVATIVE ||
+             m_backfill_policy == BackfillPolicy::HYBRID) {
+    // CONSERVATIVE backfilling: Must not delay ANY waiting job.
+    // HYBRID: must not delay the first m_reservation_depth waiting jobs.
 
     // Try backfilling with jobs that won't delay anyone ahead of them
     for (size_t i = 1; i < m_eligible_end_idx; ++i) {

@@ -20,10 +20,14 @@ namespace dr_evt {
 /**
  * FCFS scheduler with Conservative backfilling support.
  *
- * Supports three backfill modes via BackfillPolicy:
+ * Supports four backfill modes via BackfillPolicy:
  * - EASY: Only head job gets reservation (standard EASY backfilling)
- * - CONSERVATIVE: All queued jobs get reservations; backfill cannot delay ANY
- * job
+ * - CONSERVATIVE: All waiting jobs get reservations; backfill cannot delay
+ *   any of them
+ * - HYBRID: The first reservation_depth waiting jobs get reservations and
+ *   backfill cannot delay them; deeper jobs hold no reservation. Depth 1
+ *   reproduces EASY. This is Slurm's bf_job_part_count_reserve behaviour and
+ *   Fluxion's hybrid queue policy.
  * - NONE: No backfilling (strict FCFS order)
  *
  * Based on FCFSScheduler with the same deque-based iterator tracking
@@ -67,15 +71,21 @@ private:
   sim_time_t m_current_tracked_time;
   /// Removed entries inside the eligible prefix of m_wait_queue.
   size_t m_removed_count;
+  /// Waiting jobs that hold reservations under HYBRID backfilling.
+  size_t m_reservation_depth;
 
 public:
   /** @brief Construct a conservative-backfill FCFS scheduler.
    * @param[in] total_nodes Cluster capacity available for allocations.
-   * @param[in] bf_policy Backfill setting; conservative behavior is implemented
-   * by this class. */
-  FCFSConservativeScheduler(num_nodes_t total_nodes, BackfillPolicy bf_policy)
+   * @param[in] bf_policy Backfill setting; conservative and hybrid behavior
+   * are implemented by this class.
+   * @param[in] reservation_depth Number of waiting jobs, in queue order, that
+   * hold reservations under HYBRID backfilling; ignored otherwise. */
+  FCFSConservativeScheduler(num_nodes_t total_nodes, BackfillPolicy bf_policy,
+                            size_t reservation_depth = 0)
       : SchedulerBase(total_nodes, bf_policy), m_eligible_end_idx(0),
-        m_current_tracked_time(0.0), m_removed_count(0) {}
+        m_current_tracked_time(0.0), m_removed_count(0),
+        m_reservation_depth(reservation_depth) {}
 
   /** @copydoc SchedulerBase::insert_job */
   void insert_job(job_no_t job_id, sim_time_t submit_time,
@@ -137,6 +147,10 @@ private:
 
   /**
    * @brief Calculate the reservation that a candidate must preserve.
+   * @details Takes the earliest reservation among the waiting jobs ahead of
+   * the candidate. Under HYBRID only the first m_reservation_depth waiting
+   * jobs are considered; a candidate deeper than that must not delay them
+   * but is free to pass jobs that hold no reservation.
    * @param[in] job_index Candidate position in FCFS queue order.
    * @param[in] available_nodes Nodes free at current_time.
    * @param[in] running_jobs Active jobs with start time, runtime, and nodes.

@@ -208,15 +208,18 @@ jobs:
         id: conservative
         run: |
           echo "========================================"
-          echo "Running Conservative Backfilling Tests (2 tests)"
+          echo "Running Conservative Backfilling Tests (3 tests)"
           echo "========================================"
           echo ""
-          echo "Test 1: Behavioral Correctness (EASY vs CONSERVATIVE)"
+          echo "Test 1: Behavioral Correctness (EASY vs CONSERVATIVE vs HYBRID)"
           ./tests/run_easy_vs_conservative_correctness_tests.sh
           echo ""
           echo "Test 2: Implementation Equivalence (C++ vs Python)"
           echo "Using 500 jobs on 400 nodes to exercise sustained contention"
           ./tests/compare_cpp_python_conservative.sh tests/test_traces/scale/xlarge_500jobs.csv 400
+          echo ""
+          echo "Test 3: Hybrid Equivalence (C++ vs Python, reservation depth 4)"
+          ./tests/compare_cpp_python_conservative.sh tests/test_traces/scale/xlarge_500jobs.csv 400 "" 4
 
       - name: Run Replay Tests
         id: replay

@@ -61,7 +61,7 @@ message InitRequest {
     string trace_format = 2;       // "simple", "lassen", or "swf" (default: "simple")
     string timestamp_format = 3;   // retained "epoch"/"iso" compatibility value
     string timezone = 4;
-    string backfill_policy = 5;    // "easy", "conservative", or "none"
+    string backfill_policy = 5;    // "easy", "conservative", "hybrid", or "none"
     string priority_policy = 6;    // "fcfs", "fcfs_alt", "sjf", or "ljf"
     string run_time_mode = 7;      // "actual", "distribution", or "limit" (default: "actual")
     bool msec_output = 8;
@@ -98,6 +98,9 @@ message InitRequest {
     string redis_uri = 16;
     string redis_key_prefix = 17;
     uint64 job_flush_interval = 18; // 0 follows job-store capacity
+    // Waiting jobs that hold reservations under backfill_policy "hybrid";
+    // must be positive with hybrid and is ignored otherwise.
+    uint64 reservation_depth = 19;
 }
 
 // Runs the configured input trace to completion. Unlike AdvanceToRequest,

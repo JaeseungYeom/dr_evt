@@ -61,7 +61,8 @@ timeout_t checked_streaming_limit(tdiff_t limit_time) {
 
 constexpr std::array<char, 8> checkpoint_magic{'D', 'R', 'E', 'V',
                                                'T', 'C', 'K', 'P'};
-constexpr std::uint32_t checkpoint_version = 10; // 10: full Sim_Params
+constexpr std::uint32_t checkpoint_version =
+    11; // 10: full Sim_Params; 11: reservation_depth
 
 /// Trace policy identifier stored in a checkpoint so a file written by one
 /// trace type is not restored into another.
@@ -322,7 +323,8 @@ BasicSimulation<TraceType>::BasicSimulation(Sim_Params params)
           m_params.m_total_nodes, m_trace.data().size(),
           m_params.m_backfill_policy, m_params.m_priority_policy,
           m_params.m_queue_impl, m_params.m_block_size,
-          m_params.m_wait_queue_capacity, m_params.m_wait_queue_overflow)),
+          m_params.m_wait_queue_capacity, m_params.m_wait_queue_overflow,
+          m_params.m_reservation_depth)),
       m_custom_scheduler(nullptr), m_current_time(0.0),
       m_job_rejection_capacity(m_params.m_total_nodes),
       m_capacity_changes(load_capacity_schedule(m_params.m_capacity_schedule,
@@ -1740,7 +1742,8 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
           m_params.m_total_nodes, m_trace.m_data.size(),
           m_params.m_backfill_policy, m_params.m_priority_policy,
           m_params.m_queue_impl, m_params.m_block_size,
-          m_params.m_wait_queue_capacity, m_params.m_wait_queue_overflow);
+          m_params.m_wait_queue_capacity, m_params.m_wait_queue_overflow,
+          m_params.m_reservation_depth);
       for (const auto job_id : pending_job_ids) {
         const auto &job = m_trace.m_data[job_id - first_resident_job];
         m_scheduler->insert_job(

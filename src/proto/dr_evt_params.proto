@@ -37,7 +37,7 @@ message DR_EVT_Params {
 
         // Scheduling parameters
         uint32 total_nodes = 9;         // System node count (default: 795)
-        string backfill_policy = 10;     // "easy", "conservative", or "none" (default: "easy")
+        string backfill_policy = 10;     // "easy", "conservative", "hybrid", or "none" (default: "easy")
         string priority_policy = 11;    // "fcfs", "fcfs_alt", "fcfs_conservative", "sjf", or "ljf" (default: "fcfs")
 
         // Trace format parameters
@@ -119,6 +119,10 @@ message DR_EVT_Params {
         // SWF input only: processors per node used to convert allocated
         // processors to nodes. 0 derives it from the file header.
         uint32 cores_per_node = 36;
+
+        // Waiting jobs that hold reservations under backfill_policy
+        // "hybrid"; must be positive with hybrid and is ignored otherwise.
+        uint64 reservation_depth = 37;
     }
 
     message Tracing_Params {

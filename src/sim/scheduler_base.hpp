@@ -262,14 +262,19 @@ protected:
  * @param[in] wait_queue_capacity Initial circular-queue capacity; zero selects
  * a default.
  * @param[in] wait_queue_overflow Behavior when a circular queue is full.
+ * @param[in] reservation_depth Waiting jobs that hold reservations under
+ * HYBRID backfilling; must be positive with HYBRID and is ignored otherwise.
  * @return Owning pointer to a SchedulerBase implementation.
+ * @throws std::invalid_argument if HYBRID is requested with a zero depth or
+ * with a non-FCFS priority policy.
  */
 std::unique_ptr<SchedulerBase> create_scheduler(
     num_nodes_t total_nodes, size_t initial_job_count,
     BackfillPolicy backfill_policy, PriorityPolicy priority_policy,
     QueueImplementation queue_impl = QueueImplementation::CIRCULAR,
     size_t block_size = 128, size_t wait_queue_capacity = 0,
-    CircularOverflowPolicy wait_queue_overflow = CircularOverflowPolicy::GROW);
+    CircularOverflowPolicy wait_queue_overflow = CircularOverflowPolicy::GROW,
+    size_t reservation_depth = 0);
 
 /**@}*/
 

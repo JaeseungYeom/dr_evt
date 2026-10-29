@@ -17,8 +17,9 @@ Complete reference for all DR_EVT command-line options for the `simulator` binar
 | System | `-n, --total_nodes COUNT` | Set simulated cluster capacity. |
 | System | `--capacity_schedule FILENAME` | Apply time-varying capacity change points. |
 | System | `--sim_start_time TIME` | Set the global simulation start time as a nonnegative epoch value or ISO timestamp; a positive value warm-starts replay input. |
-| Scheduling | `-b, --backfill_policy POLICY` | Select `easy`, `conservative`, or `none`. |
+| Scheduling | `-b, --backfill_policy POLICY` | Select `easy`, `conservative`, `hybrid`, or `none`. |
 | Scheduling | `--num_max_candidates COUNT` | Cap candidates offered to the experimental selector. |
+| Scheduling | `--reservation_depth N` | Number of reserved waiting jobs under `hybrid` backfilling. |
 | Scheduling | `-p, --priority_policy POLICY` | Select the job-ordering policy. |
 | Scheduling | `-q, --queue_impl IMPLEMENTATION` | Select the FCFS wait-queue implementation. |
 | Scheduling | `-Q, --block_size SIZE` | Set the `block` queue's block size. |
@@ -219,6 +220,20 @@ Maximum number of feasible jobs offered to the callback-driven custom
 EASY scheduler in one selection decision. `COUNT` must be greater than zero.
 
 **Default:** `1`
+
+### `--reservation_depth N`
+
+Number of waiting jobs, in queue order, that hold reservations under
+`--backfill_policy hybrid`. A job deeper in the queue may start only if it
+fits now and delays none of those `N`; it holds no reservation of its own.
+`N` must be positive with `hybrid` and is ignored by the other policies.
+`1` reproduces `easy`; a depth of at least the queue length is
+`conservative`. This is the behaviour of Slurm's `bf_job_part_count_reserve`
+and of Fluxion's `hybrid` queue policy with `reservation-depth`. Hybrid uses
+the conservative FCFS scheduler with either `fcfs` or `fcfs_conservative`
+ordering and is rejected with `sjf` or `ljf`.
+
+**Default:** `0`
 
 The command-line and prototext parsers store this value in `Sim_Params`. The
 cost and selection callbacks themselves are installed when constructing the

@@ -31,7 +31,15 @@ enum class BackfillPolicy {
   CONSERVATIVE,
 
   /** Strict FCFS scheduling; no backfill job may bypass the queue head. */
-  NONE
+  NONE,
+
+  /**
+   * Hybrid backfilling: the first reservation_depth waiting jobs get
+   * reservations and backfilling jobs cannot delay them; deeper jobs hold
+   * no reservation. Depth 1 is EASY; Slurm's bf_job_part_count_reserve and
+   * Fluxion's hybrid queue policy behave this way.
+   */
+  HYBRID
 };
 
 /**
