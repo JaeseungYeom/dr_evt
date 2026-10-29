@@ -242,8 +242,7 @@ int Swf_Trace_Policy::load_records(const std::string &fname,
       const unsigned override = dcols.cores_per_node_override();
       if (override > 0u) {
         cores_per_node = static_cast<double>(override);
-      } else if (max_nodes > 0.0 && max_procs > 0.0 &&
-                 max_procs >= max_nodes) {
+      } else if (max_nodes > 0.0 && max_procs > 0.0 && max_procs >= max_nodes) {
         cores_per_node = std::floor(max_procs / max_nodes);
       } else {
         cores_per_node = 1.0;
@@ -253,9 +252,9 @@ int Swf_Trace_Policy::load_records(const std::string &fname,
 
     const auto tokens = whitespace_separate(line);
     if (tokens.size() < 18u) {
-      throw std::invalid_argument(
-          "SWF line " + std::to_string(line_no) + " has " +
-          std::to_string(tokens.size()) + " fields, expected 18");
+      throw std::invalid_argument("SWF line " + std::to_string(line_no) +
+                                  " has " + std::to_string(tokens.size()) +
+                                  " fields, expected 18");
     }
     auto field = [&](size_t idx) { // idx is the 1-based SWF field number
       const auto &pos = tokens[idx - 1u];

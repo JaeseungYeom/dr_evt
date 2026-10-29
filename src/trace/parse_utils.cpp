@@ -292,15 +292,15 @@ void replace_comma_within_quotation(std::string &line) {
 #ifdef DEBUG
           if (!db_quote_open)
             cout << endl;
-#endif    // DEBUG
-          /*
-                          } else if (c == '\'' && !esc && !db_quote_open) {
-                              quote_open = (quote_open == false);
-                              // There are still errors like with record 940914,
-             in which
-                              // a quotation does not close in user_script
-             field.
-          */
+#endif      // DEBUG
+            /*
+                            } else if (c == '\'' && !esc && !db_quote_open) {
+                                quote_open = (quote_open == false);
+                                // There are still errors like with record
+               940914, in which
+                                // a quotation does not close in user_script
+               field.
+            */
 #ifdef DEBUG
           // if (!quote_open && !db_quote_open) cout << endl;
           if (!db_quote_open)

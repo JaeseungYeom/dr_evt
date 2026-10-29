@@ -331,13 +331,12 @@ BasicSimulation<TraceType>::BasicSimulation(Sim_Params params)
       m_capacity_area(0.0), m_capacity_area_time(0.0), m_jobs_completed(0),
       m_jobs_submitted(0), m_jobs_started(0),
       m_latest_submit_time(-std::numeric_limits<sim_time_t>::infinity()),
-      m_next_progressive_file(0),
-      m_checkpoint_loaded(false), m_last_automatic_checkpoint_jobs(0),
-      m_has_automatic_checkpoint(false),
-      m_last_automatic_checkpoint_time(0.0),
-      m_pre_start_jobs(0), m_warm_resource_area(0.0),
-      m_warm_resource_end(0.0), m_rng(m_params.m_seed), m_queue_length_sum(0),
-      m_queue_length_samples(0), m_queue_length_peak(0) {
+      m_next_progressive_file(0), m_checkpoint_loaded(false),
+      m_last_automatic_checkpoint_jobs(0), m_has_automatic_checkpoint(false),
+      m_last_automatic_checkpoint_time(0.0), m_pre_start_jobs(0),
+      m_warm_resource_area(0.0), m_warm_resource_end(0.0),
+      m_rng(m_params.m_seed), m_queue_length_sum(0), m_queue_length_samples(0),
+      m_queue_length_peak(0) {
   m_trace.set_cores_per_node(m_params.m_cores_per_node);
   reset_capacity_schedule();
 }
@@ -352,9 +351,8 @@ BasicSimulation<TraceType>::BasicSimulation(Sim_Params params,
       m_scheduler(std::make_unique<CustomFCFSScheduler>(
           m_params.m_total_nodes, m_trace.data().size(),
           m_params.m_backfill_policy, m_params.m_num_max_candidates,
-          std::move(cost_function),
-          std::move(selector), m_params.m_wait_queue_capacity,
-          m_params.m_wait_queue_overflow)),
+          std::move(cost_function), std::move(selector),
+          m_params.m_wait_queue_capacity, m_params.m_wait_queue_overflow)),
       m_custom_scheduler(static_cast<CustomFCFSScheduler *>(m_scheduler.get())),
       m_current_time(0.0), m_job_rejection_capacity(m_params.m_total_nodes),
       m_capacity_changes(load_capacity_schedule(m_params.m_capacity_schedule,
@@ -363,13 +361,12 @@ BasicSimulation<TraceType>::BasicSimulation(Sim_Params params,
       m_capacity_area(0.0), m_capacity_area_time(0.0), m_jobs_completed(0),
       m_jobs_submitted(0), m_jobs_started(0),
       m_latest_submit_time(-std::numeric_limits<sim_time_t>::infinity()),
-      m_next_progressive_file(0),
-      m_checkpoint_loaded(false), m_last_automatic_checkpoint_jobs(0),
-      m_has_automatic_checkpoint(false),
-      m_last_automatic_checkpoint_time(0.0),
-      m_pre_start_jobs(0), m_warm_resource_area(0.0),
-      m_warm_resource_end(0.0), m_rng(m_params.m_seed), m_queue_length_sum(0),
-      m_queue_length_samples(0), m_queue_length_peak(0) {
+      m_next_progressive_file(0), m_checkpoint_loaded(false),
+      m_last_automatic_checkpoint_jobs(0), m_has_automatic_checkpoint(false),
+      m_last_automatic_checkpoint_time(0.0), m_pre_start_jobs(0),
+      m_warm_resource_area(0.0), m_warm_resource_end(0.0),
+      m_rng(m_params.m_seed), m_queue_length_sum(0), m_queue_length_samples(0),
+      m_queue_length_peak(0) {
   m_trace.set_cores_per_node(m_params.m_cores_per_node);
   reset_capacity_schedule();
 }
@@ -389,13 +386,12 @@ BasicSimulation<TraceType>::BasicSimulation(
       m_capacity_area(0.0), m_capacity_area_time(0.0), m_jobs_completed(0),
       m_jobs_submitted(0), m_jobs_started(0),
       m_latest_submit_time(-std::numeric_limits<sim_time_t>::infinity()),
-      m_next_progressive_file(0),
-      m_checkpoint_loaded(false), m_last_automatic_checkpoint_jobs(0),
-      m_has_automatic_checkpoint(false),
-      m_last_automatic_checkpoint_time(0.0),
-      m_pre_start_jobs(0), m_warm_resource_area(0.0),
-      m_warm_resource_end(0.0), m_rng(m_params.m_seed), m_queue_length_sum(0),
-      m_queue_length_samples(0), m_queue_length_peak(0) {
+      m_next_progressive_file(0), m_checkpoint_loaded(false),
+      m_last_automatic_checkpoint_jobs(0), m_has_automatic_checkpoint(false),
+      m_last_automatic_checkpoint_time(0.0), m_pre_start_jobs(0),
+      m_warm_resource_area(0.0), m_warm_resource_end(0.0),
+      m_rng(m_params.m_seed), m_queue_length_sum(0), m_queue_length_samples(0),
+      m_queue_length_peak(0) {
   if (!m_scheduler) {
     throw std::invalid_argument("custom scheduler must not be null");
   }
@@ -954,8 +950,7 @@ void BasicSimulation<TraceType>::maybe_save_automatic_checkpoint(
   save_checkpoint(m_params.m_checkpoint_file);
 #else
   (void)file_boundary;
-  throw std::logic_error(
-      "automatic checkpoints require DR_EVT_WITH_SER20=ON");
+  throw std::logic_error("automatic checkpoints require DR_EVT_WITH_SER20=ON");
 #endif
 }
 
@@ -1067,10 +1062,9 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
 #if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
     simulated_output_open =
         simulated_output_open || m_trace.m_redis_output != nullptr;
-    resource_output_open =
-        resource_output_open ||
-        (m_trace.m_redis_output != nullptr &&
-         m_trace.m_redis_output->resource_trace_active());
+    resource_output_open = resource_output_open ||
+                           (m_trace.m_redis_output != nullptr &&
+                            m_trace.m_redis_output->resource_trace_active());
 #endif
     m_trace.flush_simulated_trace_buffer(true);
     if (resource_output_open) {
@@ -1366,8 +1360,7 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
     require_checkpoint_match(reader.value<std::uint32_t>(), checkpoint_version,
                              "format version");
     require_checkpoint_match(reader.value<std::uint8_t>(),
-                             checkpoint_trace_kind<TraceType>(),
-                             "trace type");
+                             checkpoint_trace_kind<TraceType>(), "trace type");
     require_checkpoint_match(reader.value<std::uint32_t>(),
                              static_cast<std::uint32_t>(sizeof(
                                  typename TraceType::policy_type::record_type)),
@@ -1779,8 +1772,8 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
         std::string header = "time,free_nodes,allocated_nodes";
         header += TraceType::policy_type::resource_columns();
         header += '\n';
-        m_trace.m_redis_output->start_resource_trace(
-            header, m_params.m_msec_output);
+        m_trace.m_redis_output->start_resource_trace(header,
+                                                     m_params.m_msec_output);
       }
 #else
       throw std::logic_error("Redis checkpoint requires Redis support");
@@ -1851,12 +1844,9 @@ void BasicSimulation<TraceType>::write_resource_trace(
 // Allow external code (e.g., gRPC server) to feed jobs and control simulation
 
 template <typename TraceType>
-job_no_t BasicSimulation<TraceType>::append_job(sim_time_t submit_time,
-                                                num_nodes_t num_nodes,
-                                                const std::string &queue,
-                                                tdiff_t limit_time,
-                                                std::optional<tdiff_t>
-                                                    actual_run_time) {
+job_no_t BasicSimulation<TraceType>::append_job(
+    sim_time_t submit_time, num_nodes_t num_nodes, const std::string &queue,
+    tdiff_t limit_time, std::optional<tdiff_t> actual_run_time) {
   if (submit_time < m_current_time) {
     throw std::runtime_error(
         "Cannot append job with submit_time < current_time. "
@@ -1937,8 +1927,8 @@ std::vector<job_no_t> BasicSimulation<TraceType>::append_jobs(
     }
     if (requests[i].submit_time < m_latest_submit_time) {
       throw std::invalid_argument(
-          "Cannot append request " + std::to_string(i) + " with submit_time=" +
-          std::to_string(requests[i].submit_time) +
+          "Cannot append request " + std::to_string(i) +
+          " with submit_time=" + std::to_string(requests[i].submit_time) +
           " earlier than an already appended job's submit_time=" +
           std::to_string(m_latest_submit_time) +
           "; append jobs in non-decreasing submit_time order");
@@ -1966,10 +1956,9 @@ std::vector<job_no_t> BasicSimulation<TraceType>::append_jobs(
 #else
     set_by_queue_id(q, r.queue);
 #endif
-    trace_reqs.push_back(
-        dr_evt::Job_Append_Request{epoch_t{sec, frac}, r.num_nodes, q,
-                                   static_cast<timeout_t>(r.limit_time),
-                                   r.actual_run_time});
+    trace_reqs.push_back(dr_evt::Job_Append_Request{
+        epoch_t{sec, frac}, r.num_nodes, q,
+        static_cast<timeout_t>(r.limit_time), r.actual_run_time});
   }
 
   std::vector<job_no_t> job_idxs =
@@ -2029,35 +2018,77 @@ std::vector<typename BasicSimulation<TraceType>::Job_Status>
 BasicSimulation<TraceType>::get_job_statuses(
     const std::vector<job_no_t> &job_idxs) const {
   std::map<job_no_t, sim_time_t> expected_starts;
-  std::map<sim_time_t, num_nodes_t> releases;
-  num_nodes_t available = get_available_nodes();
-  for (const auto &[job_idx, running] : m_running_jobs) {
-    (void)job_idx;
-    const sim_time_t end = running.start_time + running.run_time;
-    if (end > m_current_time) {
-      releases[end] += running.nodes;
+
+  // Free-node profile: each key starts a segment that keeps its value until
+  // the next key. Seeded from running-job releases at their limit times, the
+  // same estimate the schedulers reserve against. Pending jobs are then
+  // placed in queue order at their earliest fit for their full time limit,
+  // and each placement is carved out of the profile, so a short job behind
+  // a blocked head may be projected ahead of it, as a backfill scheduler's
+  // own reservation walk would do.
+  std::map<sim_time_t, num_nodes_t> profile;
+  {
+    std::map<sim_time_t, num_nodes_t> releases;
+    for (const auto &[job_idx, running] : m_running_jobs) {
+      (void)job_idx;
+      const sim_time_t end = running.start_time + running.run_time;
+      if (end > m_current_time) {
+        releases[end] += running.nodes;
+      }
+    }
+    num_nodes_t free_nodes = get_available_nodes();
+    profile[m_current_time] = free_nodes;
+    for (const auto &[time, nodes] : releases) {
+      free_nodes += nodes;
+      profile[time] = free_nodes;
     }
   }
 
-  sim_time_t projection_time = m_current_time;
+  // Insert a segment boundary at t, inheriting the enclosing segment's value.
+  const auto split_at = [&profile](sim_time_t t) {
+    auto lb = profile.lower_bound(t);
+    if (lb == profile.end() || lb->first != t) {
+      profile.emplace_hint(lb, t, std::prev(lb)->second);
+    }
+  };
+
   for (const job_no_t pending_id : m_scheduler->pending_job_ids()) {
     const auto &record = m_trace.job_at(pending_id);
-    const sim_time_t submit_time =
-        convert_epoch<sim_time_t>(record.get_submit_time());
-    projection_time = std::max(projection_time, submit_time);
-    auto release = releases.begin();
-    while (release != releases.end() && release->first <= projection_time) {
-      available += release->second;
-      release = releases.erase(release);
+    const num_nodes_t nodes = record.get_num_nodes();
+    const tdiff_t limit = record.get_limit_time();
+    sim_time_t start = std::max(
+        m_current_time, convert_epoch<sim_time_t>(record.get_submit_time()));
+
+    // Earliest fit: scan segments covering [start, start + limit); on the
+    // first segment that is too small, restart from the next segment that
+    // is large enough. Every segment is visited at most once per job.
+    auto segment = std::prev(profile.upper_bound(start));
+    bool fits = true;
+    for (;;) {
+      auto scan = segment;
+      while (scan != profile.end() &&
+             (scan == segment || scan->first < start + limit) &&
+             scan->second >= nodes) {
+        ++scan;
+      }
+      if (scan == profile.end() ||
+          (scan != segment && scan->first >= start + limit)) {
+        break;
+      }
+      do {
+        ++scan;
+      } while (scan != profile.end() && scan->second < nodes);
+      if (scan == profile.end()) {
+        fits = false;
+        break;
+      }
+      segment = scan;
+      start = scan->first;
     }
-    while (available < record.get_num_nodes() && !releases.empty()) {
-      projection_time = releases.begin()->first;
-      available += releases.begin()->second;
-      releases.erase(releases.begin());
-    }
-    if (available < record.get_num_nodes()) {
+    if (!fits) {
       continue;
     }
+
     const bool is_appended =
         pending_id >= m_first_appended_job_idx &&
         pending_id - m_first_appended_job_idx <
@@ -2065,11 +2096,17 @@ BasicSimulation<TraceType>::get_job_statuses(
         m_appended_job_query_records[pending_id - m_first_appended_job_idx]
             .tracked;
     if (is_appended) {
-      expected_starts[pending_id] = projection_time;
+      expected_starts[pending_id] = start;
     }
-    available -= record.get_num_nodes();
-    releases[projection_time + record.get_limit_time()] +=
-        record.get_num_nodes();
+    if (limit <= 0) {
+      continue; // Nothing to reserve for a zero-length placement.
+    }
+    split_at(start);
+    split_at(start + limit);
+    for (auto it = profile.find(start);
+         it != profile.end() && it->first < start + limit; ++it) {
+      it->second -= nodes;
+    }
   }
 
   std::vector<Job_Status> result;
@@ -2127,7 +2164,8 @@ void BasicSimulation<TraceType>::submit_job(job_no_t job_idx,
   tdiff_t run_time_estimate = job.get_limit_time();
   num_nodes_t nodes = job.get_num_nodes();
 
-  if (nodes > m_job_rejection_capacity) {
+  const bool exceeds_total = nodes > m_job_rejection_capacity;
+  if (exceeds_total || !m_scheduler->can_ever_run(nodes)) {
     // This job can never be scheduled, regardless of how long the
     // simulation runs - total_nodes is fixed for the whole run, so
     // no future state ever frees up enough capacity. Reject it here,
@@ -2135,7 +2173,8 @@ void BasicSimulation<TraceType>::submit_job(job_no_t job_idx,
     // silently block every job behind it in FCFS order, and its
     // begin_time/end_time would stay at unscheduled_sentinel()
     // forever - exactly the "reaches output still unresolved" state
-    // that shouldn't be possible.
+    // that shouldn't be possible. A scheduler that partitions the
+    // capacity declines through can_ever_run() for the same reason.
     //
     // Also mark submit_time as the sentinel: m_data's front-reclaim
     // sweep treats that as "skip immediately, will never resolve" -
@@ -2143,8 +2182,13 @@ void BasicSimulation<TraceType>::submit_job(job_no_t job_idx,
     // forever, since end_time never resolves for it either.
     job.set_submit_time(Job_Record::unscheduled_sentinel());
     std::cerr << "Job " << job_idx << " rejected: requests " << nodes
-              << " nodes, exceeds total_nodes (" << m_job_rejection_capacity
-              << "); this job can never be scheduled." << std::endl;
+              << " nodes, ";
+    if (exceeds_total) {
+      std::cerr << "exceeds total_nodes (" << m_job_rejection_capacity << ")";
+    } else {
+      std::cerr << "declined by the scheduler";
+    }
+    std::cerr << "; this job can never be scheduled." << std::endl;
     return;
   }
 
@@ -2700,9 +2744,8 @@ BasicSimulation<TraceType>::get_statistics() const {
       total_wait += wait;
       total_run_time += exec;
       total_turnaround += (wait + exec);
-      total_bounded_slowdown +=
-          std::max(1.0, (wait + exec) /
-                            std::max(exec, bounded_slowdown_threshold));
+      total_bounded_slowdown += std::max(
+          1.0, (wait + exec) / std::max(exec, bounded_slowdown_threshold));
       max_completion = std::max(max_completion, completion);
       completed_count++;
     }

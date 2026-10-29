@@ -776,6 +776,20 @@ set_target_properties(test_warm_start-bin PROPERTIES
 list(APPEND DR_EVT_UNIT_TEST_TARGETS test_warm_start-bin)
 
 
+# Experimental multi-system FCFS scheduler with spatial backfilling
+add_executable(multi_system_backfill_sim-bin
+  experimental/multi-cluster-bf/multi_system_backfill_sim.cpp
+  experimental/multi-cluster-bf/multi_system_backfill_scheduler.cpp)
+target_include_directories(multi_system_backfill_sim-bin PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
+  $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}>)
+target_link_libraries(multi_system_backfill_sim-bin PRIVATE dr_evt)
+set_target_properties(multi_system_backfill_sim-bin PROPERTIES
+  OUTPUT_NAME multi_system_backfill_sim
+  CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
+list(APPEND DR_EVT_EXEC_TARGETS multi_system_backfill_sim-bin)
+
 # MPI streaming test (requires MPI)
 # Only search for MPI for this test - dr_evt library itself has no MPI dependency
 find_package(MPI)
@@ -885,6 +899,17 @@ if(DR_EVT_WITH_UNIT_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/experimental/multi-cluster/tests/test_performance_dispatch.py)
     set_tests_properties(test_python_performance_dispatch PROPERTIES
       LABELS "unit;scripts;multi-cluster"
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(
+      NAME test_multi_system_backfill
+      COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+        DR_EVT_MSBF_SIM=$<TARGET_FILE:multi_system_backfill_sim-bin>
+        DR_EVT_SIMULATOR=$<TARGET_FILE:sim-bin>
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/experimental/multi-cluster-bf/tests/test_multi_system_backfill.py)
+    set_tests_properties(test_multi_system_backfill PROPERTIES
+      LABELS "unit;scripts;multi-cluster-bf"
+      SKIP_RETURN_CODE 77
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
   endif()
 

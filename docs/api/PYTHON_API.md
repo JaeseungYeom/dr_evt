@@ -150,7 +150,10 @@ wall-time limit without any external per-job bookkeeping.
 `get_job_statuses()` preserves the requested ID order (including duplicates).
 A pending `JobStatus` has `state == JobState.PENDING` and an
 `expected_start_time` projected from current capacity, running-job limit-time
-releases, and the scheduler's current queue order. Running and completed jobs
+releases, and the scheduler's current queue order. Each pending job is placed
+at its earliest fit for its whole time limit after the jobs ahead of it are
+reserved, so a short job behind a blocked head may be projected before the
+head. Running and completed jobs
 have `start_time` and `end_time`; rejected jobs have no timing. The compact
 timing record remains available after completed trace rows are flushed.
 

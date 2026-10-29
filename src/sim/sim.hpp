@@ -326,10 +326,21 @@ public:
 
   /**
    * @brief Query appended jobs by their stable identifiers.
-   * @details Pending jobs receive an on-demand projected start based on the
-   * scheduler's current queue order, running-job limit-time releases, and
-   * current capacity. Scheduled jobs return their actual simulated start and
-   * end timestamps. Results preserve request order and duplicate IDs.
+   * @details Pending jobs receive an on-demand projected start. The free-node
+   * profile starts from current capacity and running-job releases at their
+   * time limits, the same estimate the schedulers reserve against. The wait
+   * queue is then walked in scheduler order and each job is placed at the
+   * earliest time, at or after its submit time, where enough nodes stay free
+   * for its whole time limit; that placement is reserved before the next job
+   * is placed. A short job behind a blocked head can therefore be projected
+   * ahead of the head, as in a backfill scheduler's reservation walk. The
+   * queue head's projection equals get_fcfs_head_shadow_time(). Future
+   * arrivals and capacity-schedule changes are not considered. Scheduled jobs
+   * return their actual simulated start and end timestamps. Results preserve
+   * request order and duplicate IDs. Cost is linear in the number of running
+   * plus pending jobs per pending job; nothing is cached.
+   * @param[in] job_idxs Identifiers returned by append_job() or append_jobs().
+   * @return One Job_Status per requested identifier, in request order.
    * @throws std::out_of_range if an ID was not returned by append_job(s).
    */
   std::vector<Job_Status>

@@ -58,7 +58,6 @@ enum class TraceType {
 /** @brief Complete configuration for a Simulation run or streaming session. */
 class Sim_Params {
 public:
-
   /**
    * @brief Apply a visitor to every configuration field, in a fixed order.
    * @details Used by the checkpoint code to record and restore the complete

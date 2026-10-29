@@ -407,7 +407,8 @@ void test_output_continuation() {
   assert(lines == 3); // one header and two non-duplicated job rows
 }
 
-/** @brief Compare progressive file-boundary restart with one uninterrupted run. */
+/** @brief Compare progressive file-boundary restart with one uninterrupted run.
+ */
 void test_progressive_output_continuation() {
   const std::string first = "/tmp/dr_evt_checkpoint_progressive_1.csv";
   const std::string second = "/tmp/dr_evt_checkpoint_progressive_2.csv";
@@ -433,8 +434,7 @@ void test_progressive_output_continuation() {
   std::remove((restart_jobs + ".pre-restart.1").c_str());
   std::remove((restart_jobs + ".pre-restart.1.checkpoint-bytes").c_str());
   std::remove((restart_resources + ".pre-restart.1").c_str());
-  std::remove(
-      (restart_resources + ".pre-restart.1.checkpoint-bytes").c_str());
+  std::remove((restart_resources + ".pre-restart.1.checkpoint-bytes").c_str());
 
   auto progressive_params = [&](const std::string &jobs,
                                 const std::string &resources) {
@@ -553,11 +553,9 @@ void test_redis_output_continuation() {
       "/tmp/dr_evt_redis_baseline_resources.csv";
   const std::string restarted_resources =
       "/tmp/dr_evt_redis_restarted_resources.csv";
-  const auto export_key = [&](const std::string &key,
-                              const std::string &path) {
-    const std::string export_command = "redis-cli -u '" + uri +
-                                       "' --raw GET '" + key + "' > '" +
-                                       path + "'";
+  const auto export_key = [&](const std::string &key, const std::string &path) {
+    const std::string export_command =
+        "redis-cli -u '" + uri + "' --raw GET '" + key + "' > '" + path + "'";
     assert(std::system(export_command.c_str()) == 0);
   };
   export_key(baseline_prefix + ":csv", baseline_jobs);

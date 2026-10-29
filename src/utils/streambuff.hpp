@@ -146,8 +146,8 @@ public:
   std::ostream &print(std::ostream &os, bool show_content = false) const;
 
 private:
-  const char_type *const
-      buf;             ///< Caller-owned read-only storage backing the stream.
+  const char_type
+      *const buf;      ///< Caller-owned read-only storage backing the stream.
   const size_t m_size; ///< The amount of data stored
 };
 

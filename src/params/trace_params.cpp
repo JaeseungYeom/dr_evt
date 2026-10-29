@@ -41,8 +41,7 @@ static const struct option trace_longopts[] = {
 
 Trace_Params::Trace_Params()
     : m_max_jobs(10u), m_max_time(dr_evt::max_sim_time), m_datfile(),
-      m_subfile(),
-      m_subsumfile(), m_resource_history_capacity(0),
+      m_subfile(), m_subsumfile(), m_resource_history_capacity(0),
       m_total_nodes(dr_evt::total_nodes), m_is_jobs_set(false),
       m_is_time_set(false) {}
 
@@ -85,8 +84,7 @@ bool Trace_Params::getopt(int &argc, char **&argv) {
     case 'j': /* --max_jobs */
       // The type maximum is the internal "unlimited" sentinel; stop one below.
       m_max_jobs = static_cast<dr_evt::num_jobs_t>(parse_uint(
-          "--max_jobs",
-          std::numeric_limits<dr_evt::num_jobs_t>::max() - 1));
+          "--max_jobs", std::numeric_limits<dr_evt::num_jobs_t>::max() - 1));
       m_is_jobs_set = true;
       break;
     case 'o': /* --outfile */

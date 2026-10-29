@@ -123,8 +123,8 @@ void write_statistics_file(const std::string &filename,
          << "  \"avg_run_time\": " << statistics.avg_run_time << ",\n"
          << "  \"avg_turnaround_time\": " << statistics.avg_turnaround_time
          << ",\n"
-         << "  \"avg_bounded_slowdown\": "
-         << statistics.avg_bounded_slowdown << ",\n"
+         << "  \"avg_bounded_slowdown\": " << statistics.avg_bounded_slowdown
+         << ",\n"
          << "  \"makespan\": " << statistics.makespan << "\n"
          << "}\n";
   if (!output) {

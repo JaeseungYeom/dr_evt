@@ -220,7 +220,7 @@ std::uint64_t RedisOutput::archive_checkpoint_namespace(
   redis.zrange(key_prefix + ":resources:by_time", 0, -1,
                std::back_inserter(resource_ids));
   const std::array<std::string, 7> fixed_suffixes{
-      ":csv",          ":job_ids",       ":by_submit", ":by_start",
+      ":csv",           ":job_ids",      ":by_submit",    ":by_start",
       ":by_completion", ":by_resources", ":resources:csv"};
   for (const auto &suffix : fixed_suffixes) {
     if (redis.exists(key_prefix + suffix) != 0) {
@@ -235,8 +235,7 @@ std::uint64_t RedisOutput::archive_checkpoint_namespace(
     redis.rename(key_prefix + ":job:" + id, archive + ":job:" + id);
   }
   for (const auto &id : resource_ids) {
-    redis.rename(key_prefix + ":resource:" + id,
-                 archive + ":resource:" + id);
+    redis.rename(key_prefix + ":resource:" + id, archive + ":resource:" + id);
   }
 
   auto transaction = redis.transaction(false);

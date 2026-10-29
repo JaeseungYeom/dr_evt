@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="520" viewBox="0 0 980 520" font-family="Helvetica, Arial, sans-serif" font-size="13">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#333"/>
+    </marker>
+  </defs>
+  <style>
+    .title { font-size: 15px; font-weight: bold; }
+    .mono { font-family: Menlo, Consolas, monospace; font-size: 12px; }
+    .small { font-size: 11.5px; fill: #444; }
+    .axis { stroke: #333; stroke-width: 1.5; marker-end: url(#arrow); }
+    .tick { stroke: #333; stroke-width: 1; }
+    .run { fill: #d9d9d9; stroke: #555; stroke-width: 1; }
+    .freeb { fill: #ffffff; stroke: #555; stroke-width: 1; stroke-dasharray: 3 3; }
+    .cand { fill: #eaf2fb; stroke: #1f5fa8; stroke-width: 1.5; }
+    .shadow { stroke: #b7791f; stroke-width: 2; stroke-dasharray: 6 3; }
+    .win { stroke: #1f5fa8; stroke-width: 3; }
+    .ok { fill: #1e7b34; font-weight: bold; }
+    .no { fill: #b3261e; font-weight: bold; }
+  </style>
+
+  <text x="490" y="24" text-anchor="middle" class="title">Windows under the three rules (hand case "medium candidate": A:10, B:20, best fit)</text>
+
+  <!-- time axis -->
+  <line x1="120" y1="200" x2="900" y2="200" class="axis"/>
+  <text x="910" y="204" class="small">time</text>
+  <!-- scale: t=0 at x=120, 1 s = 3.2 px, so t=200 at x=760 -->
+  <line x1="120" y1="195" x2="120" y2="205" class="tick"/><text x="120" y="220" text-anchor="middle" class="small">0</text>
+    <line x1="440" y1="195" x2="440" y2="205" class="tick"/><text x="440" y="220" text-anchor="middle" class="small">100</text>
+  <line x1="603.2" y1="195" x2="603.2" y2="205" class="tick"/><text x="603" y="220" text-anchor="middle" class="small">151</text>
+  <line x1="760" y1="195" x2="760" y2="205" class="tick"/><text x="760" y="220" text-anchor="middle" class="small">200</text>
+
+  <!-- System A row -->
+  <text x="40" y="84" class="title">System A</text>
+  <text x="40" y="100" class="small">capacity 10</text>
+  <rect x="120" y="60" width="320" height="48" class="run"/>
+  <text x="280" y="88" text-anchor="middle">job 0: 10 nodes, limit 100</text>
+  <line x1="440" y1="52" x2="440" y2="118" class="shadow"/>
+  <text x="446" y="64" class="mono">S_A = 100 = T*, k* = A</text>
+
+  <!-- System B row -->
+  <text x="40" y="150" class="title">System B</text>
+  <text x="40" y="166" class="small">capacity 20</text>
+  <rect x="120" y="126" width="640" height="36" class="run"/>
+  <text x="440" y="149" text-anchor="middle">job 1: 15 nodes, limit 200</text>
+  <rect x="120" y="162" width="640" height="14" class="freeb"/>
+  <text x="776" y="173" class="small">5 free</text>
+  <line x1="760" y1="118" x2="760" y2="184" class="shadow"/>
+  <text x="766" y="130" class="mono">S_B = 200</text>
+
+  <!-- head -->
+  <text x="40" y="250" class="title">Head (job 2)</text>
+  <text x="40" y="266" class="small">10 nodes, limit 50: blocked on A (0 free) and B (5 free)</text>
+
+  <!-- candidate -->
+  <text x="40" y="296" class="title">Candidate (job 3)</text>
+  <text x="40" y="312" class="small">5 nodes, limit 150: fits B now, would end at 151</text>
+  <rect x="123.2" y="320" width="480" height="18" class="cand"/>
+  <text x="363" y="333" text-anchor="middle" class="small">job 3 on B if started at t = 1 (ends 151)</text>
+
+  <!-- windows table -->
+  <text x="40" y="376" class="title">Window on B, and the verdict for job 3</text>
+  <text x="40" y="400" class="mono">target_only</text>
+  <text x="130" y="390" class="small">W_B = +inf (only k* = A is protected)</text>
+  <line x1="123.2" y1="396" x2="900" y2="396" class="win"/>
+  <text x="905" y="400" class="ok">start</text>
+
+  <text x="40" y="430" class="mono">every_system</text>
+  <text x="130" y="420" class="small">W_B = S_B = 200</text>
+  <line x1="123.2" y1="426" x2="760" y2="426" class="win"/>
+  <text x="766" y="430" class="small">151 &lt; 200</text>
+  <text x="905" y="430" class="ok">start</text>
+
+  <text x="40" y="460" class="mono">global_shadow</text>
+  <text x="130" y="450" class="small">W_B = T* = 100</text>
+  <line x1="123.2" y1="456" x2="440" y2="456" class="win"/>
+  <text x="446" y="460" class="small">151 is not &lt; 100</text>
+  <text x="905" y="460" class="no">hold</text>
+
+  <text x="40" y="496" class="small">Expected schedules (from the test): job 3 starts at 1 under target_only and every_system, at 100 under global_shadow;</text>
+  <text x="40" y="510" class="small">job 2 starts on A at 100 under all three. A limit of 1000 instead of 150 would be held by every_system too (1001 is not &lt; 200).</text>
+</svg>

@@ -189,11 +189,11 @@ create_scheduler(num_nodes_t total_nodes, size_t initial_job_count,
         return std::make_unique<BlockQueueFCFSScheduler<64>>(total_nodes,
                                                              backfill_policy);
       case 7:
-        return std::make_unique<BlockQueueFCFSScheduler<128>>(
-            total_nodes, backfill_policy);
+        return std::make_unique<BlockQueueFCFSScheduler<128>>(total_nodes,
+                                                              backfill_policy);
       case 8:
-        return std::make_unique<BlockQueueFCFSScheduler<256>>(
-            total_nodes, backfill_policy);
+        return std::make_unique<BlockQueueFCFSScheduler<256>>(total_nodes,
+                                                              backfill_policy);
       default:
         std::cerr << "Error: block_size " << block_size
                   << " not supported. Use 4, 8, 16, 32, 64, 128, or 256.\n";

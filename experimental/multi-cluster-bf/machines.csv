@@ -1,0 +1,4 @@
+#machine,size,GPU
+big,128,CPU-only
+mid,64,CPU-only
+small,32,CPU-only

@@ -281,7 +281,10 @@ message JobStatus {
         // Present once the scheduler has started the job. end_time is the
         // simulated completion time and may still be in the future.
         ScheduledJobTimes scheduled = 3;
-        // Present while pending when a capacity projection is available.
+        // Present while pending when a capacity projection is available:
+        // the earliest time the job fits for its whole time limit, given
+        // running-job releases at their time limits and the projected
+        // reservations of jobs ahead of it in the queue.
         double expected_start_time = 4;
     }
 }

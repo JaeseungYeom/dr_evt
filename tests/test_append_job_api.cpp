@@ -175,6 +175,51 @@ void test_appended_job_statuses() {
 // of need" section for why load_data() itself never needs this).
 // Forces capacity=1 so a second append can only succeed by reclaiming
 // the first (already-finished) job's slot, not by growing.
+// expected_start_time is an earliest-fit projection, not a strict FCFS
+// walk: a short job behind a blocked head is projected into the gap ahead
+// of the head, and a job that fits now but not for its whole limit is not.
+void test_expected_start_is_earliest_fit() {
+  std::cout << "\n=== Expected start: earliest fit behind a blocked head ==="
+            << std::endl;
+  Sim_Params params = make_params();
+  params.m_total_nodes = 10;
+  params.set_outfile("/tmp/test_expected_start_out.csv");
+  Simulation sim(params);
+  sim.get_trace().load_data(0);
+
+  // A: 6 nodes for 10 s; B: 10 nodes for 100 s (blocked until A ends);
+  // C: 2 nodes for 5 s fits beside A and ends before B's reservation;
+  // D: 2 nodes for 20 s fits beside A now but would overlap B.
+  const auto ids = sim.append_jobs({{0.0, 6, kTestQueueInput, 10.0},
+                                    {0.0, 10, kTestQueueInput, 100.0},
+                                    {0.0, 2, kTestQueueInput, 5.0},
+                                    {0.0, 2, kTestQueueInput, 20.0}});
+  auto projected = sim.get_job_statuses(ids);
+  assert(projected[0].expected_start_time == 0.0);
+  assert(projected[1].expected_start_time == 10.0);
+  assert(projected[2].expected_start_time == 0.0);
+  assert(projected[3].expected_start_time == 110.0);
+
+  // After scheduling at t=0, A and C run; the head's projection is the
+  // shadow time and D's projection is unchanged.
+  sim.advance_to(0.0);
+  auto scheduled = sim.get_job_statuses(ids);
+  assert(scheduled[0].state == Simulation::Job_State::RUNNING);
+  assert(scheduled[2].state == Simulation::Job_State::RUNNING);
+  assert(scheduled[1].state == Simulation::Job_State::PENDING);
+  assert(scheduled[1].expected_start_time == 10.0);
+  assert(sim.get_fcfs_head_shadow_time() == 10.0);
+  assert(scheduled[3].expected_start_time == 110.0);
+
+  // The projections match what the EASY scheduler then does.
+  sim.advance_to(200.0);
+  auto done = sim.get_job_statuses(ids);
+  assert(done[1].start_time == 10.0);
+  assert(done[3].start_time == 110.0);
+
+  std::cout << "  PASSED" << std::endl;
+}
+
 void test_append_reclaims_before_growing() {
   std::cout << "\n=== Test 2: append_job() reclaims before growing ==="
             << std::endl;
@@ -1078,14 +1123,12 @@ void test_prediction_horizon() {
 }
 
 void test_append_with_known_actual_runtime() {
-  std::cout << "\n=== Known actual runtime for streaming jobs ==="
-            << std::endl;
+  std::cout << "\n=== Known actual runtime for streaming jobs ===" << std::endl;
   Sim_Params params = make_params();
   Simulation sim(params);
   sim.get_trace().load_data(0);
 
-  const auto job =
-      sim.append_job(0.0, 10, kTestQueueInput, 100.0, 25.0);
+  const auto job = sim.append_job(0.0, 10, kTestQueueInput, 100.0, 25.0);
   sim.advance_to(24.0);
   assert(sim.get_job_statuses({job}).front().state ==
          Simulation::Job_State::RUNNING);
@@ -1162,6 +1205,7 @@ int main() {
   try {
     test_append_with_empty_trace();
     test_appended_job_statuses();
+    test_expected_start_is_earliest_fit();
     test_append_reclaims_before_growing();
     test_append_rejects_past_submit_time();
     test_append_jobs_batch();

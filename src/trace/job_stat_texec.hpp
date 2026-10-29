@@ -53,7 +53,7 @@ public:
     tbins_by_nnodes_t m_bins;
 
     /** @brief Construct an empty requested-time-limit slot. */
-    timeout_slot() : m_num_jobs(static_cast<num_jobs_t>(0u)) {};
+    timeout_slot() : m_num_jobs(static_cast<num_jobs_t>(0u)){};
   };
 
   /** @brief Runtime histograms indexed by requested job time limit. */

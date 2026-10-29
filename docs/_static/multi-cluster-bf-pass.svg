@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="668" viewBox="0 0 1100 668" font-family="Helvetica, Arial, sans-serif" font-size="13">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#333"/>
+    </marker>
+  </defs>
+  <style>
+    .box { fill: #ffffff; stroke: #333; stroke-width: 1.5; rx: 6; }
+    .step { fill: #eaf2fb; stroke: #1f5fa8; stroke-width: 1.5; rx: 6; }
+    .decide { fill: #fff4d6; stroke: #b7791f; stroke-width: 1.5; }
+    .out { fill: #f4f4f4; stroke: #333; stroke-width: 1.5; rx: 6; }
+    .title { font-size: 15px; font-weight: bold; }
+    .mono { font-family: Menlo, Consolas, monospace; font-size: 12px; }
+    .small { font-size: 11.5px; fill: #444; }
+    .arrow { stroke: #333; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+  </style>
+
+  <text x="550" y="24" text-anchor="middle" class="title">One call to schedule(free_nodes, running_jobs, t)</text>
+
+  <!-- Left column: x 40..540 (500 wide) -->
+
+  <!-- 0: rebuild -->
+  <rect x="40" y="40" width="500" height="100" class="step"/>
+  <text x="52" y="60" class="title">0. Rebuild per-system state</text>
+  <text x="52" y="80" class="small">for each (job, {start, limit, nodes}) in running_jobs:</text>
+  <text x="66" y="97" class="mono">k, demand = placements[job]</text>
+  <text x="66" y="113" class="mono">used[k] += demand</text>
+  <text x="66" y="129" class="mono">releases[k] += (start + limit, demand)</text>
+
+  <!-- 1: heads -->
+  <rect x="40" y="160" width="500" height="112" class="step"/>
+  <text x="52" y="180" class="title">1. Start heads while one fits somewhere</text>
+  <text x="52" y="200" class="mono">fits = { k : head.nodes &lt;= free(k) }</text>
+  <text x="52" y="218" class="small">none: stop, the head is blocked everywhere</text>
+  <text x="52" y="234" class="small">else: k = place(head, fits); record placement; charge used[k];</text>
+  <text x="66" y="250" class="small">add (t + limit, demand) to releases[k]; pop;</text>
+  <text x="66" y="264" class="small">look at the new head</text>
+
+  <!-- 2: shadows -->
+  <rect x="40" y="292" width="500" height="120" class="step"/>
+  <text x="52" y="312" class="title">2. Project the blocked head on every system</text>
+  <text x="52" y="332" class="mono">S_k = earliest_fit(k, head, releases[k], t)</text>
+  <text x="52" y="350" class="small">free(k) now, then releases in time order until the deficit is</text>
+  <text x="52" y="364" class="small">covered; +inf when head.nodes &gt; C_k (inadmissible)</text>
+  <text x="52" y="384" class="mono">T* = min_k S_k;  k* = argmin_k S_k (ties: lowest k)</text>
+  <text x="52" y="402" class="mono">m_fcfs_reservation_time = T*</text>
+
+  <!-- 3: windows -->
+  <rect x="40" y="432" width="500" height="104" class="decide"/>
+  <text x="52" y="452" class="title">3. Window per system, by --spatial_backfill</text>
+  <text x="52" y="472" class="mono">target_only:   W_k = (k == k*) ? T* : +inf</text>
+  <text x="52" y="490" class="mono">every_system:  W_k = S_k</text>
+  <text x="52" y="508" class="mono">global_shadow: W_k = (S_k &lt; +inf) ? T* : +inf</text>
+  <text x="52" y="526" class="small">--backfill_policy none: return here</text>
+
+  <!-- 4: candidates -->
+  <rect x="40" y="556" width="500" height="100" class="step"/>
+  <text x="52" y="576" class="title">4. Backfill in FCFS order</text>
+  <text x="52" y="596" class="small">for each later eligible job j:</text>
+  <text x="66" y="614" class="mono">cands = { k : j.nodes &lt;= free(k) and t + j.limit &lt; W_k }</text>
+  <text x="66" y="631" class="small">if any: k = place(j, cands); record; charge; mark removed</text>
+  <text x="52" y="645" class="small">windows are not recomputed, as in single-system EASY</text>
+
+  <!-- flow arrows -->
+  <path d="M290,140 L290,160" class="arrow"/>
+  <path d="M290,272 L290,292" class="arrow"/>
+  <path d="M290,412 L290,432" class="arrow"/>
+  <path d="M290,536 L290,556" class="arrow"/>
+
+  <!-- Right column: x 600..1080 (480 wide) -->
+
+  <rect x="600" y="160" width="480" height="124" class="box"/>
+  <text x="612" y="180" class="title">place(job, cands) by --placement_policy</text>
+  <text x="612" y="202" class="mono">best_fit:  argmin_k  free(k) - demand(k, job)</text>
+  <text x="612" y="220" class="mono">first_fit: lowest k in cands</text>
+  <text x="612" y="238" class="mono">worst_fit: argmax_k  free(k) - demand(k, job)</text>
+  <text x="612" y="260" class="small">ties: lowest system index (cands are ascending);</text>
+  <text x="612" y="274" class="small">the Python reference breaks ties identically</text>
+
+  <rect x="600" y="312" width="480" height="128" class="box"/>
+  <text x="612" y="332" class="title">earliest_fit(k, job, releases, now)</text>
+  <text x="612" y="352" class="small">the per-system shadow time: the core's reservation</text>
+  <text x="612" y="366" class="small">accumulation, but an impossible fit returns +inf, not now.</text>
+  <text x="612" y="380" class="small">Jobs started in step 1 are already in releases.</text>
+  <text x="612" y="402" class="mono">avail = free(k); if need &lt;= avail: return now</text>
+  <text x="612" y="418" class="mono">for (end, d) in sorted(releases):</text>
+  <text x="640" y="434" class="mono">avail += d; if avail &gt;= need: return end</text>
+
+  <rect x="600" y="556" width="480" height="100" class="out"/>
+  <text x="612" y="576" class="title">return job ids (heads, then backfills)</text>
+  <text x="612" y="596" class="small">the core starts each: START event, counter, running_jobs entry,</text>
+  <text x="612" y="610" class="small">then calls schedule() again until it returns nothing.</text>
+  <text x="612" y="628" class="small">Which system a job went to is known only to the scheduler</text>
+  <text x="612" y="642" class="small">(placements) and the driver's sidecar.</text>
+
+  <!-- connectors -->
+  <path d="M540,204 L600,204" class="arrow"/>
+  <path d="M540,336 L600,336" class="arrow"/>
+  <path d="M540,604 L600,604" class="arrow"/>
+  <path d="M840,284 L840,298 L570,298 L570,618" class="arrow" stroke-dasharray="4 3"/>
+  <text x="705" y="294" text-anchor="middle" class="small">place() also used in step 4</text>
+</svg>

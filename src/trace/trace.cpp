@@ -333,12 +333,10 @@ void BasicTrace<Policy>::run_job_trace(const std::string &resource_trace_file,
 }
 
 template <typename Policy>
-job_no_t BasicTrace<Policy>::append_job(sim_time_t current_time,
-                                        const epoch_t &submit_time,
-                                        num_nodes_t num_nodes,
-                                        job_queue_t queue,
-                                        timeout_t limit_time,
-                                        std::optional<tdiff_t> actual_run_time) {
+job_no_t BasicTrace<Policy>::append_job(
+    sim_time_t current_time, const epoch_t &submit_time, num_nodes_t num_nodes,
+    job_queue_t queue, timeout_t limit_time,
+    std::optional<tdiff_t> actual_run_time) {
   // In case this is called before load_data() ever runs (genuine
   // streaming, no batch preload at all) - resolve_job_store_capacity()
   // is idempotent (guarded by m_job_store_capacity_resolved), so this

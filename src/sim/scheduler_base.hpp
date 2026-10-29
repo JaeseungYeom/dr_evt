@@ -166,6 +166,22 @@ public:
   virtual std::vector<job_no_t> pending_job_ids() const = 0;
 
   /**
+   * @brief Report whether a request could ever be satisfied by this scheduler.
+   * @details
+   * Simulation::submit_job() already rejects requests larger than the total
+   * capacity. A scheduler that partitions that capacity can decline requests
+   * no partition can hold, so that they take the same rejection path instead
+   * of entering the wait queue and blocking the jobs behind them. The default
+   * accepts every request.
+   * @param[in] nodes_requested Requested node count.
+   * @return true when some future state could start the request.
+   */
+  virtual bool can_ever_run(num_nodes_t nodes_requested) const {
+    (void)nodes_requested;
+    return true;
+  }
+
+  /**
    * @brief Return the current FCFS-head reservation time.
    * @return Earliest projected time the FCFS head can start, in sim_time_t.
    */
