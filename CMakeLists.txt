@@ -925,9 +925,16 @@ if(DR_EVT_WITH_UNIT_TESTING)
       RUN_SERIAL TRUE)
 
   if(MPI_CXX_FOUND AND MPIEXEC_EXECUTABLE)
+    # Two ranks can exceed a small runner's slots (Open MPI 5 counts physical
+    # cores). Open MPI 4 reads the OMPI_ variable, Open MPI 5 (PRRTE) the
+    # PRTE_ mapping policy; each ignores the other, and other MPI
+    # implementations ignore both.
     add_test(
       NAME test_mpi_streaming
-      COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+      COMMAND ${CMAKE_COMMAND} -E env
+        OMPI_MCA_rmaps_base_oversubscribe=1
+        PRTE_MCA_rmaps_default_mapping_policy=:oversubscribe
+        ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
         ${MPIEXEC_PREFLAGS} $<TARGET_FILE:test_mpi_streaming-bin>
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_traces/scale/xlarge_500jobs.csv
         --total_nodes 795 ${MPIEXEC_POSTFLAGS})

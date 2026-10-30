@@ -67,14 +67,39 @@ def is_mpi_rank():
     ))
 
 
+def is_open_mpi(mpirun):
+    """Return whether ``mpirun`` belongs to Open MPI (version 4 or 5).
+
+    ``ompi_info --version`` is checked first: the Ubuntu 26.04 Open MPI 5.0.10
+    package prints only a "couldn't open the help file" message for
+    ``mpirun --version``, so that output alone no longer identifies Open MPI.
+    """
+    ompi_info = shutil.which("ompi_info", path=os.path.dirname(mpirun) or None) \
+        or shutil.which("ompi_info")
+    if ompi_info:
+        info = subprocess.run(
+            [ompi_info, "--version"], capture_output=True, text=True,
+            check=False)
+        if "open mpi" in (info.stdout + info.stderr).lower():
+            return True
+    version = subprocess.run(
+        [mpirun, "--version"], capture_output=True, text=True, check=False)
+    return "open mpi" in (version.stdout + version.stderr).lower()
+
+
 def launch_mpi_job(mpi_ranks):
     """Replace this process with the available MPI launcher."""
     mpirun = shutil.which("mpirun")
     if mpirun:
-        version = subprocess.run(
-            [mpirun, "--version"], capture_output=True, text=True, check=False)
-        if "open mpi" in (version.stdout + version.stderr).lower():
+        if is_open_mpi(mpirun):
+            # The ranks may exceed the host's slots (Open MPI 5 counts
+            # physical cores). ``--oversubscribe`` is accepted by Open MPI 4
+            # and 5; the environment settings back it up: Open MPI 4 reads
+            # the OMPI_ variable, Open MPI 5 (PRRTE) the PRTE_ mapping policy,
+            # and each ignores the other.
             command = [mpirun, "--oversubscribe", "-np", str(mpi_ranks)]
+            os.environ["OMPI_MCA_rmaps_base_oversubscribe"] = "1"
+            os.environ["PRTE_MCA_rmaps_default_mapping_policy"] = ":oversubscribe"
         else:
             command = [mpirun, "-np", str(mpi_ranks)]
         launcher_name = "mpirun"

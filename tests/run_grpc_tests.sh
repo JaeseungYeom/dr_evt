@@ -136,12 +136,24 @@ if [ ! -x "$MPI_TEST" ]; then
     echo "    (MPI not found at configure time, or not yet built)"
 else
     if command -v mpirun > /dev/null 2>&1; then
-        # GitHub-hosted runners may expose fewer than four Open MPI slots.
+        # GitHub-hosted runners may expose fewer than four Open MPI slots
+        # (Open MPI 5 counts physical cores, so a 4-vCPU runner has two).
         # This test intentionally launches four local ranks, so permit that
         # launcher to oversubscribe.  Other MPI implementations do not all
         # accept this Open MPI-specific option.
-        if mpirun --version 2>&1 | grep -qi "Open MPI"; then
+        #
+        # Detect Open MPI through ompi_info first: the Ubuntu 26.04 Open MPI
+        # 5.0.10 package prints only a "couldn't open the help file" message
+        # for `mpirun --version`, so grepping that output alone misses it
+        # and the launch then fails with prte-rmaps-base:alloc-error.
+        if { command -v ompi_info > /dev/null 2>&1 && \
+             ompi_info --version 2>/dev/null | grep -qi "Open MPI"; } || \
+           mpirun --version 2>&1 | grep -qi "Open MPI"; then
             MPI_LAUNCHER=(mpirun --oversubscribe -np 4)
+            # Belt and braces: Open MPI 4 reads the OMPI_ setting, Open MPI 5
+            # (PRRTE) reads the PRTE_ mapping policy; each ignores the other.
+            export OMPI_MCA_rmaps_base_oversubscribe=1
+            export PRTE_MCA_rmaps_default_mapping_policy=:oversubscribe
         else
             MPI_LAUNCHER=(mpirun -np 4)
         fi
@@ -160,18 +172,22 @@ else
         # The harness binds base_port and base_port + 1 for its two servers.
         MPI_BASE_PORT=$(pick_free_ports "${DR_EVT_GRPC_TEST_BASE_PORT:-53100}" 2)
         echo "  using ports $MPI_BASE_PORT-$((MPI_BASE_PORT + 1))"
-        if MPI_OUT=$("${MPI_LAUNCHER[@]}" /bin/bash -c '
+        # Capture to a file, then strip NUL bytes: a launcher can emit them,
+        # and bash drops them from a command substitution with a warning.
+        MPI_LOG="$RUN_DIR/mpi-lockstep.log"
+        if "${MPI_LAUNCHER[@]}" /bin/bash -c '
             cd "$1"
             shift
             exec "$@"
         ' grpc-test-rank "$RUN_DIR" "$MPI_TEST" \
             "$SERVER" "$MPI_BASE_PORT" \
             "$TRACE_DIR/composite_server1.csv" "$TRACE_DIR/composite_server2.csv" \
-            "$TRACE_DIR/composite_jobs.csv" 2>&1); then
+            "$TRACE_DIR/composite_jobs.csv" > "$MPI_LOG" 2>&1; then
             MPI_STATUS=0
         else
             MPI_STATUS=$?
         fi
+        MPI_OUT=$(tr -d '\0' < "$MPI_LOG")
 
         # Each server receives four ordinary jobs and two composite fragments.
         # The output also proves the equal (t1 == t2 == t3) and strict

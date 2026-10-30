@@ -23,11 +23,22 @@ SERVER="$INSTALL_PREFIX/bin/dr_evt_server"
 MPI_TEST="$INSTALL_PREFIX/bin/tests/test_grpc_multi_client_server"
 
 if command -v mpirun >/dev/null 2>&1; then
-    # CI runners may provide fewer than four Open MPI slots.  Allow the
-    # four local ranks required by this test without passing Open MPI-only
-    # options to another MPI implementation.
-    if mpirun --version 2>&1 | grep -qi "Open MPI"; then
+    # CI runners may provide fewer than four Open MPI slots (Open MPI 5
+    # counts physical cores).  Allow the four local ranks required by this
+    # test without passing Open MPI-only options to another implementation.
+    #
+    # Detect Open MPI through ompi_info first: the Ubuntu 26.04 Open MPI
+    # 5.0.10 package prints only a "couldn't open the help file" message for
+    # `mpirun --version`, which would otherwise hide the Open MPI launcher
+    # and make the launch fail with prte-rmaps-base:alloc-error.
+    if { command -v ompi_info >/dev/null 2>&1 && \
+         ompi_info --version 2>/dev/null | grep -qi "Open MPI"; } || \
+       mpirun --version 2>&1 | grep -qi "Open MPI"; then
         MPI_LAUNCHER=(mpirun --oversubscribe -np 4)
+        # Open MPI 4 reads the OMPI_ setting; Open MPI 5 (PRRTE) reads the
+        # PRTE_ mapping policy. Each ignores the other.
+        export OMPI_MCA_rmaps_base_oversubscribe=1
+        export PRTE_MCA_rmaps_default_mapping_policy=:oversubscribe
     else
         MPI_LAUNCHER=(mpirun -np 4)
     fi
