@@ -11,6 +11,7 @@
 
 #include "proto/dr_evt_params.hpp"
 #include "proto/utils.hpp"
+#include "trace/node_release_delay.hpp"
 #include "utils/file.hpp"
 #include <cmath>
 #include <fstream>
@@ -259,6 +260,30 @@ set_sim_options(const dr_evt_proto::DR_EVT_Params::Simulation_Params &cfg,
 
   // Run time stddev (default: 0.0 = no variation)
   // Negative values don't make sense, treat as "use default"
+  // Node release delay: proto3 zero values keep Sim_Params' defaults.
+  if (!cfg.node_release_delay_model().empty() &&
+      !set_release_delay_model(sp.m_node_release_delay_model,
+                               cfg.node_release_delay_model())) {
+    throw std::runtime_error("Unknown node_release_delay_model in protobuf "
+                             "config: " +
+                             cfg.node_release_delay_model() +
+                             " (valid: constant, exponential, uniform)");
+  }
+  if (cfg.node_release_delay() != 0.0) {
+    sp.m_node_release_delay = cfg.node_release_delay();
+  }
+  if (cfg.node_release_delay_spread() != 0.0) {
+    sp.m_node_release_delay_spread = cfg.node_release_delay_spread();
+  }
+  try {
+    validate_node_release_delay(sp.m_node_release_delay,
+                                sp.m_node_release_delay_model,
+                                sp.m_node_release_delay_spread);
+  } catch (const std::exception &e) {
+    throw std::runtime_error(std::string("Invalid protobuf config: ") +
+                             e.what());
+  }
+
   if (cfg.run_time_stddev() >= 0.0) {
     sp.m_run_time_stddev = cfg.run_time_stddev();
   } else {

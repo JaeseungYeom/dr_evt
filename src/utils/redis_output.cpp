@@ -161,6 +161,10 @@ void RedisOutput::queue_resource_output(sw::redis::Transaction &transaction,
             format_sim_time(sample.time, m_impl->resource_timestamps_in_msec))
       .hset(key, "free_nodes", std::to_string(sample.free_nodes))
       .hset(key, "allocated_nodes", std::to_string(sample.allocated_nodes));
+  if (sample.releasing_nodes) {
+    transaction.hset(key, "releasing_nodes",
+                     std::to_string(*sample.releasing_nodes));
+  }
   if (sample.pcon) {
     transaction.hset(key, "avgpcon", std::to_string(sample.pcon->average))
         .hset(key, "minpcon", std::to_string(sample.pcon->minimum))
@@ -173,6 +177,9 @@ void RedisOutput::queue_resource_output(sw::redis::Transaction &transaction,
       format_sim_time(sample.time, m_impl->resource_timestamps_in_msec) + "," +
       std::to_string(sample.free_nodes) + "," +
       std::to_string(sample.allocated_nodes);
+  if (sample.releasing_nodes) {
+    csv_rows += "," + std::to_string(*sample.releasing_nodes);
+  }
   if (sample.pcon) {
     csv_rows += "," + std::to_string(sample.pcon->average) + "," +
                 std::to_string(sample.pcon->minimum) + "," +

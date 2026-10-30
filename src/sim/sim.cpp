@@ -62,7 +62,7 @@ timeout_t checked_streaming_limit(tdiff_t limit_time) {
 constexpr std::array<char, 8> checkpoint_magic{'D', 'R', 'E', 'V',
                                                'T', 'C', 'K', 'P'};
 constexpr std::uint32_t checkpoint_version =
-    11; // 10: full Sim_Params; 11: reservation_depth
+    12; // 10: full Sim_Params; 11: reservation_depth; 12: node release delay
 
 /// Trace policy identifier stored in a checkpoint so a file written by one
 /// trace type is not restored into another.
@@ -336,10 +336,11 @@ BasicSimulation<TraceType>::BasicSimulation(Sim_Params params)
       m_next_progressive_file(0), m_checkpoint_loaded(false),
       m_last_automatic_checkpoint_jobs(0), m_has_automatic_checkpoint(false),
       m_last_automatic_checkpoint_time(0.0), m_pre_start_jobs(0),
-      m_warm_resource_area(0.0), m_warm_resource_end(0.0),
+      m_warm_resource_area(0.0), m_warm_resource_end(0.0), m_jobs_releasing(0),
       m_rng(m_params.m_seed), m_queue_length_sum(0), m_queue_length_samples(0),
       m_queue_length_peak(0) {
   m_trace.set_cores_per_node(m_params.m_cores_per_node);
+  configure_node_release_delay();
   reset_capacity_schedule();
 }
 
@@ -366,10 +367,11 @@ BasicSimulation<TraceType>::BasicSimulation(Sim_Params params,
       m_next_progressive_file(0), m_checkpoint_loaded(false),
       m_last_automatic_checkpoint_jobs(0), m_has_automatic_checkpoint(false),
       m_last_automatic_checkpoint_time(0.0), m_pre_start_jobs(0),
-      m_warm_resource_area(0.0), m_warm_resource_end(0.0),
+      m_warm_resource_area(0.0), m_warm_resource_end(0.0), m_jobs_releasing(0),
       m_rng(m_params.m_seed), m_queue_length_sum(0), m_queue_length_samples(0),
       m_queue_length_peak(0) {
   m_trace.set_cores_per_node(m_params.m_cores_per_node);
+  configure_node_release_delay();
   reset_capacity_schedule();
 }
 
@@ -391,13 +393,14 @@ BasicSimulation<TraceType>::BasicSimulation(
       m_next_progressive_file(0), m_checkpoint_loaded(false),
       m_last_automatic_checkpoint_jobs(0), m_has_automatic_checkpoint(false),
       m_last_automatic_checkpoint_time(0.0), m_pre_start_jobs(0),
-      m_warm_resource_area(0.0), m_warm_resource_end(0.0),
+      m_warm_resource_area(0.0), m_warm_resource_end(0.0), m_jobs_releasing(0),
       m_rng(m_params.m_seed), m_queue_length_sum(0), m_queue_length_samples(0),
       m_queue_length_peak(0) {
   if (!m_scheduler) {
     throw std::invalid_argument("custom scheduler must not be null");
   }
   m_trace.set_cores_per_node(m_params.m_cores_per_node);
+  configure_node_release_delay();
   reset_capacity_schedule();
 }
 
@@ -476,6 +479,13 @@ template <typename TraceType> void BasicSimulation<TraceType>::run() {
   if (m_params.m_sim_start_time != 0.0) {
     run_warm_start();
   } else {
+    if (m_trace.dcols().get_trace_mode() == TraceMode::REPLAY) {
+      // Recorded start times already include the real cleanup gaps, so a
+      // node release delay is never applied to replayed history. Decided
+      // before the resource trace opens, since it governs the header.
+      m_trace.set_node_release_delay_from(
+          std::numeric_limits<sim_time_t>::infinity());
+    }
     // Open outputs before processing so bounded buffers can flush
     // incrementally. Warm-start opens them later, after discarding pre-boundary
     // samples and installing its nonzero baseline.
@@ -649,6 +659,7 @@ num_jobs_t BasicSimulation<TraceType>::initialize_trace(num_jobs_t max_jobs) {
   m_pre_start_jobs = 0;
   m_warm_resource_area = 0.0;
   m_warm_resource_end = 0.0;
+  m_jobs_releasing = 0;
   m_first_appended_job_idx = std::numeric_limits<job_no_t>::max();
   m_appended_job_query_records.clear();
   if (m_custom_scheduler != nullptr) {
@@ -677,6 +688,9 @@ void BasicSimulation<TraceType>::run_warm_start() {
   m_pre_start_jobs = 0;
   m_warm_resource_area = 0.0;
   m_warm_resource_end = sim_start_time;
+  // Replayed history before the boundary keeps its recorded releases; from
+  // the boundary on, departures (historical or simulated) are delayed.
+  m_trace.set_node_release_delay_from(sim_start_time);
 
   for (job_no_t job_no = first_job; job_no < jobs_end; ++job_no) {
     auto &job = m_trace.job_at(job_no);
@@ -692,8 +706,10 @@ void BasicSimulation<TraceType>::run_warm_start() {
       if (end > sim_start_time) {
         // Its departure is fixed historical state, so reservations should
         // use that known end rather than a possibly stale original limit.
-        m_running_jobs[job_no] = {begin, job.get_actual_run_time(),
-                                  job.get_num_nodes()};
+        m_running_jobs[job_no] = {
+            begin,
+            planning_run_time(job.get_actual_run_time(), job.get_num_nodes()),
+            job.get_num_nodes()};
         m_warm_resource_area +=
             static_cast<tdiff_t>(job.get_num_nodes()) * (end - sim_start_time);
         m_warm_resource_end = std::max(m_warm_resource_end, end);
@@ -721,11 +737,27 @@ void BasicSimulation<TraceType>::run_warm_start() {
     if (event_time > sim_start_time) {
       break;
     }
-    if (event.is_departure()) {
+    const bool is_departure = event.is_departure();
+    if (is_departure) {
       m_trace.job_at(event.get_job_idx()).suppress_output();
       --m_pre_start_jobs;
     }
     m_trace.process_single_event();
+    if (is_departure && m_trace.last_departure_delayed()) {
+      // A departure at the boundary itself is delayed: its nodes are busy,
+      // not free, so project their release for the first decisions.
+      const sim_time_t release_time = m_trace.last_release_time();
+      if (release_time > sim_start_time) {
+        const auto &job = m_trace.job_at(event.get_job_idx());
+        m_running_jobs[event.get_job_idx()] = {
+            event_time, release_time - event_time, job.get_num_nodes()};
+        ++m_jobs_releasing;
+      }
+    } else if (event.is_release()) {
+      if (m_running_jobs.erase(event.get_job_idx()) != 0) {
+        --m_jobs_releasing;
+      }
+    }
   }
 
   m_current_time = sim_start_time;
@@ -742,7 +774,7 @@ void BasicSimulation<TraceType>::run_warm_start() {
                                m_params.m_total_nodes, m_params.m_msec_output);
   if (m_custom_scheduler != nullptr) {
     m_custom_scheduler->reset_resource_accounting(sim_start_time,
-                                                  get_available_nodes());
+                                                  accounting_available_nodes());
   }
 
   // No auxiliary job list is retained: prepared post-boundary records keep
@@ -837,6 +869,7 @@ void BasicSimulation<TraceType>::run_progressive() {
     m_pre_start_jobs = 0;
     m_warm_resource_area = 0.0;
     m_warm_resource_end = 0.0;
+    m_jobs_releasing = 0;
     if (m_custom_scheduler != nullptr) {
       m_custom_scheduler->reset_resource_accounting();
     }
@@ -1138,6 +1171,7 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
     writer.value(m_pre_start_jobs);
     writer.value(m_warm_resource_area);
     writer.value(m_warm_resource_end);
+    writer.value(static_cast<std::uint64_t>(m_jobs_releasing));
     writer.value(m_queue_length_sum);
     writer.value(m_queue_length_samples);
     writer.value(m_queue_length_peak);
@@ -1205,10 +1239,12 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
     for (const auto &event : m_event_queue) {
       writer.value(event.get_job_idx());
       write_epoch(writer, event.get_time());
-      writer.value(event.get_type());
+      writer.enumeration(event.get_type());
+      writer.value(event.get_nodes());
     }
 
     writer.object(m_rng);
+    writer.object(m_trace.m_release_delay.engine());
 
     writer.value(m_trace.m_num_reclaimed);
     writer.value(m_trace.m_job_store_capacity);
@@ -1267,11 +1303,13 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
     }
 #endif
     writer.value(m_trace.m_ctx.m_n_nodes_in_use);
+    writer.value(m_trace.m_ctx.m_n_nodes_releasing);
     writer.value(static_cast<std::uint64_t>(m_trace.m_ctx.m_evtq.size()));
     for (const auto &event : m_trace.m_ctx.m_evtq) {
       writer.value(event.get_job_idx());
       write_epoch(writer, event.get_time());
-      writer.value(event.get_type());
+      writer.enumeration(event.get_type());
+      writer.value(event.get_nodes());
     }
 
     writer.value(m_trace.m_resource_history_capacity);
@@ -1284,6 +1322,7 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
       write_epoch(writer, sample.time);
       writer.value(sample.allocated);
       writer.value(sample.capacity);
+      writer.value(sample.releasing);
       if constexpr (std::is_same_v<TraceType, PconTrace>) {
         writer.value(sample.pcon.avgpcon);
         writer.value(sample.pcon.minpcon);
@@ -1297,6 +1336,7 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
     write_epoch(writer, m_trace.m_resource_recording_baseline.time);
     writer.value(m_trace.m_resource_recording_baseline.allocated);
     writer.value(m_trace.m_resource_recording_baseline.capacity);
+    writer.value(m_trace.m_resource_recording_baseline.releasing);
     if constexpr (std::is_same_v<TraceType, PconTrace>) {
       writer.value(m_trace.m_resource_recording_baseline.pcon.avgpcon);
       writer.value(m_trace.m_resource_recording_baseline.pcon.minpcon);
@@ -1400,6 +1440,15 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
                              m_params.m_run_time_scale, "run_time_scale");
     require_checkpoint_match(recorded.m_run_time_stddev,
                              m_params.m_run_time_stddev, "run_time_stddev");
+    require_checkpoint_match(recorded.m_node_release_delay,
+                             m_params.m_node_release_delay,
+                             "node_release_delay");
+    require_checkpoint_match(recorded.m_node_release_delay_model,
+                             m_params.m_node_release_delay_model,
+                             "node_release_delay_model");
+    require_checkpoint_match(recorded.m_node_release_delay_spread,
+                             m_params.m_node_release_delay_spread,
+                             "node_release_delay_spread");
     require_checkpoint_match(recorded.get_outfile(), m_params.get_outfile(),
                              "simulated trace output");
     require_checkpoint_match(recorded.get_resource_trace(),
@@ -1459,6 +1508,7 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
     m_pre_start_jobs = reader.value<size_t>();
     m_warm_resource_area = reader.value<tdiff_t>();
     m_warm_resource_end = reader.value<sim_time_t>();
+    m_jobs_releasing = reader.count();
     m_queue_length_sum = reader.value<size_t>();
     m_queue_length_samples = reader.value<size_t>();
     m_queue_length_peak = reader.value<size_t>();
@@ -1560,10 +1610,16 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
     for (size_t i = 0, count = reader.count(); i < count; ++i) {
       const auto job_id = reader.value<job_no_t>();
       const auto time = read_epoch(reader);
-      const auto type = reader.value<bool>();
-      m_event_queue.emplace(job_id, time, type);
+      const auto type = reader.enumeration<DR_Event_Kind>();
+      const auto nodes = reader.value<num_nodes_t>();
+      if (type == node_release) {
+        m_event_queue.insert(DR_Event::release(job_id, time, nodes));
+      } else {
+        m_event_queue.emplace(job_id, time, type);
+      }
     }
     reader.object(m_rng);
+    reader.object(m_trace.m_release_delay.engine());
 
     m_trace.m_num_reclaimed = reader.value<size_t>();
     m_trace.m_job_store_capacity = reader.value<size_t>();
@@ -1652,12 +1708,18 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
     }
 #endif
     m_trace.m_ctx.m_n_nodes_in_use = reader.value<num_nodes_t>();
+    m_trace.m_ctx.m_n_nodes_releasing = reader.value<num_nodes_t>();
     m_trace.m_ctx.m_evtq.clear();
     for (size_t i = 0, count = reader.count(); i < count; ++i) {
       const auto job_id = reader.value<job_no_t>();
       const auto time = read_epoch(reader);
-      const auto type = reader.value<bool>();
-      m_trace.m_ctx.m_evtq.emplace(job_id, time, type);
+      const auto type = reader.enumeration<DR_Event_Kind>();
+      const auto nodes = reader.value<num_nodes_t>();
+      if (type == node_release) {
+        m_trace.m_ctx.m_evtq.insert(DR_Event::release(job_id, time, nodes));
+      } else {
+        m_trace.m_ctx.m_evtq.emplace(job_id, time, type);
+      }
     }
 
     m_trace.m_resource_history_capacity = reader.value<size_t>();
@@ -1674,14 +1736,15 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
       const auto time = read_epoch(reader);
       const auto allocated = reader.value<num_nodes_t>();
       const auto capacity = reader.value<num_nodes_t>();
+      const auto releasing = reader.value<num_nodes_t>();
       if constexpr (std::is_same_v<TraceType, PconTrace>) {
         const Pcon_Values pcon{reader.value<double>(), reader.value<double>(),
                                reader.value<double>()};
         m_trace.m_ctx.m_resource_history.push_back(
-            Pcon_Resource_Sample{time, allocated, capacity, pcon});
+            Pcon_Resource_Sample{time, allocated, capacity, pcon, releasing});
       } else {
         m_trace.m_ctx.m_resource_history.push_back(
-            Standard_Resource_Sample{time, allocated, capacity});
+            Standard_Resource_Sample{time, allocated, capacity, releasing});
       }
     }
     m_trace.m_resource_trace_total_nodes = reader.value<num_nodes_t>();
@@ -1692,6 +1755,8 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
     m_trace.m_resource_recording_baseline.allocated =
         reader.value<num_nodes_t>();
     m_trace.m_resource_recording_baseline.capacity =
+        reader.value<num_nodes_t>();
+    m_trace.m_resource_recording_baseline.releasing =
         reader.value<num_nodes_t>();
     if constexpr (std::is_same_v<TraceType, PconTrace>) {
       m_trace.m_resource_recording_baseline.pcon = {reader.value<double>(),
@@ -1744,6 +1809,9 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
           m_params.m_queue_impl, m_params.m_block_size,
           m_params.m_wait_queue_capacity, m_params.m_wait_queue_overflow,
           m_params.m_reservation_depth);
+      if (m_trace.node_release_delay_active()) {
+        m_scheduler->set_node_release_delay(&m_trace.node_release_delay());
+      }
       for (const auto job_id : pending_job_ids) {
         const auto &job = m_trace.m_data[job_id - first_resident_job];
         m_scheduler->insert_job(
@@ -1772,11 +1840,8 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
             m_params.m_redis_uri, m_params.m_redis_key_prefix);
       }
       if (resource_output_open) {
-        std::string header = "time,free_nodes,allocated_nodes";
-        header += TraceType::policy_type::resource_columns();
-        header += '\n';
-        m_trace.m_redis_output->start_resource_trace(header,
-                                                     m_params.m_msec_output);
+        m_trace.m_redis_output->start_resource_trace(
+            m_trace.resource_trace_header(), m_params.m_msec_output);
       }
 #else
       throw std::logic_error("Redis checkpoint requires Redis support");
@@ -2241,6 +2306,23 @@ void BasicSimulation<TraceType>::record_queue_arrivals(
 }
 
 template <typename TraceType>
+void BasicSimulation<TraceType>::configure_node_release_delay() {
+  validate_node_release_delay(m_params.m_node_release_delay,
+                              m_params.m_node_release_delay_model,
+                              m_params.m_node_release_delay_spread);
+  if (!node_release_delay_requested(m_params.m_node_release_delay,
+                                    m_params.m_node_release_delay_model,
+                                    m_params.m_node_release_delay_spread)) {
+    return; // Nodes are reusable at job end; nothing is installed.
+  }
+  m_trace.set_node_release_delay(Node_Release_Delay(
+      m_params.m_node_release_delay, m_params.m_node_release_delay_model,
+      m_params.m_node_release_delay_spread, m_params.m_seed,
+      m_params.m_total_nodes));
+  m_scheduler->set_node_release_delay(&m_trace.node_release_delay());
+}
+
+template <typename TraceType>
 void BasicSimulation<TraceType>::reset_capacity_schedule() {
   m_next_capacity_change = 0;
   m_current_capacity = m_params.m_total_nodes;
@@ -2265,7 +2347,7 @@ void BasicSimulation<TraceType>::advance_capacity_accounting_to(
     throw std::logic_error("capacity accounting cannot move backward in time");
   }
   const num_nodes_t effective_capacity =
-      std::max(m_current_capacity, get_nodes_in_use());
+      std::max(m_current_capacity, get_nodes_occupied());
   m_capacity_area += static_cast<tdiff_t>(effective_capacity) *
                      (current_time - m_capacity_area_time);
   m_capacity_area_time = current_time;
@@ -2277,7 +2359,7 @@ tdiff_t BasicSimulation<TraceType>::capacity_area_through(
   tdiff_t area = m_capacity_area;
   if (std::isfinite(through_time) && through_time > m_capacity_area_time) {
     const num_nodes_t effective_capacity =
-        std::max(m_current_capacity, get_nodes_in_use());
+        std::max(m_current_capacity, get_nodes_occupied());
     area += static_cast<tdiff_t>(effective_capacity) *
             (through_time - m_capacity_area_time);
   }
@@ -2356,9 +2438,11 @@ void BasicSimulation<TraceType>::advance_to_impl(
         m_trace.insert_job(job, m_current_time);
         record_appended_job_start(job);
         const auto &record = m_trace.job_at(job);
-        m_running_jobs[job] = {m_current_time,
-                               static_cast<tdiff_t>(record.get_limit_time()),
-                               record.get_num_nodes()};
+        m_running_jobs[job] = {
+            m_current_time,
+            planning_run_time(static_cast<tdiff_t>(record.get_limit_time()),
+                              record.get_num_nodes()),
+            record.get_num_nodes()};
         m_jobs_started++;
 
         // Records a resource-history sample internally (Trace's own
@@ -2368,7 +2452,7 @@ void BasicSimulation<TraceType>::advance_to_impl(
     }
   }
   if constexpr (AccountResources) {
-    custom_scheduler->commit_available_nodes(get_available_nodes());
+    custom_scheduler->commit_available_nodes(accounting_available_nodes());
   }
 
   // Main event loop - process events and make scheduling decisions until
@@ -2443,7 +2527,8 @@ void BasicSimulation<TraceType>::advance_to_impl(
           break; // No more events at current_time
         }
 
-        bool is_end = !event.is_arrival();
+        const bool is_end = event.is_departure();
+        const bool is_release = event.is_release();
         job_no_t event_job_idx = event.get_job_idx();
 
         if (is_end) {
@@ -2468,14 +2553,30 @@ void BasicSimulation<TraceType>::advance_to_impl(
           }
         }
 
-        // Process this event (END or START) - records a
+        // Process this event (END, RELEASE, or START) - records a
         // resource-history sample internally (Trace's own Context).
         m_trace.process_single_event();
 
-        // If END event: remove from running_jobs
         if (is_end) {
+          if (m_trace.last_departure_delayed()) {
+            // No nodes were freed yet. Keep the job in the running map with
+            // its now-known release time so reservations project it, and
+            // let the release event trigger scheduling.
+            auto running = m_running_jobs.find(event_job_idx);
+            if (running != m_running_jobs.end()) {
+              running->second.run_time =
+                  m_trace.last_release_time() - running->second.start_time;
+              ++m_jobs_releasing;
+            }
+          } else {
+            processed_end_event = true;
+            m_running_jobs.erase(event_job_idx);
+          }
+        } else if (is_release) {
           processed_end_event = true;
-          m_running_jobs.erase(event_job_idx);
+          if (m_running_jobs.erase(event_job_idx) != 0) {
+            --m_jobs_releasing;
+          }
         }
       }
 
@@ -2564,9 +2665,11 @@ void BasicSimulation<TraceType>::advance_to_impl(
           m_trace.insert_job(job, m_current_time);
           record_appended_job_start(job);
           const auto &record = m_trace.job_at(job);
-          m_running_jobs[job] = {m_current_time,
-                                 static_cast<tdiff_t>(record.get_limit_time()),
-                                 record.get_num_nodes()};
+          m_running_jobs[job] = {
+              m_current_time,
+              planning_run_time(static_cast<tdiff_t>(record.get_limit_time()),
+                                record.get_num_nodes()),
+              record.get_num_nodes()};
           m_jobs_started++;
 
           // Process this START event - records a resource-history
@@ -2588,7 +2691,7 @@ void BasicSimulation<TraceType>::advance_to_impl(
       }
     }
     if constexpr (AccountResources) {
-      custom_scheduler->commit_available_nodes(get_available_nodes());
+      custom_scheduler->commit_available_nodes(accounting_available_nodes());
     }
 
     // Update loop state variables at end of iteration
@@ -2704,7 +2807,7 @@ BasicSimulation<TraceType>::get_statistics() const {
   stats.jobs_submitted = m_jobs_submitted;
   stats.jobs_started = m_jobs_started;
   stats.jobs_completed = m_jobs_completed;
-  stats.jobs_running = m_running_jobs.size();
+  stats.jobs_running = m_running_jobs.size() - m_jobs_releasing;
   stats.jobs_waiting = m_scheduler->active_job_count();
   stats.current_time = m_current_time;
 

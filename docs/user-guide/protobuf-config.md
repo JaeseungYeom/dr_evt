@@ -23,6 +23,7 @@ Configuration field names match the long command-line names with the leading
 | Checkpoint | `checkpoint_file`, `checkpoint_interval_jobs` |
 | Trace handling | `trace_type`, `trace_format`, `cores_per_node`, `timestamp_format`, `timezone` |
 | Runtime model | `run_time_mode`, `run_time_distribution`, `run_time_scale`, `run_time_stddev` |
+| Node release | `node_release_delay`, `node_release_delay_model`, `node_release_delay_spread` |
 | Other | `seed`, `verbose` |
 
 See [Command-Line Options](command-line.md) for accepted values, defaults, and

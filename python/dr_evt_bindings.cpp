@@ -59,6 +59,16 @@ PYBIND11_MODULE(dr_evt, m) {
       .value("LJF", PriorityPolicy::LJF)
       .export_values();
 
+  py::enum_<ReleaseDelayModel>(
+      m, "ReleaseDelayModel",
+      "Model of the delay between a job's end and the reuse of its nodes: "
+      "CONSTANT, or the maximum of per-node EXPONENTIAL or UNIFORM cleanup "
+      "times, which grows with job size.")
+      .value("CONSTANT", ReleaseDelayModel::CONSTANT)
+      .value("EXPONENTIAL", ReleaseDelayModel::EXPONENTIAL)
+      .value("UNIFORM", ReleaseDelayModel::UNIFORM)
+      .export_values();
+
   py::enum_<Simulation::Job_State>(m, "JobState",
                                    "Lifecycle state of an appended job.")
       .value("PENDING", Simulation::Job_State::PENDING)
@@ -106,6 +116,18 @@ PYBIND11_MODULE(dr_evt, m) {
                      "otherwise. 1 reproduces EASY.")
       .def_readwrite("priority_policy", &Sim_Params::m_priority_policy,
                      "PriorityPolicy: Waiting-job ordering policy.")
+      .def_readwrite("node_release_delay", &Sim_Params::m_node_release_delay,
+                     "float: Seconds a job's nodes stay unavailable after it "
+                     "ends; 0 releases them at the job's end. Not applied to "
+                     "replayed history.")
+      .def_readwrite("node_release_delay_model",
+                     &Sim_Params::m_node_release_delay_model,
+                     "ReleaseDelayModel: CONSTANT (default), EXPONENTIAL, or "
+                     "UNIFORM per-node cleanup times.")
+      .def_readwrite("node_release_delay_spread",
+                     &Sim_Params::m_node_release_delay_spread,
+                     "float: Half-width of the UNIFORM per-node cleanup time; "
+                     "ignored otherwise.")
       .def_readwrite("verbose", &Sim_Params::m_verbose,
                      "bool: Enables verbose simulator output.");
 
@@ -318,7 +340,12 @@ PYBIND11_MODULE(dr_evt, m) {
            "Raises RuntimeError for other scheduler implementations.")
 
       .def("get_available_nodes", &Simulation::get_available_nodes,
-           "Return the number of unallocated nodes as int.")
+           "Return the number of nodes a new job could use now as int; "
+           "excludes releasing nodes.")
+
+      .def("get_nodes_releasing", &Simulation::get_nodes_releasing,
+           "Return the number of nodes whose job has ended but which are not "
+           "yet reusable (node release delay) as int.")
 
       // Monitoring - Queue status
       .def("get_active_job_count", &Simulation::get_active_job_count,

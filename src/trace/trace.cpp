@@ -168,7 +168,8 @@ BasicTrace<Policy>::Context::Context()
       m_dat_start(epoch_t{}), m_dat_end(epoch_t{}), m_dat_span(0.0),
       m_prev_job_q(QueueUnknown),
 #endif
-      m_n_nodes_in_use(static_cast<num_nodes_t>(0u)) {
+      m_n_nodes_in_use(static_cast<num_nodes_t>(0u)),
+      m_n_nodes_releasing(static_cast<num_nodes_t>(0u)) {
 }
 
 template <typename Policy>
@@ -176,6 +177,31 @@ std::string BasicTrace<Policy>::Context::to_string() const {
   std::string msg;
   msg = "";
   return msg;
+}
+
+template <typename Policy>
+void BasicTrace<Policy>::finish_job_nodes(job_no_t job_idx,
+                                          const epoch_t &end_time,
+                                          num_nodes_t nodes) {
+  if (m_release_delay.active()) {
+    const sim_time_t end = convert_epoch<sim_time_t>(end_time);
+    if (end >= m_release_delay_from) {
+      // The nodes leave the allocated pool now but stay unavailable until
+      // the release event. Round the release time through epoch_t so the
+      // stored projection and the event's own timestamp are the same value.
+      const sim_time_t release = end + m_release_delay.sample(nodes);
+      const time_t sec = static_cast<time_t>(release);
+      const epoch_t release_epoch = {sec, static_cast<float>(release - sec)};
+      m_ctx.m_n_nodes_in_use -= nodes;
+      m_ctx.m_n_nodes_releasing += nodes;
+      m_ctx.m_evtq.insert(DR_Event::release(job_idx, release_epoch, nodes));
+      m_last_release_time = convert_epoch<sim_time_t>(release_epoch);
+      m_last_departure_delayed = true;
+      return;
+    }
+    m_last_departure_delayed = false;
+  }
+  m_ctx.m_n_nodes_in_use -= nodes;
 }
 
 template <typename Policy>
@@ -190,15 +216,24 @@ void BasicTrace<Policy>::process_events_until(const epoch_t &t_sub) {
   }
 
   size_t departures_processed = 0;
-  auto it = m_ctx.m_evtq.begin();
-  while (it != m_ctx.m_evtq.end()) {
-    auto cur = it++;
+  // Always take the current front: processing a departure may insert that
+  // job's node-release event, which must not be skipped by a saved iterator.
+  while (!m_ctx.m_evtq.empty()) {
+    auto cur = m_ctx.m_evtq.begin();
     // Time of the earliest event in the queue
     auto &t = cur->get_time();
 
     if (t_sub < t) {
       // Process events upto the current submission time
       break;
+    }
+    if (cur->is_release()) {
+      // Carries its own node count; its job record may be gone already.
+      m_ctx.m_n_nodes_releasing -= cur->get_nodes();
+      const epoch_t event_time = t; // copy: erase() below invalidates t
+      m_ctx.m_evtq.erase(cur);
+      record_resource_sample(event_time, m_ctx.m_n_nodes_in_use);
+      continue;
     }
     const auto &job_of_evt = job_at(cur->get_job_idx());
 #if MARK_DAT_PERIOD
@@ -246,10 +281,10 @@ void BasicTrace<Policy>::process_events_until(const epoch_t &t_sub) {
           m_ctx.m_dat_end = cur->get_time();
         }
       } else {
-        m_ctx.m_n_nodes_in_use -= job_of_evt.get_num_nodes();
+        finish_job_nodes(cur->get_job_idx(), t, job_of_evt.get_num_nodes());
       }
 #else
-      m_ctx.m_n_nodes_in_use -= job_of_evt.get_num_nodes();
+      finish_job_nodes(cur->get_job_idx(), t, job_of_evt.get_num_nodes());
 #endif
     }
     const epoch_t event_time = t; // copy: erase() below invalidates t
@@ -665,18 +700,24 @@ template <typename Policy> bool BasicTrace<Policy>::process_single_event() {
   auto event = *it; // Copy before erase
   m_ctx.m_evtq.erase(it);
 
-  // Process this event using replay engine's accounting logic
-  const auto &job = job_at(event.get_job_idx());
-
-  const bool is_departure = !event.is_arrival();
-  if (event.is_arrival()) {
-    this->on_start(static_cast<const trace_record_t<Policy> &>(job));
-    // START event: allocate nodes (same logic as process_events_until)
-    m_ctx.m_n_nodes_in_use += job.get_num_nodes();
+  const bool is_departure = event.is_departure();
+  if (event.is_release()) {
+    // RELEASE event: the ended job's nodes become reusable. The event carries
+    // its node count; the job record may already have been reclaimed.
+    m_ctx.m_n_nodes_releasing -= event.get_nodes();
   } else {
-    this->on_finish(static_cast<const trace_record_t<Policy> &>(job));
-    // END event: free nodes (same logic as process_events_until)
-    m_ctx.m_n_nodes_in_use -= job.get_num_nodes();
+    // Process this event using replay engine's accounting logic
+    const auto &job = job_at(event.get_job_idx());
+    if (event.is_arrival()) {
+      this->on_start(static_cast<const trace_record_t<Policy> &>(job));
+      // START event: allocate nodes (same logic as process_events_until)
+      m_ctx.m_n_nodes_in_use += job.get_num_nodes();
+    } else {
+      this->on_finish(static_cast<const trace_record_t<Policy> &>(job));
+      // END event: free nodes, or hold them until their release event
+      finish_job_nodes(event.get_job_idx(), event.get_time(),
+                       job.get_num_nodes());
+    }
   }
   record_resource_sample(event.get_time(), m_ctx.m_n_nodes_in_use);
 
@@ -701,6 +742,56 @@ template <typename Policy> bool BasicTrace<Policy>::process_single_event() {
 }
 
 template <typename Policy>
+std::string BasicTrace<Policy>::resource_trace_header() const {
+  std::string header = "time,free_nodes,allocated_nodes";
+  if (node_release_delay_active()) {
+    header += ",releasing_nodes";
+  }
+  header += Policy::resource_columns();
+  header += "\n";
+  return header;
+}
+
+template <typename Policy>
+std::string
+BasicTrace<Policy>::resource_trace_row(const resource_sample_t &sample) const {
+  const num_nodes_t occupied = sample.allocated + sample.releasing;
+  const num_nodes_t free_nodes =
+      occupied < sample.capacity ? sample.capacity - occupied : 0;
+  std::string row = format_sim_time(convert_epoch<sim_time_t>(sample.time),
+                                    m_resource_trace_msec) +
+                    "," + std::to_string(free_nodes) + "," +
+                    std::to_string(sample.allocated);
+  if (node_release_delay_active()) {
+    row += "," + std::to_string(sample.releasing);
+  }
+  row += Policy::resource_values(sample);
+  row += "\n";
+  return row;
+}
+
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+template <typename Policy>
+RedisResourceRecord BasicTrace<Policy>::to_redis_resource_record(
+    const resource_sample_t &sample) const {
+  const num_nodes_t occupied = sample.allocated + sample.releasing;
+  RedisResourceRecord record;
+  record.time = convert_epoch<sim_time_t>(sample.time);
+  record.free_nodes =
+      occupied < sample.capacity ? sample.capacity - occupied : 0;
+  record.allocated_nodes = sample.allocated;
+  if constexpr (std::is_same_v<resource_sample_t, Pcon_Resource_Sample>) {
+    record.pcon = RedisPconValues{sample.pcon.avgpcon, sample.pcon.minpcon,
+                                  sample.pcon.maxpcon};
+  }
+  if (node_release_delay_active()) {
+    record.releasing_nodes = sample.releasing;
+  }
+  return record;
+}
+#endif
+
+template <typename Policy>
 void BasicTrace<Policy>::start_resource_trace(const std::string &filename,
                                               num_nodes_t total_nodes,
                                               bool msec) {
@@ -712,9 +803,7 @@ void BasicTrace<Policy>::start_resource_trace(const std::string &filename,
     m_resource_trace_current_capacity = total_nodes;
     m_resource_capacity_initialized = true;
   }
-  std::string header = "time,free_nodes,allocated_nodes";
-  header += Policy::resource_columns();
-  header += "\n";
+  const std::string header = resource_trace_header();
 #if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
   if (m_redis_output) {
     if (m_redis_output->resource_trace_active()) {
@@ -749,38 +838,18 @@ void BasicTrace<Policy>::start_resource_trace(const std::string &filename,
   const auto baseline_sample =
       m_has_resource_recording_baseline
           ? m_resource_recording_baseline
-          : this->sample(baseline_time, m_ctx.m_n_nodes_in_use,
-                         m_resource_trace_current_capacity);
-  const auto allocated = baseline_sample.allocated;
-  const auto capacity = baseline_sample.capacity;
-  const sim_time_t baseline_output_time =
-      convert_epoch<sim_time_t>(baseline_sample.time);
+          : make_resource_sample(baseline_time, m_ctx.m_n_nodes_in_use);
 #if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
   if (m_redis_output && m_redis_output->resource_trace_active()) {
     const auto *first = &baseline_sample;
     m_redis_output->append_resource_trace(
-        first, first + 1, [](const resource_sample_t &sample) {
-          RedisResourceRecord record{convert_epoch<sim_time_t>(sample.time),
-                                     sample.allocated < sample.capacity
-                                         ? sample.capacity - sample.allocated
-                                         : 0,
-                                     sample.allocated, std::nullopt};
-          if constexpr (std::is_same_v<resource_sample_t,
-                                       Pcon_Resource_Sample>) {
-            record.pcon = RedisPconValues{
-                sample.pcon.avgpcon, sample.pcon.minpcon, sample.pcon.maxpcon};
-          }
-          return record;
+        first, first + 1, [this](const resource_sample_t &sample) {
+          return to_redis_resource_record(sample);
         });
   } else
 #endif
   {
-    const std::string baseline =
-        format_sim_time(baseline_output_time, msec) + "," +
-        std::to_string(allocated < capacity ? capacity - allocated : 0) + "," +
-        std::to_string(allocated) + Policy::resource_values(baseline_sample) +
-        "\n";
-    m_resource_trace_ofs << baseline;
+    m_resource_trace_ofs << resource_trace_row(baseline_sample);
   }
   m_has_resource_recording_baseline = false;
 }
@@ -826,18 +895,8 @@ template <typename Policy> void BasicTrace<Policy>::flush_resource_history() {
   if (redis_resource_active) {
     m_redis_output->append_resource_trace(
         m_ctx.m_resource_history.cbegin(), m_ctx.m_resource_history.cend(),
-        [](const resource_sample_t &sample) {
-          RedisResourceRecord record{convert_epoch<sim_time_t>(sample.time),
-                                     sample.allocated < sample.capacity
-                                         ? sample.capacity - sample.allocated
-                                         : 0,
-                                     sample.allocated, std::nullopt};
-          if constexpr (std::is_same_v<resource_sample_t,
-                                       Pcon_Resource_Sample>) {
-            record.pcon = RedisPconValues{
-                sample.pcon.avgpcon, sample.pcon.minpcon, sample.pcon.maxpcon};
-          }
-          return record;
+        [this](const resource_sample_t &sample) {
+          return to_redis_resource_record(sample);
         });
     m_ctx.m_resource_history.clear();
     return;
@@ -849,13 +908,7 @@ template <typename Policy> void BasicTrace<Policy>::flush_resource_history() {
   buf.reserve(blk_sz + 4096);
 
   for (const auto &sample : m_ctx.m_resource_history) {
-    const sim_time_t sample_time = convert_epoch<sim_time_t>(sample.time);
-    const num_nodes_t free_nodes = sample.allocated < sample.capacity
-                                       ? sample.capacity - sample.allocated
-                                       : 0;
-    buf += format_sim_time(sample_time, m_resource_trace_msec) + "," +
-           std::to_string(free_nodes) + "," + std::to_string(sample.allocated) +
-           Policy::resource_values(sample) + "\n";
+    buf += resource_trace_row(sample);
     if (buf.size() >= blk_sz) {
       m_resource_trace_ofs << buf;
       buf.clear();
@@ -877,8 +930,7 @@ void BasicTrace<Policy>::record_resource_sample(const epoch_t &time,
     // in one batch, rather than reclaiming one at a time.
     flush_resource_history();
   }
-  m_ctx.m_resource_history.push_back(
-      this->sample(time, allocated, m_resource_trace_current_capacity));
+  m_ctx.m_resource_history.push_back(make_resource_sample(time, allocated));
 }
 
 template <typename Policy>

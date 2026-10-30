@@ -164,6 +164,14 @@ jobs:
           echo "========================================"
           ./tests/run_scheduler_correctness_tests.sh
 
+      - name: Run Node Release Delay Tests
+        id: node-release-delay
+        run: |
+          echo "========================================"
+          echo "Running Node Release Delay Tests (34 differential + 3 option checks)"
+          echo "========================================"
+          ./tests/run_node_release_delay_tests.sh
+
       - name: Run Queue Implementation Differential Tests
         id: queue-impl
         run: |

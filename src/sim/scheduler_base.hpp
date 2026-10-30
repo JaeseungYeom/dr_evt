@@ -54,6 +54,9 @@ protected:
   BackfillPolicy m_backfill_policy;
   /// Projected earliest start time reserved for the FCFS queue head.
   sim_time_t m_fcfs_reservation_time;
+  /// Active node release delay the simulation planned releases with, or null
+  /// when nodes are reusable at a job's end. Non-owning; the Trace owns it.
+  const Node_Release_Delay *m_release_delay = nullptr;
 
 public:
   /**
@@ -67,6 +70,17 @@ public:
 
   /** @brief Destroy a scheduler through its polymorphic base interface. */
   virtual ~SchedulerBase() = default;
+
+  /**
+   * @brief Plan node releases with a node release delay.
+   * @details Projected releases of jobs this scheduler starts, and the
+   * backfill-window test for candidates, then add the model's expected delay
+   * for each job's node count. Pass null to plan releases at job end.
+   * @param[in] model Active model owned by the simulation's Trace, or null.
+   */
+  void set_node_release_delay(const Node_Release_Delay *model) {
+    m_release_delay = model;
+  }
 
   /**
    * @brief Enqueue an already-validated job in this scheduler's wait queue.
@@ -223,6 +237,20 @@ protected:
    * @return Total jobs in the wait queue as size_t, including removed entries.
    */
   virtual size_t wait_queue_size() const = 0;
+
+  /**
+   * @brief Time from a job's start until its nodes are reusable, as planned.
+   * @details The run-time estimate plus the expected node release delay for
+   * the job's size; just the estimate when no delay is configured.
+   * @param[in] run_time_estimate Time-limit estimate of the job.
+   * @param[in] nodes Node count of the job.
+   * @return Planned release offset in seconds.
+   */
+  tdiff_t release_estimate(tdiff_t run_time_estimate, num_nodes_t nodes) const {
+    return m_release_delay == nullptr
+               ? run_time_estimate
+               : run_time_estimate + m_release_delay->planning_delay(nodes);
+  }
 
   /**
    * @brief Project when the first FCFS job can obtain its requested nodes.

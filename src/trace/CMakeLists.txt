@@ -8,6 +8,7 @@ set_full_path(THIS_DIR_HEADERS
     job_record.hpp
     job_stat_submit.hpp
     job_stat_texec.hpp
+    node_release_delay.hpp
     parse_utils.hpp
     trace.hpp
     trace_policy.hpp
@@ -20,6 +21,7 @@ set_full_path(THIS_DIR_SOURCES
     job_io.cpp
     job_record.cpp
     job_stat_submit.cpp
+    node_release_delay.cpp
     parse_utils.cpp
     trace.cpp
     trace_policy.cpp

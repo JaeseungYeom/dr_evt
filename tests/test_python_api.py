@@ -172,6 +172,13 @@ def test_sim_params(result):
         params.backfill_policy = dr_evt.BackfillPolicy.EASY
         params.num_max_candidates = 8
         params.priority_policy = dr_evt.PriorityPolicy.FCFS
+        params.node_release_delay = 30.0
+        params.node_release_delay_model = dr_evt.ReleaseDelayModel.EXPONENTIAL
+        params.node_release_delay_spread = 0.0
+        assert params.node_release_delay == 30.0
+        assert params.node_release_delay_model == dr_evt.ReleaseDelayModel.EXPONENTIAL
+        params.node_release_delay = 0.0
+        params.node_release_delay_model = dr_evt.ReleaseDelayModel.CONSTANT
         params.verbose = False
 
         result.record_pass("SimParams creation and configuration")

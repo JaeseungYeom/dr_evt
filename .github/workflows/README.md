@@ -13,6 +13,8 @@ This directory contains GitHub Actions workflows for automated testing.
 
 **What it runs:**
 - Scheduler correctness tests (34) - `tests/run_scheduler_correctness_tests.sh`
+- Node release delay tests (34 differential + 3 option checks) -
+  `tests/run_node_release_delay_tests.sh`
 - Queue implementation differential tests
 - Column alias tests (8)
 - Run-time mode tests (8)
@@ -24,7 +26,7 @@ This directory contains GitHub Actions workflows for automated testing.
 - Job-store tests (6)
 - Config tests (14), including power-usage `trace_type`, capacity-schedule,
   and warm-start coverage
-- Native CTest suite (19 native registrations, the Python trace-tools and
+- Native CTest suite (21 native registrations, the Python trace-tools and
   multi-cluster dispatch registrations, and the MPI streaming and MPI dispatch
   registrations when MPI is available), including the
   custom FCFS scheduler's focused and 2,000-job comparisons
@@ -57,6 +59,7 @@ This directory contains GitHub Actions workflows for automated testing.
 
 **What it runs:**
 - Scheduler correctness fixtures (34) - `tests/run_scheduler_correctness_tests.sh`
+- Node release delay differential tests (34 + 3) - `tests/run_node_release_delay_tests.sh`
 - Ser20 caller-owned-memory serialization test - installed `t_state_ser20`
 - Progressive-loading C++ API test - installed `test_progressive_load`
 - Queue-input schema test - installed `test_queue_input`
@@ -87,7 +90,7 @@ Total tests referenced by the full suite:
 | Resource history | 5 | CI runner |
 | Job store | 6 | CI runner |
 | Config | 14 | CI runner; includes power-usage, capacity-schedule, and warm-start configuration coverage |
-| Native CTest | 19 native, 2 Python, plus 2 with MPI | CI runner; RNG and binary serialization, trace policies, replay reclamation, custom scheduling, append/streaming APIs, warm starts, capacity parsing, queues, CLI dispatch, and SWF input |
+| Native CTest | 21 native, 2 Python, plus 2 with MPI | CI runner; RNG and binary serialization, trace policies, replay reclamation, custom scheduling, append/streaming APIs, warm starts, node release delay, capacity parsing, queues, CLI dispatch, and SWF input |
 | Trace tools | 4 checks in 1 CTest registration | CI runner; capacity inference, simulator-format conversion, checkpoint output stitching, and warm-start boundary/output behavior |
 | Python API | 20 | CI runner |
 | Market package | 12 | CI runner; platforms, jobs and trace preparation |

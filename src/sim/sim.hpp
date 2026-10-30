@@ -112,6 +112,8 @@ protected:
   tdiff_t m_warm_resource_area;
   /// Latest departure among historical jobs active after the boundary.
   sim_time_t m_warm_resource_end;
+  /// Ended jobs still held in m_running_jobs until their node release.
+  size_t m_jobs_releasing;
 
   /// Serializable random-number engine used for duration sampling.
   RNGen<> m_rng;
@@ -458,8 +460,24 @@ public:
    * @return Unallocated-node count as num_nodes_t.
    */
   num_nodes_t get_available_nodes() const {
-    const auto used = get_nodes_in_use();
-    return used < m_current_capacity ? m_current_capacity - used : 0;
+    const auto occupied = get_nodes_occupied();
+    return occupied < m_current_capacity ? m_current_capacity - occupied : 0;
+  }
+
+  /**
+   * @brief Nodes whose job has ended but which are not yet reusable.
+   * @details Nonzero only with a node release delay (see
+   * Sim_Params::m_node_release_delay). These nodes are neither in use nor
+   * available.
+   * @return Releasing-node count as num_nodes_t.
+   */
+  num_nodes_t get_nodes_releasing() const {
+    return m_trace.get_nodes_releasing();
+  }
+
+  /** @brief Nodes unavailable to new starts: in use plus releasing. */
+  num_nodes_t get_nodes_occupied() const {
+    return m_trace.get_nodes_occupied();
   }
 
   /** @brief Capacity currently available to this simulated workload. */
@@ -792,6 +810,29 @@ protected:
 
   /** Reset the capacity cursor to the configured maximum. */
   void reset_capacity_schedule();
+
+  /** Install the configured node release delay in the trace and scheduler. */
+  void configure_node_release_delay();
+
+  /**
+   * Run time the scheduler plans a release against: the estimate plus the
+   * expected node release delay for the job's size.
+   */
+  tdiff_t planning_run_time(tdiff_t run_time_estimate,
+                            num_nodes_t nodes) const {
+    return run_time_estimate +
+           m_trace.node_release_delay().planning_delay(nodes);
+  }
+
+  /**
+   * Nodes not running work, for Custom-FCFS resource-area accounting.
+   * Releasing nodes are not utilization, so they count as available here even
+   * though the scheduler cannot allocate them yet.
+   */
+  num_nodes_t accounting_available_nodes() const {
+    const auto used = get_nodes_in_use();
+    return used < m_current_capacity ? m_current_capacity - used : 0;
+  }
 
   /** Reset time-integrated effective-capacity accounting at start_time. */
   void reset_capacity_accounting(sim_time_t start_time);

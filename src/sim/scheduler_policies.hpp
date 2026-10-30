@@ -80,6 +80,23 @@ enum class RunTimeMode {
 };
 
 /**
+ * @brief Model of the delay between a job's end and the moment its nodes can
+ * be allocated again (cleanup, reboot, health check).
+ * @details A job's nodes are released together when its slowest node has
+ * finished cleaning up. Under CONSTANT every node takes the configured delay.
+ * Under the other models each node's cleanup time is an independent draw, so
+ * the job's delay is the maximum over its node count and grows with job size.
+ * The scheduler plans with the expected delay for the job's node count; a
+ * zero configured delay disables the model.
+ */
+enum class ReleaseDelayModel {
+  CONSTANT, ///< Every job's nodes return exactly `delay` seconds after it ends.
+  EXPONENTIAL, ///< Per-node cleanup exponential with mean `delay`.
+  UNIFORM ///< Per-node cleanup uniform on [delay - spread, delay + spread],
+          ///< floored at zero.
+};
+
+/**
  * @brief Statistical distribution for sampling job run_times
  *
  * Used when RunTimeMode::DISTRIBUTION is selected.

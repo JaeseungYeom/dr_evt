@@ -123,6 +123,16 @@ message DR_EVT_Params {
         // Waiting jobs that hold reservations under backfill_policy
         // "hybrid"; must be positive with hybrid and is ignored otherwise.
         uint64 reservation_depth = 37;
+
+        // Seconds a job's nodes stay unavailable after it ends before another
+        // job can start on them (default 0: reusable at the job's end). Not
+        // applied to replayed history.
+        double node_release_delay = 38;
+        // "constant" (default), "exponential", or "uniform": per-node cleanup
+        // time whose maximum over the job's nodes is the job's delay.
+        string node_release_delay_model = 39;
+        // Half-width of the uniform per-node cleanup time; ignored otherwise.
+        double node_release_delay_spread = 40;
     }
 
     message Tracing_Params {
