@@ -58,6 +58,8 @@ public:
    * @param[in] initial_capacity Initial queue capacity; zero uses job count.
    * @param[in] overflow_policy Action when the queue is full.
    * @param[in] reservation_depth Reservations retained by hybrid backfill.
+   * @param[in] backfill_queue_depth Eligible waiting jobs examined per
+   * backfill pass; zero is unlimited.
    */
   CircularBufferFCFSConservativeScheduler(
       num_nodes_t total_nodes, size_t initial_job_count,

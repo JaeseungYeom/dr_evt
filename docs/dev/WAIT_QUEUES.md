@@ -78,6 +78,23 @@ population standard deviation.
 | **`circular`** | **14.6416 ± 0.0076** | **0.94×** | **−6.2%** | **PASS** |
 | Python reference | 420.5650 ± 1.0565 | 26.93× | +2,593% | PASS |
 
+Reproduce the current benchmark modes with:
+
+```bash
+# EASY and hybrid, using the default trace
+tests/benchmark_wait_queues.sh
+
+# EASY only, using the 2,000-job trace
+tests/benchmark_wait_queues.sh --backfill-policy easy \
+  tests/test_traces/scale/huge_2000jobs.csv
+
+# Hybrid only, with the recorded depth settings
+tests/benchmark_wait_queues.sh --backfill-policy hybrid \
+  --reservation-depth 32 \
+  --backfill-queue-depth 32 \
+  tests/test_traces/scale/huge_2000jobs.csv
+```
+
 Run the same benchmark with:
 
 ```bash

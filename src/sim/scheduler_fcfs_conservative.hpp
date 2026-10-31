@@ -77,7 +77,9 @@ public:
    * @param[in] bf_policy Backfill setting; conservative and hybrid behavior
    * are implemented by this class.
    * @param[in] reservation_depth Number of waiting jobs, in queue order, that
-   * hold reservations under HYBRID backfilling; ignored otherwise. */
+   * hold reservations under HYBRID backfilling; ignored otherwise.
+   * @param[in] backfill_queue_depth Eligible waiting jobs examined per
+   * backfill pass; zero is unlimited. */
   FCFSConservativeScheduler(num_nodes_t total_nodes, BackfillPolicy bf_policy,
                             size_t reservation_depth = 0,
                             size_t backfill_queue_depth = 0)

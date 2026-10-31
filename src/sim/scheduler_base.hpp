@@ -292,6 +292,8 @@ protected:
  * @param[in] wait_queue_overflow Behavior when a circular queue is full.
  * @param[in] reservation_depth Waiting jobs that hold reservations under
  * HYBRID backfilling; must be positive with HYBRID and is ignored otherwise.
+ * @param[in] backfill_queue_depth Eligible waiting jobs examined per hybrid
+ * or conservative backfill pass; zero is unlimited.
  * @return Owning pointer to a SchedulerBase implementation.
  * @throws std::invalid_argument if HYBRID is requested with a zero depth or
  * with a non-FCFS priority policy.
