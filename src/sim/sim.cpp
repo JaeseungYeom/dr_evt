@@ -62,7 +62,8 @@ timeout_t checked_streaming_limit(tdiff_t limit_time) {
 constexpr std::array<char, 8> checkpoint_magic{'D', 'R', 'E', 'V',
                                                'T', 'C', 'K', 'P'};
 constexpr std::uint32_t checkpoint_version =
-    12; // 10: full Sim_Params; 11: reservation_depth; 12: node release delay
+    13; // 11: reservation_depth; 12: node release delay; 13: scalar event
+        // and resource-sample times
 
 /// Trace policy identifier stored in a checkpoint so a file written by one
 /// trace type is not restored into another.
@@ -733,7 +734,7 @@ void BasicSimulation<TraceType>::run_warm_start() {
   // are suppressed before Trace can run any output/reclamation hook.
   while (!m_trace.pending_events().empty()) {
     const auto event = *m_trace.pending_events().begin();
-    const sim_time_t event_time = convert_epoch<sim_time_t>(event.get_time());
+    const sim_time_t event_time = event.get_time();
     if (event_time > sim_start_time) {
       break;
     }
@@ -1238,7 +1239,7 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
     writer.value(static_cast<std::uint64_t>(m_event_queue.size()));
     for (const auto &event : m_event_queue) {
       writer.value(event.get_job_idx());
-      write_epoch(writer, event.get_time());
+      writer.value(event.get_time());
       writer.enumeration(event.get_type());
       writer.value(event.get_nodes());
     }
@@ -1307,7 +1308,7 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
     writer.value(static_cast<std::uint64_t>(m_trace.m_ctx.m_evtq.size()));
     for (const auto &event : m_trace.m_ctx.m_evtq) {
       writer.value(event.get_job_idx());
-      write_epoch(writer, event.get_time());
+      writer.value(event.get_time());
       writer.enumeration(event.get_type());
       writer.value(event.get_nodes());
     }
@@ -1319,7 +1320,7 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
     writer.value(
         static_cast<std::uint64_t>(m_trace.m_ctx.m_resource_history.size()));
     for (const auto &sample : m_trace.m_ctx.m_resource_history) {
-      write_epoch(writer, sample.time);
+      writer.value(sample.time);
       writer.value(sample.allocated);
       writer.value(sample.capacity);
       writer.value(sample.releasing);
@@ -1333,7 +1334,7 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
     writer.value(m_trace.m_resource_trace_current_capacity);
     writer.value(m_trace.m_resource_capacity_initialized);
     writer.value(m_trace.m_resource_recording_start);
-    write_epoch(writer, m_trace.m_resource_recording_baseline.time);
+    writer.value(m_trace.m_resource_recording_baseline.time);
     writer.value(m_trace.m_resource_recording_baseline.allocated);
     writer.value(m_trace.m_resource_recording_baseline.capacity);
     writer.value(m_trace.m_resource_recording_baseline.releasing);
@@ -1609,7 +1610,7 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
     m_event_queue.clear();
     for (size_t i = 0, count = reader.count(); i < count; ++i) {
       const auto job_id = reader.value<job_no_t>();
-      const auto time = read_epoch(reader);
+      const auto time = reader.value<sim_time_t>();
       const auto type = reader.enumeration<DR_Event_Kind>();
       const auto nodes = reader.value<num_nodes_t>();
       if (type == node_release) {
@@ -1712,7 +1713,7 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
     m_trace.m_ctx.m_evtq.clear();
     for (size_t i = 0, count = reader.count(); i < count; ++i) {
       const auto job_id = reader.value<job_no_t>();
-      const auto time = read_epoch(reader);
+      const auto time = reader.value<sim_time_t>();
       const auto type = reader.enumeration<DR_Event_Kind>();
       const auto nodes = reader.value<num_nodes_t>();
       if (type == node_release) {
@@ -1733,7 +1734,7 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
     m_trace.m_ctx.m_resource_history.clear();
     m_trace.m_ctx.m_resource_history.set_capacity(resource_capacity);
     for (size_t i = 0; i < resource_count; ++i) {
-      const auto time = read_epoch(reader);
+      const auto time = reader.value<sim_time_t>();
       const auto allocated = reader.value<num_nodes_t>();
       const auto capacity = reader.value<num_nodes_t>();
       const auto releasing = reader.value<num_nodes_t>();
@@ -1751,7 +1752,7 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
     m_trace.m_resource_trace_current_capacity = reader.value<num_nodes_t>();
     m_trace.m_resource_capacity_initialized = reader.value<bool>();
     m_trace.m_resource_recording_start = reader.value<sim_time_t>();
-    m_trace.m_resource_recording_baseline.time = read_epoch(reader);
+    m_trace.m_resource_recording_baseline.time = reader.value<sim_time_t>();
     m_trace.m_resource_recording_baseline.allocated =
         reader.value<num_nodes_t>();
     m_trace.m_resource_recording_baseline.capacity =
@@ -2489,7 +2490,7 @@ void BasicSimulation<TraceType>::advance_to_impl(
     [[maybe_unused]] bool next_is_start = false;
     if (has_replay_event) {
       const auto &event = *m_trace.pending_events().begin();
-      next_replay_time = convert_epoch<sim_time_t>(event.get_time());
+      next_replay_time = event.get_time();
       next_is_start = event.is_arrival();
     }
 
@@ -2521,7 +2522,7 @@ void BasicSimulation<TraceType>::advance_to_impl(
 
       while (!m_trace.pending_events().empty()) {
         const auto &event = *m_trace.pending_events().begin();
-        sim_time_t event_time = convert_epoch<sim_time_t>(event.get_time());
+        const sim_time_t event_time = event.get_time();
 
         if (event_time != m_current_time) {
           break; // No more events at current_time
@@ -2676,7 +2677,7 @@ void BasicSimulation<TraceType>::advance_to_impl(
           // sample internally (Trace's own Context).
           while (!m_trace.pending_events().empty()) {
             const auto &event = *m_trace.pending_events().begin();
-            sim_time_t event_time = convert_epoch<sim_time_t>(event.get_time());
+            const sim_time_t event_time = event.get_time();
 
             // Only process START events at current_time for this job
             if (event_time != m_current_time)

@@ -14,6 +14,7 @@
 
 #include "common.hpp"
 #include "trace/epoch.hpp"
+#include "trace/event_pool_allocator.hpp"
 #include <set>
 
 namespace dr_evt {
@@ -24,15 +25,18 @@ namespace dr_evt {
  * @brief A scheduled start, end, or node-release event for one trace job.
  * @details Events are ordered by timestamp, event kind, and job identifier so
  * an event_q_t can process resource-state transitions deterministically.
- * A node-release event carries its own node count: its job record may already
- * have been written out and reclaimed by the time the release is processed.
+ * The timestamp is the simulation clock's own scalar type: it is converted
+ * from a job record's epoch_t once, when the event is created, so the event
+ * loop compares a single value and never re-derives it. A node-release event
+ * carries its own node count: its job record may already have been written
+ * out and reclaimed by the time the release is processed.
  */
 class DR_Event {
 protected:
   /// Trace job identifier affected by this event.
   job_no_t m_jidx;
-  /// Timestamp at which the resource transition occurs.
-  epoch_t m_t;
+  /// Simulation time at which the resource transition occurs.
+  sim_time_t m_t;
   /// Nodes returned to service by a release event; zero for other kinds.
   num_nodes_t m_nodes;
   /// Event kind: start, end, or delayed node release.
@@ -43,20 +47,22 @@ public:
    * @param[in] idx Trace job identifier.
    * @param[in] t Event timestamp.
    * @param[in] type Event kind. */
-  DR_Event(job_no_t idx, const epoch_t &t, DR_Event_Kind type)
+  DR_Event(job_no_t idx, sim_time_t t, DR_Event_Kind type)
       : m_jidx(idx), m_t(t), m_nodes(static_cast<num_nodes_t>(0u)),
         m_type(type) {}
 
   /// The kind is an enumeration; a bool (the former representation) would
-  /// otherwise convert to a node count and build a release event.
-  DR_Event(job_no_t idx, const epoch_t &t, bool) = delete;
+  /// otherwise convert silently.
+  DR_Event(job_no_t idx, sim_time_t t, bool) = delete;
+  /// Timestamps are scalar; convert an epoch_t with convert_epoch() first.
+  DR_Event(job_no_t idx, const epoch_t &t, DR_Event_Kind type) = delete;
 
   /** @brief Build a node-release event.
    * @param[in] idx Trace job identifier whose nodes are released.
    * @param[in] t Time at which the nodes become reusable.
    * @param[in] nodes Node count returned to service at @p t.
    * @return Event of kind DR_Event_Kind::release carrying @p nodes. */
-  static DR_Event release(job_no_t idx, const epoch_t &t, num_nodes_t nodes) {
+  static DR_Event release(job_no_t idx, sim_time_t t, num_nodes_t nodes) {
     DR_Event event(idx, t, node_release);
     event.m_nodes = nodes;
     return event;
@@ -70,8 +76,8 @@ public:
   /** @brief Return the affected Trace job identifier. @return job_no_t value.
    */
   job_no_t get_job_idx() const { return m_jidx; }
-  /** @brief Return the event timestamp. @return Const reference to epoch_t. */
-  const epoch_t &get_time() const { return m_t; }
+  /** @brief Return the event time. @return Simulation time in seconds. */
+  sim_time_t get_time() const { return m_t; }
   /** @brief Return the event kind. @return DR_Event_Kind value. */
   DR_Event_Kind get_type() const { return m_type; }
   /** @brief Return the node count carried by a release event.
@@ -116,7 +122,12 @@ inline bool operator==(const DR_Event &e1, const DR_Event &e2) {
 std::ostream &operator<<(std::ostream &os, const DR_Event &evt);
 
 /// Ordered set used as the simulation event queue.
-using event_q_t = std::set<DR_Event>;
+/// @details Each queue owns a fixed-size node pool (see
+/// event_pool_allocator.hpp): tree nodes come from blocks of exactly the node
+/// size instead of general-purpose malloc, whose size-class placement
+/// measurably affects the event loop's cache behavior.
+using event_q_t =
+    std::set<DR_Event, std::less<DR_Event>, Event_Pool_Allocator<DR_Event>>;
 
 /**@}*/
 } // end of namespace dr_evt

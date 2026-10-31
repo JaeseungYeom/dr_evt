@@ -42,7 +42,7 @@ are preserved.
 | Job store | Stable job ID, submit time, requested nodes, queue, time limit, actual runtime, start time, end time | Preserve input order for equal submission times and retain completed records until their output rows are consumed. |
 | Scheduler wait queue | Job ID plus copied submission, node, and runtime-estimate fields | Distinguish future arrivals from arrived jobs and remove a job exactly once when selected. |
 | Running jobs | Job ID, start time, requested nodes, and time-limit estimate | Supply projected releases for backfill reservations and monitoring queries. |
-| Resource-event queue | Job ID, timestamp, and kind: start, end, or node release (a release also carries its node count) | Sort by timestamp, then end before release before start, then stable job ID. |
+| Resource-event queue | Job ID, simulation time (one scalar, converted from the record's epoch fields when the event is created), and kind: start, end, or node release (a release also carries its node count) | Sort by time, then end before release before start, then stable job ID. |
 | Resource state | Total nodes, allocated nodes, releasing nodes (ended, not yet reusable), and optional trace-policy fields | Apply one allocation or release transition per event and reject underflow or over-allocation. |
 | Output state | Scheduled-job cursor, resource-history buffer, and aggregate statistics | Write each eligible job exactly once, even when its in-memory record is later reclaimed. |
 | Simulation clock | Current logical time | Never move backward; advancing through an idle interval still updates the clock to the requested target. |

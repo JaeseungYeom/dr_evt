@@ -53,8 +53,12 @@ public:
 
   void enqueue_replay_job(dr_evt::job_no_t job_no) {
     const auto &job = job_at(job_no);
-    m_ctx.m_evtq.emplace(job_no, job.get_begin_time(), dr_evt::arrival);
-    m_ctx.m_evtq.emplace(job_no, job.get_end_time(), dr_evt::departure);
+    m_ctx.m_evtq.emplace(
+        job_no, dr_evt::convert_epoch<dr_evt::sim_time_t>(job.get_begin_time()),
+        dr_evt::arrival);
+    m_ctx.m_evtq.emplace(
+        job_no, dr_evt::convert_epoch<dr_evt::sim_time_t>(job.get_end_time()),
+        dr_evt::departure);
     m_replay_jobs_enqueued = static_cast<size_t>(job_no) + 1;
   }
 };

@@ -39,11 +39,11 @@ bool expect_line(std::istream &input, const std::string &expected) {
 } // namespace
 
 int main() {
-  // One timestamp plus three node counts (allocated, capacity, releasing),
-  // padded to the timestamp's alignment. Guards against the sample growing
-  // any further, since the resource history buffers many of them.
+  // One scalar timestamp plus three node counts (allocated, capacity,
+  // releasing), padded to the timestamp's alignment: 24 bytes. Guards against
+  // the sample growing, since the resource history buffers many of them.
   static_assert(sizeof(dr_evt::Standard_Resource_Sample) ==
-                2 * sizeof(dr_evt::epoch_t));
+                3 * sizeof(dr_evt::sim_time_t));
   static_assert(std::is_same_v<dr_evt::Trace::trace_data_t,
                                boost::circular_buffer<dr_evt::Job_Record>>);
   static_assert(sizeof(dr_evt::Trace::trace_data_t::value_type) ==
