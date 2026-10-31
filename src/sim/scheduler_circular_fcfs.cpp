@@ -108,6 +108,12 @@ CircularBufferFCFSScheduler::schedule(num_nodes_t free_nodes,
       m_wait_queue.front().nodes_requested, available_nodes,
       effective_running_jobs, current_time);
 
+  // Preserve the head-reservation snapshot, then avoid a scan that cannot
+  // start a backfill job without free nodes.
+  if (available_nodes == 0) {
+    return jobs_to_run;
+  }
+
   // Try backfilling with remaining eligible jobs. These can be at any
   // position (not just the front), so pop_front() doesn't apply here -
   // keep the lazy mark-and-defer-to-GC removal for this part.

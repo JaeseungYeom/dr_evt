@@ -285,6 +285,7 @@ public:
           if (r.wait_queue_capacity() != 0)
             sp.m_wait_queue_capacity = r.wait_queue_capacity();
           sp.m_reservation_depth = r.reservation_depth();
+          sp.m_backfill_queue_depth = r.backfill_queue_depth();
 
           if (!r.node_release_delay_model().empty() &&
               !dr_evt::set_release_delay_model(sp.m_node_release_delay_model,

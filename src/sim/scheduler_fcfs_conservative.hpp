@@ -30,13 +30,9 @@ namespace dr_evt {
  *   Fluxion's hybrid queue policy.
  * - NONE: No backfilling (strict FCFS order)
  *
- * Based on FCFSScheduler with the same deque-based iterator tracking
- * optimization.
- *
- * NOTE: Currently only std::deque implementation exists. For optimal
- * performance, a CircularBufferFCFSConservativeScheduler should be implemented
- * (similar to CircularBufferFCFSScheduler) as circular buffer provides ~10-15%
- * better performance than deque for FCFS scheduling.
+ * This is the deque-backed implementation. The default conservative scheduler
+ * uses CircularBufferFCFSConservativeScheduler; select
+ * QueueImplementation::DEQUE to retain this unbounded queue.
  */
 class FCFSConservativeScheduler : public SchedulerBase {
 private:
@@ -73,6 +69,7 @@ private:
   size_t m_removed_count;
   /// Waiting jobs that hold reservations under HYBRID backfilling.
   size_t m_reservation_depth;
+  size_t m_backfill_queue_depth;
 
 public:
   /** @brief Construct a conservative-backfill FCFS scheduler.
@@ -80,12 +77,16 @@ public:
    * @param[in] bf_policy Backfill setting; conservative and hybrid behavior
    * are implemented by this class.
    * @param[in] reservation_depth Number of waiting jobs, in queue order, that
-   * hold reservations under HYBRID backfilling; ignored otherwise. */
+   * hold reservations under HYBRID backfilling; ignored otherwise.
+   * @param[in] backfill_queue_depth Eligible waiting jobs examined per
+   * backfill pass; zero is unlimited. */
   FCFSConservativeScheduler(num_nodes_t total_nodes, BackfillPolicy bf_policy,
-                            size_t reservation_depth = 0)
+                            size_t reservation_depth = 0,
+                            size_t backfill_queue_depth = 0)
       : SchedulerBase(total_nodes, bf_policy), m_eligible_end_idx(0),
         m_current_tracked_time(0.0), m_removed_count(0),
-        m_reservation_depth(reservation_depth) {}
+        m_reservation_depth(reservation_depth),
+        m_backfill_queue_depth(backfill_queue_depth) {}
 
   /** @copydoc SchedulerBase::insert_job */
   void insert_job(job_no_t job_id, sim_time_t submit_time,

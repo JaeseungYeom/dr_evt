@@ -49,9 +49,8 @@ sim_time_t FCFSConservativeScheduler::calculate_conservative_window(
   // Check the reserved jobs ahead of this backfill candidate: every waiting
   // job ahead of it under CONSERVATIVE, or only the first
   // m_reservation_depth of them under HYBRID.
-  const size_t depth = m_backfill_policy == BackfillPolicy::HYBRID
-                           ? m_reservation_depth
-                           : 0;
+  const size_t depth =
+      m_backfill_policy == BackfillPolicy::HYBRID ? m_reservation_depth : 0;
   size_t reserved = 0;
   for (size_t i = 0; i < backfill_index; ++i) {
     const auto &job = m_wait_queue[i];
@@ -143,6 +142,12 @@ FCFSConservativeScheduler::schedule(num_nodes_t free_nodes,
         m_wait_queue.front().nodes_requested, available_nodes,
         effective_running_jobs, current_time);
 
+    // The reservation remains part of the public FCFS snapshot. No candidate
+    // can start when FCFS has consumed all free nodes.
+    if (available_nodes == 0) {
+      return jobs_to_run;
+    }
+
     // Try backfilling with remaining eligible jobs
     for (size_t i = 1; i < m_eligible_end_idx; ++i) {
       const auto &job = m_wait_queue[i];
@@ -168,14 +173,22 @@ FCFSConservativeScheduler::schedule(num_nodes_t free_nodes,
     }
   } else if (m_backfill_policy == BackfillPolicy::CONSERVATIVE ||
              m_backfill_policy == BackfillPolicy::HYBRID) {
+    if (available_nodes == 0) {
+      return jobs_to_run;
+    }
+
     // CONSERVATIVE backfilling: Must not delay ANY waiting job.
     // HYBRID: must not delay the first m_reservation_depth waiting jobs.
 
-    // Try backfilling with jobs that won't delay anyone ahead of them
+    // Try backfilling with jobs that won't delay anyone ahead of them.
+    size_t examined = 1; // The blocked FCFS head is the first examined job.
     for (size_t i = 1; i < m_eligible_end_idx; ++i) {
       const auto &job = m_wait_queue[i];
       if (job.removed)
         continue;
+      if (m_backfill_queue_depth != 0 && examined >= m_backfill_queue_depth)
+        break;
+      ++examined;
 
       // Check resource fit
       if (job.nodes_requested > available_nodes)

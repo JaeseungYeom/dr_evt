@@ -26,12 +26,16 @@ FCFS with EASY backfilling on an Intel Sapphire Rapids node (112 cores,
 256 GB memory). Values are the mean of 10 end-to-end runs; `±` is the
 population standard deviation.
 
-**Benchmark script:** [`tests/benchmark_block_sizes.sh`](../../tests/benchmark_block_sizes.sh)
+**Benchmark script:** [`tests/benchmark_wait_queues.sh`](../../tests/benchmark_wait_queues.sh)
 
 The timing includes trace parsing, scheduling and backfilling, event handling,
 and trace output. It is not an isolated wait-queue microbenchmark. The queue
 implementation is the intended variable, but the complete difference cannot be
 attributed solely to queue operations.
+
+These measurements characterize this workload and configuration only. Results
+can change with the trace's arrival pattern, job sizes and durations, queue
+depth, backfill policy, and machine.
 
 For sampled hot-path measurements within the circular FCFS scheduler, see
 [Performance Analysis](PERFORMANCE_ANALYSIS.md). That profile complements this
@@ -42,17 +46,17 @@ should not be compared numerically.
 
 | Implementation | Time (s) | vs deque | Change | Peak queue | Correctness |
 | --- | ---: | ---: | ---: | ---: | --- |
-| `deque` | 0.4735 ± 0.0173 | 1.00× | baseline | 8,904 | baseline |
-| `multimap` | 7.4367 ± 0.0420 | 15.71× | +1,471% | 8,904 | PASS |
-| **`circular`** | **0.3238 ± 0.0035** | **0.68×** | **−32%** | **8,904** | **PASS** |
-| Python reference | 7.5574 ± 0.0124 | 15.96× | +1,496% | N/A | PASS |
-| `block`-4 | 0.4293 ± 0.0022 | 0.91× | −9% | 8,904 | PASS |
-| `block`-8 | 0.3753 ± 0.0005 | 0.79× | −21% | 8,904 | PASS |
-| `block`-16 | 0.3570 ± 0.0006 | 0.75× | −25% | 8,904 | PASS |
-| `block`-32 | 0.3837 ± 0.0014 | 0.81× | −19% | 8,904 | PASS |
-| `block`-64 | 0.3978 ± 0.0022 | 0.84× | −16% | 8,904 | PASS |
-| `block`-128 | 0.4197 ± 0.0021 | 0.89× | −11% | 8,904 | PASS |
-| `block`-256 | 0.4350 ± 0.0036 | 0.92× | −8% | 8,904 | PASS |
+| `deque` | 0.5269 ± 0.0388 | 1.00× | baseline | 8,904 | baseline |
+| `multimap` | 7.2542 ± 0.0307 | 13.77× | +1,277% | 8,904 | PASS |
+| **`circular`** | **0.3144 ± 0.0007** | **0.60×** | **−40%** | **8,904** | **PASS** |
+| Python reference | 7.6404 ± 0.0080 | 14.50× | +1,350% | N/A | PASS |
+| `block`-4 | 0.4217 ± 0.0009 | 0.80× | −20% | 8,904 | PASS |
+| `block`-8 | 0.3730 ± 0.0008 | 0.71× | −29% | 8,904 | PASS |
+| `block`-16 | 0.3586 ± 0.0007 | 0.68× | −32% | 8,904 | PASS |
+| `block`-32 | 0.3766 ± 0.0010 | 0.71× | −29% | 8,904 | PASS |
+| `block`-64 | 0.3956 ± 0.0013 | 0.75× | −25% | 8,904 | PASS |
+| `block`-128 | 0.4149 ± 0.0018 | 0.79× | −21% | 8,904 | PASS |
+| `block`-256 | 0.4607 ± 0.0043 | 0.87× | −13% | 8,904 | PASS |
 
 `circular` was fastest overall, and `block`-16 was the fastest block size.
 
@@ -61,15 +65,90 @@ queue variant, including `multimap`. The Python reference is an end-to-end
 baseline. Its CSV schema is normalized before its job order and start/end times
 are compared with the C++ `deque` schedule using a `0.001` tolerance.
 
+### Conservative backfill result
+
+Five end-to-end runs of `huge_2000jobs.csv` with 500 nodes, full conservative
+backfilling, and `run_time_mode=limit` produced identical C++ schedules. This
+is a separate workload from the EASY table above. Values are means; `±` is the
+population standard deviation.
+
+| Implementation | Time (s) | vs deque | Change | Correctness |
+| --- | ---: | ---: | ---: | --- |
+| `deque` | 15.6164 ± 0.0438 | 1.00× | baseline | baseline |
+| **`circular`** | **14.6416 ± 0.0076** | **0.94×** | **−6.2%** | **PASS** |
+| Python reference | 420.5650 ± 1.0565 | 26.93× | +2,593% | PASS |
+
+### Hybrid backfill result
+
+Ten end-to-end runs of `huge_10000jobs.csv` with 500 nodes,
+`run_time_mode=limit`, reservation depth 32, and queue depth 32 produced
+matching C++ and Python schedules. Values are means; `±` is the population
+standard deviation.
+
+| Implementation | Time (s) | vs deque | Change | Correctness |
+| --- | ---: | ---: | ---: | --- |
+| `deque` | 0.1881 ± 0.0003 | 1.00× | baseline | baseline |
+| **`circular`** | **0.1821 ± 0.0005** | **0.97×** | **−3%** | **PASS** |
+| Python reference | 6.0346 ± 0.0155 | 32.08× | +3,108% | PASS |
+
+Reproduce the current benchmark modes with:
+
+```bash
+# EASY and hybrid, using the default trace
+tests/benchmark_wait_queues.sh
+
+# EASY only, using the 2,000-job trace
+tests/benchmark_wait_queues.sh --backfill-policy easy \
+  tests/test_traces/scale/huge_2000jobs.csv
+
+# Hybrid only, with the recorded depth settings
+tests/benchmark_wait_queues.sh --backfill-policy hybrid \
+  --reservation-depth 32 \
+  --backfill-queue-depth 32 \
+  tests/test_traces/scale/huge_2000jobs.csv
+```
+
 Run the same benchmark with:
 
 ```bash
-tests/benchmark_block_sizes.sh
+tests/benchmark_wait_queues.sh
 ```
 
-The script tests `deque`, `multimap`, `circular`, every supported `block` size,
-and the Python reference. It byte-compares the C++ queue outputs with `deque`
-and compares the normalized Python schedule with `deque` within `0.001`.
+By default the script runs both comparisons. The EASY comparison tests `deque`,
+`multimap`, `circular`, every supported `block` size, and the Python reference.
+The hybrid comparison tests the deque and circular implementations plus the
+Python oracle at queue and reservation depth 32. Each C++ comparison is
+byte-for-byte against its deque baseline; Python schedules use a `0.001` time
+tolerance.
+
+To reproduce only the historical EASY table:
+
+```bash
+tests/benchmark_wait_queues.sh --backfill-policy easy
+```
+
+### Hybrid backfill comparison
+
+Hybrid backfilling protects the first 32 waiting jobs considered in a pass.
+The block and multimap queues do not implement this reservation algorithm, so
+benchmark the deque and circular C++ implementations plus the Python oracle
+separately:
+
+```bash
+tests/benchmark_wait_queues.sh --backfill-policy hybrid
+```
+
+Pass `--reservation-depth N` or `--backfill-queue-depth N` to model a
+deployment-specific setting. Keep the reservation depth no larger than queue
+depth: jobs outside the examined prefix cannot be protected. Slurm's analogous
+`bf_job_part_count_reserve` has no portable default; a depth of `1` matches
+EASY and a depth near the queue length approaches conservative backfilling.
+
+The command byte-compares the C++ deque and circular schedules, then compares
+the Python hybrid schedule with deque using a `0.001` time tolerance. It does
+not replace the EASY results above; record the hybrid results in a separate
+table with the workload, node count, run count, reservation depth, mean, and
+standard deviation.
 
 The unit and differential coverage is listed under
 [Wait-queue tests](https://github.com/LLNL/dr_evt/blob/main/tests/README.md#wait-queue-tests).

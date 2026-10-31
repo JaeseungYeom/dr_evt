@@ -25,10 +25,11 @@ The statements below describe the code, not an idealization of it.
   interval and no polling.
 - **Exact time.** The clock is a floating-point second count. Reservations
   and completion tests use exact times; nothing is rounded to a grid.
-- **Unlimited queue depth and horizon.** Every eligible waiting job is
-  examined in every pass, and a reservation may lie arbitrarily far in the
-  future. The only candidate cap is `num_max_candidates`, which applies to the
-  experimental external selector, not to the built-in policies.
+- **Configurable queue depth; unlimited horizon.** Built-in hybrid and
+  conservative backfill scan every eligible waiting job by default; set
+  `--backfill_queue_depth` to cap that prefix. Reservations may lie
+  arbitrarily far in the future. `num_max_candidates` instead limits feasible
+  jobs offered to the experimental external EASY selector.
 - **Backfill test window.** Under EASY the head's reservation is the earliest
   time enough nodes become free, projected from running jobs' time limits.
   A candidate starts only if it fits the free nodes now and its projected
@@ -56,7 +57,9 @@ The statements below describe the code, not an idealization of it.
 
 Slurm has two schedulers ([`slurm.conf(5)`](https://slurm.schedmd.com/slurm.conf.html),
 `SchedulerType` and `SchedulerParameters`; [Scheduling Configuration
-Guide](https://slurm.schedmd.com/sched_config.html)). The main scheduler
+Guide](https://slurm.schedmd.com/sched_config.html)). The main backfill
+difference is trigger timing: DR_EVT backfills after each relevant event,
+whereas Slurm backfills on its periodic `bf_interval`. Slurm's main scheduler
 "runs in a limited fashion every time that any event happens which could
 enable a job to start (e.g. job submit, job terminate, etc.)", rate-limited
 by `sched_min_interval`, and additionally runs a full pass every
@@ -78,31 +81,20 @@ will be scheduled". It does not backfill. The backfill scheduler
 | `default_queue_depth` | 100 | "The default number of jobs to attempt scheduling when a running job completes or other routine actions occur." |
 | `sched_interval` | 60 s | "How frequently, in seconds, the main scheduling loop will execute and test all pending jobs." |
 
-The consequence is that backfill decisions happen on a 30-second cadence with
-60-second time quantization, over a bounded horizon and a bounded queue
-depth. Between backfill passes, only the quick main scheduler acts, and it
-stops at the first blocked job in each partition.
+Thus Slurm's backfill pass is periodic and bounded by its queue, horizon, and
+time settings; between passes, its main scheduler does not backfill.
 
 ### Flux (Fluxion)
 
-Fluxion's queue manager runs its scheduling loop from the Flux reactor's
-prep/check watchers whenever a queue is schedulable, which becomes true after
-an allocation request (submission), a free (completion), a cancel, a
-reprioritization, or when blocked jobs are reconsidered after a resource
-status change. It is therefore event-driven, like DR_EVT, with two structural
-differences visible in `queue_policy_bf_base_impl.hpp`
+Fluxion is event-driven like DR_EVT: a scheduling-relevant event triggers a
+fresh reservation plan. The relevant differences, visible in
+`queue_policy_bf_base_impl.hpp`
 ([flux-sched at 3b49d19](https://github.com/flux-framework/flux-sched/blob/3b49d1998ed53836618e54188f45b52bc1aac811/qmanager/policies/queue_policy_bf_base_impl.hpp)):
 
-- Every fresh loop first cancels all existing reservations and re-plans the
-  pending queue from the front: each job is allocated if it fits, reserved if
-  it does not and the reservation depth is not yet exhausted, and otherwise
-  skipped. A job that can be neither allocated nor reserved (for example
-  because resources are down) moves to a blocked list until resource status
-  changes.
-- The loop is resumable and bounded. It examines at most `queue-depth`
-  pending jobs per scheduling cycle and yields back to the reactor after six
-  jobs, returning `EAGAIN` so the next check phase continues where it left
-  off. DR_EVT examines the whole eligible queue in one pass.
+- Fluxion examines at most `queue-depth` jobs per cycle and yields after six
+  jobs; DR_EVT processes its configured depth in one pass.
+- Fluxion plans in integer seconds and places jobs on a resource graph;
+  DR_EVT uses exact times and a homogeneous node pool.
 
 Policies and parameters at that commit (`queue_system_defaults.hpp`, the
 policy constructors, and the `flux-config-sched-fluxion-qmanager(5)` page):
@@ -115,10 +107,10 @@ policy constructors, and the `flux-config-sched-fluxion-qmanager(5)` page):
 | `policy-params.max-reservation-depth` | 100,000 | Upper bound on the above. |
 
 DR_EVT's `--backfill_policy easy|hybrid|conservative` with
-`--reservation_depth N` maps directly onto these semantics (1, N, all). The
-remaining differences are the per-cycle `queue-depth` cap, which bounds both
-candidates and reservations, and Fluxion's integer-second planner times
-against DR_EVT's exact clock.
+`--reservation_depth N` maps directly onto these semantics (1, N, all).
+`--backfill_queue_depth` reproduces Fluxion's per-cycle queue-depth cap. A
+reservation depth above queue depth is inactive for that pass; Fluxion's
+default 64 is effectively capped by its default queue depth of 32.
 
 ### IBM Spectrum LSF (Lassen, Sierra)
 
@@ -144,7 +136,7 @@ from it and should be checked against the installed version.
 | Evaluation trigger | Every event, repeated until nothing starts | Main scheduler on events; backfill every `bf_interval` (30 s) | Every event, from the reactor check phase; resumes in chunks of six jobs | Sessions at least `JOB_SCHEDULING_INTERVAL` (5 s) apart | Backfill reacts sooner than in Slurm or LSF |
 | Time resolution | Exact | `bf_resolution` (60 s) grid | 1 s | 1 s class | Slightly more backfill opportunities than grid-based planners |
 | Planning horizon | Unlimited | `bf_window` (1 day) | Unlimited | Bounded by reservation settings | Long reservations are honored that Slurm would not create |
-| Queue depth examined | All eligible jobs | `bf_max_job_test` (500), `default_queue_depth` (100) | `queue-depth` (32 per cycle) | All pending jobs per session | More candidates per decision, more backfill |
+| Queue depth examined | All eligible by default; `backfill_queue_depth` caps hybrid/conservative passes | `bf_max_job_test` (500), `default_queue_depth` (100) | `queue-depth` (32 per cycle) | All pending jobs per session | More candidates per decision, more backfill |
 | Reservation depth | 1 (EASY), N (hybrid), all (conservative) | All tested jobs, or `bf_job_part_count_reserve` | 1 (`easy`), `reservation-depth` (64 default, `hybrid`), queue depth (`conservative`); all reservations re-planned every cycle | Top pending jobs | Comparable when depths are matched |
 | Completion test | Strict: projected end before reservation | Grid-rounded comparison | Second-resolution comparison | Run limit must fit | Marginal cases differ at the resolution boundary |
 | Node reuse after completion | Immediate by default; `--node_release_delay` models cleanup, constant or growing with job size | After epilog; nodes stay COMPLETING | After epilog; `t_inactive` after `t_cleanup` | After post-execution | Optimistic by the cleanup time per job unless the delay is enabled |
@@ -156,8 +148,9 @@ The first four rows compound in the same direction: DR_EVT's backfilling is an
 upper bound on what a production scheduler can extract from the same
 workload. Measured against Slurm and LSF, whose backfill decisions wait for
 the next periodic pass, simulated wait times for backfillable jobs are
-optimistic. Against Flux the gap is mostly the per-cycle queue depth. The node-reuse row adds a second optimistic term, removed when
-`--node_release_delay` is set to a value calibrated for the system.
+optimistic. With matching queue depth, the remaining Flux gaps are its
+one-second planner and resource graph. The node-reuse row adds a second
+optimistic term, removed when `--node_release_delay` is calibrated.
 
 ## Validation that bounds the gaps
 
@@ -183,8 +176,6 @@ Each of the following is a contained change if a study needs it:
   head, to reproduce Slurm's cadence.
 - **Planning resolution and window.** Round projected ends up to a grid and
   drop reservations beyond a horizon.
-- **Queue-depth cap.** Limit the number of candidates examined per pass, to
-  reproduce Fluxion's `queue-depth` or Slurm's `bf_max_job_test`.
 - **Priority hooks.** The experimental external selector already lets a
   caller rank backfill candidates by an arbitrary cost; extending the same
   callback to queue ordering would allow multifactor priority experiments

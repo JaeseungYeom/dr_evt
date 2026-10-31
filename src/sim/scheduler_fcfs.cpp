@@ -165,6 +165,12 @@ FCFSScheduler::schedule(num_nodes_t free_nodes,
       m_wait_queue.front().nodes_requested, available_nodes,
       effective_running_jobs, current_time);
 
+  // Keep the head-reservation snapshot observable even after FCFS consumed
+  // all free nodes, but skip the backfill scan because no candidate can fit.
+  if (available_nodes == 0) {
+    return jobs_to_run;
+  }
+
   // Try backfilling with remaining eligible jobs. These can be at any
   // position (not just the front), so pop_front() doesn't apply here -
   // keep the lazy mark-and-defer-to-GC removal for this part.
