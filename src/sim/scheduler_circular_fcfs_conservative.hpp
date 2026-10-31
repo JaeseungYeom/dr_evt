@@ -27,7 +27,7 @@ namespace dr_evt {
  * QueueImplementation::DEQUE.
  */
 class CircularBufferFCFSConservativeScheduler : public SchedulerBase {
-private:
+protected:
   struct JobEntry {
     job_no_t job_id;
     sim_time_t submit_time;

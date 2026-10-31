@@ -41,6 +41,7 @@ static constexpr int OPT_CHECKPOINT_INTERVAL_JOBS = 1008;
 static constexpr int OPT_CORES_PER_NODE = 1009;
 static constexpr int OPT_RESERVATION_DEPTH = 1010;
 static constexpr int OPT_BACKFILL_QUEUE_DEPTH = 1014;
+static constexpr int OPT_BACKFILL_INTERVAL = 1015;
 static constexpr int OPT_NODE_RELEASE_DELAY = 1011;
 static constexpr int OPT_NODE_RELEASE_DELAY_MODEL = 1012;
 static constexpr int OPT_NODE_RELEASE_DELAY_SPREAD = 1013;
@@ -63,6 +64,7 @@ static const struct option sim_longopts[] = {
     {"num_max_candidates", required_argument, 0, OPT_NUM_MAX_CANDIDATES},
     {"reservation_depth", required_argument, 0, OPT_RESERVATION_DEPTH},
     {"backfill_queue_depth", required_argument, 0, OPT_BACKFILL_QUEUE_DEPTH},
+    {"backfill_interval", required_argument, 0, OPT_BACKFILL_INTERVAL},
     {"priority_policy", required_argument, 0, 'p'},
     {"queue_impl", required_argument, 0, 'q'},
     {"block_size", required_argument, 0, 'Q'},
@@ -104,7 +106,8 @@ Sim_Params::Sim_Params()
       m_sim_start_time(0.0), m_is_jobs_set(false), m_is_time_set(false),
       m_is_nodes_set(false), m_backfill_policy(BackfillPolicy::EASY),
       m_num_max_candidates(1), m_reservation_depth(0),
-      m_backfill_queue_depth(0), m_priority_policy(PriorityPolicy::FCFS),
+      m_backfill_queue_depth(0), m_backfill_interval(0.0),
+      m_priority_policy(PriorityPolicy::FCFS),
       m_queue_impl(QueueImplementation::CIRCULAR), m_block_size(128),
       m_wait_queue_capacity(0), // 0 = size of job trace (never overflows)
       m_wait_queue_overflow(CircularOverflowPolicy::GROW),
@@ -296,6 +299,21 @@ void Sim_Params::getopt(int &argc, char **&argv) {
     case OPT_BACKFILL_QUEUE_DEPTH: /* --backfill_queue_depth */
       m_backfill_queue_depth = parse_uint("--backfill_queue_depth",
                                           std::numeric_limits<size_t>::max());
+      break;
+    case OPT_BACKFILL_INTERVAL: /* --backfill_interval */
+      try {
+        m_backfill_interval = std::stod(optarg);
+      } catch (const std::exception &) {
+        std::cerr << "Error: --backfill_interval expects a number, got '"
+                  << optarg << "'" << std::endl;
+        print_usage(argv[0], 1);
+      }
+      if (!std::isfinite(m_backfill_interval) || m_backfill_interval < 0.0) {
+        std::cerr << "Error: --backfill_interval must be finite and "
+                     "nonnegative"
+                  << std::endl;
+        print_usage(argv[0], 1);
+      }
       break;
     case 'p': /* --priority_policy */
     {
@@ -799,6 +817,12 @@ void Sim_Params::print_usage(const std::string exec, int code) {
          "    --backfill_queue_depth N\n"
          "        Maximum eligible waiting jobs examined per built-in hybrid\n"
          "        or conservative backfill pass; 0 means unlimited.\n"
+         "\n"
+         "    --backfill_interval SECONDS\n"
+         "        Run periodic backfill evaluations while retaining "
+         "event-driven\n"
+         "        FCFS dispatch; 0 disables periodic evaluation. Requires an\n"
+         "        enabled --backfill_policy and --queue_impl circular.\n"
          "\n"
          "    -p, --priority_policy {fcfs|fcfs_alt|fcfs_conservative|sjf|ljf}\n"
          "        Job priority/ordering policy (default: fcfs).\n"

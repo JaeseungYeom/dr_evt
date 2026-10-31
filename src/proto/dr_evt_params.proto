@@ -128,6 +128,10 @@ message DR_EVT_Params {
         // pass. Zero leaves the scan unlimited.
         uint64 backfill_queue_depth = 41;
 
+        // Seconds between periodic EASY, conservative, or hybrid backfill
+        // evaluations. Zero keeps event-driven backfill behavior.
+        double backfill_interval = 42;
+
         // Seconds a job's nodes stay unavailable after it ends before another
         // job can start on them (default 0: reusable at the job's end). Not
         // applied to replayed history.

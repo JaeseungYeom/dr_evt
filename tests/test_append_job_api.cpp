@@ -1122,6 +1122,96 @@ void test_prediction_horizon() {
   std::cout << "  PASSED" << std::endl;
 }
 
+// Periodic hybrid evaluation retains event-driven FCFS dispatch, but reserves
+// backfill scans for ticks. A candidate that arrives between ticks therefore
+// waits for the first tick even though it fits before the blocked head.
+void test_periodic_hybrid_backfill() {
+  std::cout << "\n=== Periodic hybrid backfill ===" << std::endl;
+
+  auto params = make_params();
+  params.m_backfill_policy = BackfillPolicy::HYBRID;
+  params.m_reservation_depth = 1;
+  params.m_backfill_interval = 2.7;
+  Simulation sim(params);
+  sim.get_trace().load_data(0);
+
+  (void)sim.append_job(0.0, 90, kTestQueueInput, 10.0);
+  sim.advance_to(0.0);
+  const auto blocked = sim.append_job(0.0, 100, kTestQueueInput, 1.0);
+  sim.advance_to(0.0);
+  const auto backfill_1 = sim.append_job(0.0, 10, kTestQueueInput, 1.0);
+  const auto backfill_2 = sim.append_job(0.0, 10, kTestQueueInput, 1.0);
+  const auto backfill_3 = sim.append_job(0.0, 10, kTestQueueInput, 1.0);
+
+  // Each 10-node candidate occupies the only free 10 nodes for one second.
+  // Its end triggers only FCFS dispatch, so the next candidate must wait for
+  // the periodic scans at t=2.7, t=5.4, and t=8.1. Those ticks are not
+  // aligned with the candidates' completion events at t=3.7, t=6.4, and
+  // t=9.1, or with the original job's completion at t=10.
+  sim.advance_to(8.2);
+  const auto backfill_status =
+      sim.get_job_statuses({backfill_1, backfill_2, backfill_3});
+  assert(backfill_status.size() == 3);
+  for (const auto &status : backfill_status) {
+    assert(status.start_time.has_value());
+  }
+  assert(approx_equal(*backfill_status[0].start_time, 2.7));
+  assert(approx_equal(*backfill_status[1].start_time, 5.4));
+  assert(approx_equal(*backfill_status[2].start_time, 8.1));
+
+  // Backfill ticks are farther apart than the arrival events at t=2, 4, and
+  // 6. Every built-in policy must defer the fitting candidate until t=10.
+  for (const auto policy : {BackfillPolicy::EASY, BackfillPolicy::CONSERVATIVE,
+                            BackfillPolicy::HYBRID}) {
+    auto policy_params = make_params();
+    policy_params.m_backfill_policy = policy;
+    policy_params.m_backfill_interval = 10.0;
+    if (policy == BackfillPolicy::HYBRID) {
+      policy_params.m_reservation_depth = 1;
+    }
+    Simulation policy_sim(policy_params);
+    policy_sim.get_trace().load_data(0);
+    (void)policy_sim.append_job(0.0, 90, kTestQueueInput, 30.0);
+    const auto policy_head =
+        policy_sim.append_job(0.0, 100, kTestQueueInput, 1.0);
+    const auto policy_candidate =
+        policy_sim.append_job(0.0, 10, kTestQueueInput, 1.0);
+    (void)policy_head;
+    (void)policy_sim.append_job(2.0, 100, kTestQueueInput, 1.0);
+    (void)policy_sim.append_job(4.0, 100, kTestQueueInput, 1.0);
+    (void)policy_sim.append_job(6.0, 100, kTestQueueInput, 1.0);
+
+    policy_sim.advance_to(9.0);
+    assert(!policy_sim.get_job_statuses({policy_candidate})[0]
+                .start_time.has_value());
+    policy_sim.advance_to(10.0);
+    const auto status = policy_sim.get_job_statuses({policy_candidate})[0];
+    assert(status.start_time.has_value());
+    assert(approx_equal(*status.start_time, 10.0));
+  }
+
+  sim.advance_to(10.0);
+  const auto status = sim.get_job_statuses({blocked});
+  assert(status.size() == 1);
+  assert(status.front().state == Simulation::Job_State::RUNNING);
+  assert(status.front().start_time.has_value());
+  assert(approx_equal(*status.front().start_time, 10.0));
+
+  auto invalid_params = make_params();
+  invalid_params.m_backfill_interval = 1.0;
+  invalid_params.m_backfill_policy = BackfillPolicy::NONE;
+  bool rejected = false;
+  try {
+    Simulation invalid(invalid_params);
+    (void)invalid;
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  assert(rejected);
+
+  std::cout << "  PASSED" << std::endl;
+}
+
 void test_append_with_known_actual_runtime() {
   std::cout << "\n=== Known actual runtime for streaming jobs ===" << std::endl;
   Sim_Params params = make_params();
@@ -1225,6 +1315,7 @@ int main() {
     test_append_jobs_memory_pressure();
     test_resource_area_and_time_accounted_utilization();
     test_prediction_horizon();
+    test_periodic_hybrid_backfill();
     test_append_with_known_actual_runtime();
     test_fractional_streaming_limits_validate_stored_value();
 

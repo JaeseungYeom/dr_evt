@@ -236,6 +236,16 @@ only the earlier jobs whose reservations must be protected.
 
 **Default:** `0` (unlimited)
 
+### `--backfill_interval SECONDS`
+
+Uses periodic EASY, conservative, or hybrid backfill while retaining
+event-driven FCFS dispatch. It is intended for Slurm-style trigger studies and
+uses the opt-in circular scheduler; it requires an enabled
+`--backfill_policy` and `--queue_impl circular`. `0` retains the default
+event-driven backfill behavior.
+
+**Default:** `0` (disabled)
+
 ### `--reservation_depth N`
 
 Number of waiting jobs, in queue order, that hold reservations under

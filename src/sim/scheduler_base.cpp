@@ -13,6 +13,7 @@
 #include "sim/scheduler_block_fcfs.hpp"
 #include "sim/scheduler_circular_fcfs.hpp"
 #include "sim/scheduler_circular_fcfs_conservative.hpp"
+#include "sim/scheduler_circular_fcfs_periodic_hybrid.hpp"
 #include "sim/scheduler_fcfs.hpp"
 #include "sim/scheduler_fcfs_alt.hpp"
 #include "sim/scheduler_fcfs_conservative.hpp"
@@ -162,7 +163,35 @@ create_scheduler(num_nodes_t total_nodes, size_t initial_job_count,
                  QueueImplementation queue_impl, size_t block_size,
                  size_t wait_queue_capacity,
                  CircularOverflowPolicy wait_queue_overflow,
-                 size_t reservation_depth, size_t backfill_queue_depth) {
+                 size_t reservation_depth, size_t backfill_queue_depth,
+                 tdiff_t backfill_interval) {
+  if (!std::isfinite(backfill_interval) || backfill_interval < 0.0) {
+    throw std::invalid_argument(
+        "backfill_interval must be finite and nonnegative");
+  }
+  if (backfill_interval > 0.0) {
+    if (backfill_policy == BackfillPolicy::NONE) {
+      throw std::invalid_argument(
+          "periodic backfilling requires an enabled backfill policy");
+    }
+    if (priority_policy != PriorityPolicy::FCFS &&
+        priority_policy != PriorityPolicy::FCFS_CONSERVATIVE) {
+      throw std::invalid_argument(
+          "periodic backfilling is supported with FCFS ordering only");
+    }
+    if (queue_impl != QueueImplementation::CIRCULAR) {
+      throw std::invalid_argument(
+          "periodic backfilling requires queue_impl=circular");
+    }
+    if (backfill_policy == BackfillPolicy::HYBRID && reservation_depth == 0) {
+      throw std::invalid_argument(
+          "hybrid backfilling requires reservation_depth > 0");
+    }
+    return std::make_unique<CircularBufferFCFSPeriodicHybridScheduler>(
+        total_nodes, initial_job_count, wait_queue_capacity,
+        wait_queue_overflow, backfill_policy, reservation_depth,
+        backfill_queue_depth);
+  }
   if (backfill_policy == BackfillPolicy::HYBRID) {
     // Hybrid reservations are implemented by the conservative FCFS
     // scheduler only; route FCFS there and reject other orderings.
