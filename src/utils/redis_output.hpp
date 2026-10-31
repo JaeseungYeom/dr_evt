@@ -45,6 +45,8 @@ struct RedisResourceRecord {
   num_nodes_t free_nodes;              ///< Available nodes at @p time.
   num_nodes_t allocated_nodes;         ///< Allocated nodes at @p time.
   std::optional<RedisPconValues> pcon; ///< Pcon values when enabled.
+  /// Nodes held by the node release delay, when that delay is active.
+  std::optional<num_nodes_t> releasing_nodes;
 };
 
 /** Redis output position captured only when a checkpoint is requested. */

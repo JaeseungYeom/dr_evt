@@ -111,8 +111,10 @@ FCFSScheduler::schedule(num_nodes_t free_nodes,
       const auto &job = m_wait_queue.front();
       jobs_to_run.push_back(job.job_id);
       available_nodes -= job.nodes_requested;
-      effective_running_jobs[job.job_id] = {current_time, job.run_time_estimate,
-                                            job.nodes_requested};
+      effective_running_jobs[job.job_id] = {
+          current_time,
+          release_estimate(job.run_time_estimate, job.nodes_requested),
+          job.nodes_requested};
     } else {
       // Stale placeholder from an earlier backfill - it was already
       // counted in m_removed_count when marked; now that it's
@@ -181,7 +183,9 @@ FCFSScheduler::schedule(num_nodes_t free_nodes,
     // at the reservation time, the FCFS head must wait for that completion
     // event to be processed first, causing a delay. Therefore, backfill jobs
     // must complete BEFORE (not at) the reservation time.
-    if (current_time + job.run_time_estimate < m_fcfs_reservation_time) {
+    if (current_time +
+            release_estimate(job.run_time_estimate, job.nodes_requested) <
+        m_fcfs_reservation_time) {
       jobs_to_run.push_back(job.job_id);
       available_nodes -= job.nodes_requested;
       // Index already known here - set the flag directly instead of

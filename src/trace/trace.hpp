@@ -27,12 +27,14 @@
 #include "trace/data_columns.hpp"
 #include "trace/dr_event.hpp"
 #include "trace/job_record.hpp"
+#include "trace/node_release_delay.hpp"
 #include "trace/trace_policy.hpp"
 
 namespace dr_evt {
 template <typename TraceType> class BasicSimulation;
 #if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
 class RedisOutput;
+struct RedisResourceRecord;
 #endif
 /** \addtogroup dr_evt_trace
  *  @{ */
@@ -167,6 +169,9 @@ public:
     job_queue_t m_prev_job_q;
 #endif
     num_nodes_t m_n_nodes_in_use; ///< Nodes allocated by processed events.
+    /// Nodes whose job has ended but which stay unavailable until their
+    /// node-release event (node release delay). Always zero without one.
+    num_nodes_t m_n_nodes_releasing;
     event_q_t m_evtq;             ///< Pending resource start and end events.
 
     /// (time, allocated_nodes) sampled every time an event changes
@@ -240,6 +245,18 @@ protected:
   size_t m_next_job_to_write;
   /// Accumulates complete file-output lines during one record-count flush.
   std::string m_simulated_trace_buffer;
+
+  /// Delay between a job's end and the reuse of its nodes; inactive by
+  /// default, so an end event frees its nodes directly.
+  Node_Release_Delay m_release_delay;
+  /// Earliest departure time the delay applies to. Zero for simulation, the
+  /// simulation start time for a warm start, and infinity for pure replay,
+  /// whose recorded start times already include the real cleanup gaps.
+  sim_time_t m_release_delay_from = 0.0;
+  /// Whether the most recently processed departure queued a release event.
+  bool m_last_departure_delayed = false;
+  /// Release time queued by the most recently processed delayed departure.
+  sim_time_t m_last_release_time = 0.0;
 
 public:
   /** @brief Construct a trace using the default input format. @param[in] fname
@@ -548,6 +565,74 @@ public:
    */
   num_nodes_t get_nodes_in_use() const { return m_ctx.m_n_nodes_in_use; }
 
+  /**
+   * @brief Nodes whose job has ended but which are not yet reusable.
+   * @return Node count held by the node release delay; zero without one.
+   */
+  num_nodes_t get_nodes_releasing() const { return m_ctx.m_n_nodes_releasing; }
+
+  /**
+   * @brief Nodes unavailable to new starts: allocated plus releasing.
+   * @return Occupied node count.
+   */
+  num_nodes_t get_nodes_occupied() const {
+    return m_ctx.m_n_nodes_in_use + m_ctx.m_n_nodes_releasing;
+  }
+
+  /**
+   * @brief Install the node release delay model.
+   * @details Call before any event is processed and before resource output
+   * is opened: an active model adds a releasing_nodes column.
+   * @param[in] model Configured model; an inactive one restores direct
+   * release at job end.
+   */
+  void set_node_release_delay(Node_Release_Delay model) {
+    m_release_delay = std::move(model);
+  }
+  /** @brief Return the node release delay model. @return Read-only model. */
+  const Node_Release_Delay &node_release_delay() const {
+    return m_release_delay;
+  }
+  /** @brief Return the node release delay model for checkpoint access. */
+  Node_Release_Delay &node_release_delay() { return m_release_delay; }
+  /** @brief Report whether ended jobs hold their nodes for a while.
+   * @return true when a positive release delay is configured and this trace
+   * applies it to some departures (never during pure replay). */
+  bool node_release_delay_active() const {
+    return m_release_delay.active() &&
+           m_release_delay_from != std::numeric_limits<sim_time_t>::infinity();
+  }
+  /**
+   * @brief Restrict the delay to departures at or after a time.
+   * @details Replayed history keeps its recorded releases: a pure replay
+   * passes infinity, a warm start its simulation start time. The default of
+   * zero delays every departure.
+   * @param[in] from_time Earliest departure time that is delayed.
+   */
+  void set_node_release_delay_from(sim_time_t from_time) {
+    m_release_delay_from = from_time;
+  }
+  /**
+   * @brief Report whether the last processed departure queued a release.
+   * @details Valid right after process_single_event() handled a departure.
+   * @return true when that job's nodes are now releasing rather than free.
+   */
+  bool last_departure_delayed() const { return m_last_departure_delayed; }
+  /**
+   * @brief Release time queued by the last delayed departure.
+   * @details Meaningful only when last_departure_delayed() is true;
+   * Simulation uses it to project that job's node release.
+   * @return Release time in simulation seconds.
+   */
+  sim_time_t last_release_time() const { return m_last_release_time; }
+
+  /**
+   * @brief Resource-trace CSV header for this trace's configuration.
+   * @return `time,free_nodes,allocated_nodes`, then `releasing_nodes` when a
+   * release delay is active, then the policy's columns, and a newline.
+   */
+  std::string resource_trace_header() const;
+
   /// True if a pAll (exclusive-access) job is currently running -
   /// same condition load_data()'s own submission loop uses to decide
   /// whether a newly-submitted job's set_busy_nodes() call should
@@ -617,9 +702,8 @@ public:
     m_ctx.m_resource_history.clear();
     m_resource_recording_start = start_time;
     const time_t sec = static_cast<time_t>(start_time);
-    m_resource_recording_baseline =
-        this->sample({sec, static_cast<float>(start_time - sec)},
-                     m_ctx.m_n_nodes_in_use, m_resource_trace_current_capacity);
+    m_resource_recording_baseline = make_resource_sample(
+        {sec, static_cast<float>(start_time - sec)}, m_ctx.m_n_nodes_in_use);
     m_has_resource_recording_baseline = true;
   }
 
@@ -775,6 +859,32 @@ protected:
   /// @param[in] time Sample timestamp.
   /// @param[in] allocated Number of allocated nodes.
   void record_resource_sample(const epoch_t &time, num_nodes_t allocated);
+
+  /// Build a policy sample at the current capacity, carrying the current
+  /// releasing-node count.
+  resource_sample_t make_resource_sample(const epoch_t &time,
+                                         num_nodes_t allocated) const {
+    resource_sample_t sample =
+        this->sample(time, allocated, m_resource_trace_current_capacity);
+    sample.releasing = m_ctx.m_n_nodes_releasing;
+    return sample;
+  }
+
+  /// Format one resource-trace CSV row. Free nodes exclude releasing nodes,
+  /// and the releasing column appears only while the delay is active.
+  std::string resource_trace_row(const resource_sample_t &sample) const;
+
+#if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
+  /// Convert one sample to the Redis record with the same column semantics.
+  RedisResourceRecord
+  to_redis_resource_record(const resource_sample_t &sample) const;
+#endif
+
+  /// Account for a departed job's nodes: free them now, or move them to the
+  /// releasing pool and queue their node-release event when a delay is
+  /// active. Shared by both event-processing paths.
+  void finish_job_nodes(job_no_t job_idx, const epoch_t &end_time,
+                        num_nodes_t nodes);
 
   /// @brief Resolve and apply the initial job-store capacity.
   /// Resolve m_job_store_capacity (0 -> sized from the job count) and

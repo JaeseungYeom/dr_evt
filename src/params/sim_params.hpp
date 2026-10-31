@@ -118,6 +118,9 @@ private:
     visit("run_time_distribution", self.m_run_time_distribution);
     visit("run_time_scale", self.m_run_time_scale);
     visit("run_time_stddev", self.m_run_time_stddev);
+    visit("node_release_delay", self.m_node_release_delay);
+    visit("node_release_delay_model", self.m_node_release_delay_model);
+    visit("node_release_delay_spread", self.m_node_release_delay_spread);
     visit("verbose", self.m_verbose);
     visit("msec_output", self.m_msec_output);
     visit("redis_uri", self.m_redis_uri);
@@ -253,6 +256,16 @@ public:
   double m_run_time_scale;
   /// Runtime distribution standard-deviation factor.
   double m_run_time_stddev;
+
+  /// Seconds between a job's end and the reuse of its nodes: the constant
+  /// delay, or the per-node mean (exponential) or center (uniform) of the
+  /// sampled model. Zero disables the delay.
+  double m_node_release_delay;
+  /// Model of the node release delay (see ReleaseDelayModel).
+  ReleaseDelayModel m_node_release_delay_model;
+  /// Half-width of the uniform per-node cleanup time in seconds; ignored by
+  /// the other models.
+  double m_node_release_delay_spread;
 
   /// Enable verbose diagnostic output.
   bool m_verbose;

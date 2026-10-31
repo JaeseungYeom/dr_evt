@@ -42,8 +42,8 @@ are preserved.
 | Job store | Stable job ID, submit time, requested nodes, queue, time limit, actual runtime, start time, end time | Preserve input order for equal submission times and retain completed records until their output rows are consumed. |
 | Scheduler wait queue | Job ID plus copied submission, node, and runtime-estimate fields | Distinguish future arrivals from arrived jobs and remove a job exactly once when selected. |
 | Running jobs | Job ID, start time, requested nodes, and time-limit estimate | Supply projected releases for backfill reservations and monitoring queries. |
-| Resource-event queue | Job ID, timestamp, and start/end kind | Sort by timestamp, then end before start, then stable job ID. |
-| Resource state | Total nodes, allocated nodes, and optional trace-policy fields | Apply one allocation or release transition per event and reject underflow or over-allocation. |
+| Resource-event queue | Job ID, timestamp, and kind: start, end, or node release (a release also carries its node count) | Sort by timestamp, then end before release before start, then stable job ID. |
+| Resource state | Total nodes, allocated nodes, releasing nodes (ended, not yet reusable), and optional trace-policy fields | Apply one allocation or release transition per event and reject underflow or over-allocation. |
 | Output state | Scheduled-job cursor, resource-history buffer, and aggregate statistics | Write each eligible job exactly once, even when its in-memory record is later reclaimed. |
 | Simulation clock | Current logical time | Never move backward; advancing through an idle interval still updates the clock to the requested target. |
 
@@ -188,11 +188,26 @@ schedule_until_stalled():
             immediately process its start event
 ```
 
-When several resource events share a timestamp, end events sort before start
-events, and job ID breaks remaining ties. Process every already-queued event at
-that timestamp before making the next scheduling decision. This makes released
-nodes visible to all same-time scheduling choices and keeps resource traces
-deterministic.
+When several resource events share a timestamp, end events sort before node
+releases, which sort before start events, and job ID breaks remaining ties.
+Process every already-queued event at that timestamp before making the next
+scheduling decision. This makes released nodes visible to all same-time
+scheduling choices and keeps resource traces deterministic.
+
+### Node release delay
+
+With a configured node release delay, an end event records the completion but
+moves the job's nodes to a releasing pool instead of freeing them, and queues
+one node-release event at the end time plus the job's delay (block release:
+all nodes return together). The release event carries the node count, so it
+never needs the job record, which may already have been written and
+reclaimed. Available nodes are the capacity minus allocated and releasing
+nodes. The running-job entry stays until the release, with its projected
+release updated to the sampled time, so reservations account for it; the
+scheduler plans a not-yet-ended job's release as its time limit plus the
+expected delay for its size, and a backfill candidate must release before the
+head's reservation. Replayed history is never delayed; in a warm start the
+delay applies to departures at or after the simulation start time.
 
 `advance_to(t)` is inclusive. A strict-boundary API must stop before events at
 `t`; it can find the latest event earlier than `t` and invoke the same inclusive
@@ -224,7 +239,9 @@ node count.
 ## Accounting, output, and reclamation
 
 Processing a start event allocates nodes; processing an end event releases
-them. Each transition records a resource-history sample. Scheduled-job rows
+them, or hands them to a later node-release event when a release delay is
+configured. Each transition records a resource-history sample, which also
+carries the releasing-node count. Scheduled-job rows
 remain tied to their job-store records until their departure has been processed
 and their row is safe to write.
 

@@ -101,6 +101,12 @@ ordinary full run), point `infile` at the server-readable trace, and send
 including `begin_time` and `end_time`; negative and non-finite values are
 rejected.
 
+An `InitRequest` may also set `node_release_delay`, `node_release_delay_model`
+(`constant`, `exponential`, or `uniform`), and `node_release_delay_spread`,
+with the semantics of the matching command-line options in
+[Command-Line Options](command-line.md); a zero delay keeps nodes reusable at
+job end.
+
 For a Redis-enabled server build, an `InitRequest` may set `redis_uri`,
 `redis_key_prefix`, and optionally `job_flush_interval`. Both Redis strings are
 required together. The simulated-job and resource-history files are then

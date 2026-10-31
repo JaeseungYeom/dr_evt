@@ -10,6 +10,7 @@
  */
 
 #include "params/sim_params.hpp"
+#include "trace/node_release_delay.hpp"
 #include "trace/parse_utils.hpp"
 #include "trace/trace_policy.hpp"
 #include "utils/file.hpp"
@@ -39,6 +40,9 @@ static constexpr int OPT_CHECKPOINT_FILE = 1007;
 static constexpr int OPT_CHECKPOINT_INTERVAL_JOBS = 1008;
 static constexpr int OPT_CORES_PER_NODE = 1009;
 static constexpr int OPT_RESERVATION_DEPTH = 1010;
+static constexpr int OPT_NODE_RELEASE_DELAY = 1011;
+static constexpr int OPT_NODE_RELEASE_DELAY_MODEL = 1012;
+static constexpr int OPT_NODE_RELEASE_DELAY_SPREAD = 1013;
 
 /** @brief getopt short-option specification for the simulator CLI. */
 #define OPTIONS "hi:j:n:o:s:t:b:p:q:Q:A:G:r:f:T:z:D:S:V:vc:R:MK:W:H:L:m:"
@@ -76,6 +80,11 @@ static const struct option sim_longopts[] = {
     {"run_time_distribution", required_argument, 0, 'D'},
     {"run_time_scale", required_argument, 0, 'S'},
     {"run_time_stddev", required_argument, 0, 'V'},
+    {"node_release_delay", required_argument, 0, OPT_NODE_RELEASE_DELAY},
+    {"node_release_delay_model", required_argument, 0,
+     OPT_NODE_RELEASE_DELAY_MODEL},
+    {"node_release_delay_spread", required_argument, 0,
+     OPT_NODE_RELEASE_DELAY_SPREAD},
     {"verbose", no_argument, 0, 'v'},
     {"msec_output", no_argument, 0, 'M'},
     {"config", required_argument, 0, 'c'},
@@ -108,10 +117,13 @@ Sim_Params::Sim_Params()
       m_run_time_mode(RunTimeMode::ACTUAL), // Default: jobs run actual_run_time
                                             // from trace (most realistic)
       m_run_time_distribution(DistributionType::NORMAL),
-      m_run_time_scale(1.0),  // Default: 100% of time_limit
-      m_run_time_stddev(0.0), // Default: no variation
-      m_verbose(false),       // Default: production mode (quiet)
-      m_msec_output(false)    // Default: integer-second output
+      m_run_time_scale(1.0),     // Default: 100% of time_limit
+      m_run_time_stddev(0.0),    // Default: no variation
+      m_node_release_delay(0.0), // Default: nodes are reusable at job end
+      m_node_release_delay_model(ReleaseDelayModel::CONSTANT),
+      m_node_release_delay_spread(0.0),
+      m_verbose(false),    // Default: production mode (quiet)
+      m_msec_output(false) // Default: integer-second output
 {}
 
 void Sim_Params::getopt(int &argc, char **&argv) {
@@ -492,6 +504,31 @@ void Sim_Params::getopt(int &argc, char **&argv) {
     case 'V': /* --run_time_stddev */
       m_run_time_stddev = std::stod(optarg);
       break;
+    case OPT_NODE_RELEASE_DELAY: /* --node_release_delay */
+      try {
+        m_node_release_delay = std::stod(optarg);
+      } catch (const std::exception &) {
+        std::cerr << "Error: invalid --node_release_delay: " << optarg
+                  << std::endl;
+        print_usage(argv[0], 1);
+      }
+      break;
+    case OPT_NODE_RELEASE_DELAY_MODEL: /* --node_release_delay_model */
+      if (!set_release_delay_model(m_node_release_delay_model, optarg)) {
+        std::cerr << "Error: unknown --node_release_delay_model: " << optarg
+                  << " (valid: constant, exponential, uniform)" << std::endl;
+        print_usage(argv[0], 1);
+      }
+      break;
+    case OPT_NODE_RELEASE_DELAY_SPREAD: /* --node_release_delay_spread */
+      try {
+        m_node_release_delay_spread = std::stod(optarg);
+      } catch (const std::exception &) {
+        std::cerr << "Error: invalid --node_release_delay_spread: " << optarg
+                  << std::endl;
+        print_usage(argv[0], 1);
+      }
+      break;
     case 'v': /* --verbose */
       m_verbose = true;
       break;
@@ -585,6 +622,15 @@ void Sim_Params::getopt(int &argc, char **&argv) {
   if (m_checkpoint_file.empty() && m_checkpoint_interval_jobs != 0) {
     std::cerr << "Error: --checkpoint_interval_jobs requires --checkpoint_file"
               << std::endl;
+    print_usage(argv[0], 1);
+  }
+  // Validated after --config so a file-supplied value is checked too.
+  try {
+    validate_node_release_delay(m_node_release_delay,
+                                m_node_release_delay_model,
+                                m_node_release_delay_spread);
+  } catch (const std::exception &e) {
+    std::cerr << "Error: " << e.what() << std::endl;
     print_usage(argv[0], 1);
   }
 #if !defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
@@ -908,6 +954,30 @@ void Sim_Params::print_usage(const std::string exec, int code) {
          "        For uniform: upper bound offset\n"
          "        Sampled run times are clamped to [1 second, time_limit].\n"
          "\n"
+         "    --node_release_delay SECONDS\n"
+         "        Keep a job's nodes unavailable after it ends (cleanup,\n"
+         "        reboot, health check) before another job can start on\n"
+         "        them. All of a job's nodes return together once its\n"
+         "        slowest node is done. 0 (default) releases nodes at the\n"
+         "        job's end. With a delay, the resource trace adds a\n"
+         "        releasing_nodes column; such nodes count as neither free\n"
+         "        nor allocated, and cleanup time is not utilization.\n"
+         "\n"
+         "    --node_release_delay_model {constant|exponential|uniform}\n"
+         "        constant (default): every job's nodes return exactly\n"
+         "        SECONDS after its end. exponential: each node's cleanup\n"
+         "        is exponential with mean SECONDS; uniform: each node's\n"
+         "        cleanup is uniform on [SECONDS - spread, SECONDS +\n"
+         "        spread], floored at 0. The job's delay is the maximum\n"
+         "        over its nodes, so it grows with job size; the scheduler\n"
+         "        plans with the expected maximum for that size. Samples\n"
+         "        come from a stream seeded from --seed independently of\n"
+         "        run-time sampling.\n"
+         "\n"
+         "    --node_release_delay_spread SECONDS\n"
+         "        Half-width of the uniform per-node cleanup time\n"
+         "        (default: 0). Ignored by the other models.\n"
+         "\n"
          "    -v, --verbose\n"
          "        Enable verbose output for debugging and testing.\n"
          "        Shows detailed simulation progress, scheduling decisions,\n"
@@ -1021,6 +1091,11 @@ void Sim_Params::print() const {
 
   msg += " - run_time_scale: " + to_string(m_run_time_scale) + "\n";
   msg += " - run_time_stddev: " + to_string(m_run_time_stddev) + "\n";
+  msg += " - node_release_delay: " + to_string(m_node_release_delay) + "\n";
+  msg += " - node_release_delay_model: " +
+         string{dr_evt::to_string(m_node_release_delay_model)} + "\n";
+  msg += " - node_release_delay_spread: " +
+         to_string(m_node_release_delay_spread) + "\n";
 
   std::cout << msg << std::endl;
 }

@@ -51,19 +51,20 @@ class Event:
 
     def __init__(self, time: float, event_type: str, job_idx: int):
         self.time = time
-        self.type = event_type  # 'SUBMIT', 'START', 'END'
+        self.type = event_type  # 'SUBMIT', 'START', 'END', 'RELEASE'
         self.job_idx = job_idx
 
     def __lt__(self, other):
-        # Sort by time first, then END before SUBMIT (freeing nodes takes
-        # effect before a same-timestamp new arrival is evaluated against
-        # them - matches the C++ simulator's explicit same-timestamp
-        # batching, which always processes completions before making new
-        # scheduling decisions), then by job_idx for stable ordering.
+        # Sort by time first, then END before RELEASE before SUBMIT (freeing
+        # nodes takes effect before a same-timestamp new arrival is evaluated
+        # against them - matches the C++ simulator's explicit same-timestamp
+        # batching, which always processes completions and node releases
+        # before making new scheduling decisions), then by job_idx for
+        # stable ordering.
         if self.time != other.time:
             return self.time < other.time
         if self.type != other.type:
-            type_order = {'END': 0, 'START': 1, 'SUBMIT': 2}
+            type_order = {'END': 0, 'RELEASE': 1, 'START': 2, 'SUBMIT': 3}
             return type_order[self.type] < type_order[other.type]
         return self.job_idx < other.job_idx
 
@@ -75,14 +76,20 @@ class EasyBackfillingScheduler:
     so we can manually verify it's correct.
     """
 
-    def __init__(self, total_nodes: int, verbose: bool = False):
+    def __init__(self, total_nodes: int, verbose: bool = False,
+                 release_delay: float = 0.0):
         self.total_nodes = total_nodes
         self.verbose = verbose
+        # Node release delay (constant model, block release): after a job
+        # ends, all of its nodes stay unavailable for this long before
+        # another job can start on them. 0 releases nodes at the job's end.
+        self.release_delay = release_delay
 
         # State
         self.current_time = 0.0
         self.wait_queue = []  # Jobs waiting to run (FCFS order)
         self.running = {}  # job_idx -> (start_time, actual_end, pessimistic_end, nodes)
+        self.releasing = {}  # job_idx -> (release_time, nodes): ended, nodes not yet reusable
         self.completed = []  # List of completed jobs
 
         # Event queue
@@ -95,21 +102,27 @@ class EasyBackfillingScheduler:
         if self.verbose:
             print(f"[t={self.current_time:6.0f}] {msg}", file=sys.stderr)
 
+    def get_releasing_nodes(self) -> int:
+        """Nodes whose job has ended but which are not yet reusable"""
+        return sum(nodes for _, nodes in self.releasing.values())
+
     def get_free_nodes(self) -> int:
-        """Calculate currently free nodes"""
+        """Calculate currently free nodes (releasing nodes are not free)"""
         used = sum(nodes for _, _, _, nodes in self.running.values())
-        return self.total_nodes - used
+        return self.total_nodes - used - self.get_releasing_nodes()
 
     def record_resource_state(self):
         """Record current resource state to timeline"""
         nodes_used = sum(nodes for _, _, _, nodes in self.running.values())
-        nodes_free = self.total_nodes - nodes_used
+        nodes_releasing = self.get_releasing_nodes()
+        nodes_free = self.total_nodes - nodes_used - nodes_releasing
         running_jobs = ','.join(str(idx) for idx in sorted(self.running.keys()))
 
         self.resource_timeline.append((
             self.current_time,
             nodes_used,
             nodes_free,
+            nodes_releasing,
             running_jobs if running_jobs else ''
         ))
 
@@ -129,10 +142,14 @@ class EasyBackfillingScheduler:
             return self.current_time
 
         # Find earliest time when enough nodes will be free
-        # Look at running jobs and their pessimistic end times
+        # Look at running jobs and their pessimistic end times (plus the
+        # release delay before their nodes are reusable), and at ended jobs
+        # whose nodes are still releasing.
         events = []
         for job_idx, (start_time, actual_end, pessimistic_end, nodes) in self.running.items():
-            events.append((pessimistic_end, +nodes, job_idx))
+            events.append((pessimistic_end + self.release_delay, +nodes, job_idx))
+        for job_idx, (release_time, nodes) in self.releasing.items():
+            events.append((release_time, +nodes, job_idx))
 
         events.sort()
 
@@ -194,16 +211,18 @@ class EasyBackfillingScheduler:
             if i == 0:
                 continue  # head - already handled above, skip
             if job.nodes <= free_nodes:
-                job_end = self.current_time + job.duration
+                # Its nodes must be reusable (ended and released) before the
+                # reservation, so the delay counts against the window too.
+                job_end = self.current_time + job.duration + self.release_delay
                 if reservation_time is not None and job_end < reservation_time:
                     # Backfiller - only if it completes before reservation
-                    self.log(f"Backfilling job {job.idx} (ends at {job_end} < reservation {reservation_time})")
+                    self.log(f"Backfilling job {job.idx} (releases at {job_end} < reservation {reservation_time})")
                     self.start_job(job)
                     free_nodes -= job.nodes
                     continue  # started - don't keep it in the queue
                 else:
                     # Would interfere with FCFS head reservation
-                    self.log(f"Blocking job {job.idx} (would end at {job_end} >= reservation {reservation_time})")
+                    self.log(f"Blocking job {job.idx} (would release at {job_end} >= reservation {reservation_time})")
             remaining.append(job)
 
         self.wait_queue = remaining
@@ -248,6 +267,21 @@ class EasyBackfillingScheduler:
 
         start_time, actual_end, pessimistic_end, nodes = self.running.pop(job_idx)
         self.log(f"Job {job_idx} completed")
+        if self.release_delay > 0:
+            # Block release: all nodes return together after the delay.
+            release_time = actual_end + self.release_delay
+            self.releasing[job_idx] = (release_time, nodes)
+            heapq.heappush(self.events, Event(release_time, 'RELEASE', job_idx))
+
+        self.record_resource_state()
+
+    def handle_release(self, job_idx: int):
+        """Handle a node release: an ended job's nodes become reusable.
+        Like handle_end(), scheduling is deferred to the batched call."""
+        if job_idx not in self.releasing:
+            return
+        self.releasing.pop(job_idx)
+        self.log(f"Job {job_idx} nodes released")
 
         self.record_resource_state()
 
@@ -293,6 +327,8 @@ class EasyBackfillingScheduler:
                     self.handle_submit(job_map[evt.job_idx])
                 elif evt.type == 'END':
                     self.handle_end(evt.job_idx)
+                elif evt.type == 'RELEASE':
+                    self.handle_release(evt.job_idx)
 
             self.try_start_jobs()
 
@@ -339,38 +375,58 @@ def write_scheduler_output(jobs: List[Job], filename: str):
                 job.duration
             ])
 
-def write_resource_trace(jobs: List[Job], filename: str, total_nodes: int):
+def write_resource_trace(jobs: List[Job], filename: str, total_nodes: int,
+                         release_delay: float = 0.0):
     """Generate resource trace from job trace"""
-    # Collect all events (start and end)
+    # Collect all events (start, end, and node release). The numeric order
+    # key matches the simulator: end, release, start at one timestamp.
     events = []
     for job in jobs:
         if job.start_time is not None:
-            events.append((job.start_time, +job.nodes, 'START'))
+            events.append((job.start_time, 2, job.nodes, 'START'))
         if job.end_time is not None:
-            events.append((job.end_time, -job.nodes, 'END'))
+            events.append((job.end_time, 0, job.nodes, 'END'))
+            if release_delay > 0:
+                events.append((job.end_time + release_delay, 1, job.nodes,
+                               'RELEASE'))
 
     # Sort by time
     events.sort()
 
     # Track resource state changes
     allocated = 0
+    releasing = 0
     resource_history = []
 
-    for time, delta, event_type in events:
-        allocated += delta
-        free = total_nodes - allocated
-        resource_history.append((time, free, allocated))
+    for time, _, nodes, event_type in events:
+        if event_type == 'START':
+            allocated += nodes
+        elif event_type == 'END':
+            allocated -= nodes
+            if release_delay > 0:
+                releasing += nodes
+        else:
+            releasing -= nodes
+        free = total_nodes - allocated - releasing
+        resource_history.append((time, free, allocated, releasing))
 
-    # Write resource trace
+    # Write resource trace; the releasing column appears only with a delay,
+    # matching the simulator's own header.
     with open(filename, 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(['time', 'free_nodes', 'allocated_nodes'])
-        for time, free, allocated in resource_history:
-            writer.writerow([time, free, allocated])
+        if release_delay > 0:
+            writer.writerow(['time', 'free_nodes', 'allocated_nodes',
+                             'releasing_nodes'])
+            for row in resource_history:
+                writer.writerow(row)
+        else:
+            writer.writerow(['time', 'free_nodes', 'allocated_nodes'])
+            for time, free, allocated, _ in resource_history:
+                writer.writerow([time, free, allocated])
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python_reference_scheduler.py <trace.csv> [--verbose] [--nodes N] [--outdir DIR]")
+        print("Usage: python_reference_scheduler.py <trace.csv> [--verbose] [--nodes N] [--outdir DIR] [--release-delay SECONDS]")
         print()
         print("Python reference EASY backfilling scheduler for verification")
         print()
@@ -378,6 +434,11 @@ def main():
         print("  --verbose    Show detailed simulation progress")
         print("  --nodes N    Total nodes in system (default: 1000)")
         print("  --outdir DIR Output directory for generated files (default: /tmp)")
+        print("  --release-delay SECONDS")
+        print("               Constant node release delay: an ended job's nodes")
+        print("               stay unavailable this long (default: 0). Matches")
+        print("               the simulator's --node_release_delay with the")
+        print("               constant model.")
         print()
         print("Generates reference output for EASY backfilling verification")
         print("Output files are written to /tmp by default to avoid directory pollution")
@@ -398,10 +459,20 @@ def main():
         idx = sys.argv.index('--outdir')
         outdir = sys.argv[idx + 1]
 
+    # Parse the constant node release delay
+    release_delay = 0.0
+    if '--release-delay' in sys.argv:
+        idx = sys.argv.index('--release-delay')
+        release_delay = float(sys.argv[idx + 1])
+        if release_delay < 0:
+            print("--release-delay must be nonnegative", file=sys.stderr)
+            sys.exit(1)
+
     print(f"=== Python Reference EASY Backfilling Scheduler ===", file=sys.stderr)
     print(f"Trace: {trace_file}", file=sys.stderr)
     print(f"Total nodes: {total_nodes}", file=sys.stderr)
     print(f"Output directory: {outdir}", file=sys.stderr)
+    print(f"Node release delay: {release_delay}", file=sys.stderr)
     print(f"Verbose: {verbose}", file=sys.stderr)
     print(file=sys.stderr)
 
@@ -410,7 +481,8 @@ def main():
     print(f"Loaded {len(jobs)} jobs", file=sys.stderr)
 
     # Run scheduler
-    scheduler = EasyBackfillingScheduler(total_nodes, verbose=verbose)
+    scheduler = EasyBackfillingScheduler(total_nodes, verbose=verbose,
+                                         release_delay=release_delay)
     jobs = scheduler.simulate(jobs)
 
     # Write output files to specified directory
@@ -420,7 +492,7 @@ def main():
 
     # Write resource trace
     resource_file = os.path.join(outdir, f'{basename}_reference_resources.csv')
-    write_resource_trace(jobs, resource_file, total_nodes)
+    write_resource_trace(jobs, resource_file, total_nodes, release_delay)
 
     print(f"\nReference output written to: {output_file}", file=sys.stderr)
     print(f"Resource trace written to: {resource_file}", file=sys.stderr)

@@ -40,6 +40,9 @@ Complete reference for all DR_EVT command-line options for the `simulator` binar
 | Runtime | `-D, --run_time_distribution TYPE` | Select the sampled runtime distribution. |
 | Runtime | `-S, --run_time_scale FACTOR` | Scale sampled job runtimes. |
 | Runtime | `-V, --run_time_stddev FACTOR` | Set sampled runtime variation. |
+| Runtime | `--node_release_delay SECONDS` | Keep an ended job's nodes unavailable before reuse. |
+| Runtime | `--node_release_delay_model MODEL` | Select `constant`, `exponential`, or `uniform` per-node cleanup. |
+| Runtime | `--node_release_delay_spread SECONDS` | Set the half-width of `uniform` per-node cleanup. |
 | Limits | `-j, --max_jobs COUNT` | Limit the number of simulated jobs. |
 | Limits | `-t, --max_time TIME` | Stop after processing events through this simulation timestamp. |
 | Other | `-s, --seed VALUE` | Set the random-number seed. |
@@ -581,6 +584,69 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator traces/jobs.csv \
     --run_time_mode distribution \
     --run_time_scale 0.9 \
     --run_time_stddev 0.1
+```
+
+### `--node_release_delay SECONDS`
+
+Keep a job's nodes unavailable for a while after it ends, modeling cleanup,
+reboot, or health checks, before another job can start on them. All of a
+job's nodes return together once its slowest node is done (block release).
+The scheduler plans with this delay: a running job's projected release is its
+time limit plus the expected delay, and a backfill candidate must release its
+nodes, not merely finish, before the FCFS head's reservation.
+
+Releasing nodes are neither free nor allocated. With a delay, the resource
+trace adds a `releasing_nodes` column (see
+[Output Trace Files](output-traces.md)), `free_nodes` excludes releasing
+nodes, and cleanup time is not utilization. `get_nodes_releasing()` reports
+the count in the streaming APIs.
+
+Replayed history is never delayed: recorded start times already include the
+real cleanup gaps, so pure replay (`tracer`, or replay-format input without
+`--sim_start_time`) releases nodes at the recorded end. In a replay-based warm
+start the delay applies to every departure at or after `--sim_start_time`,
+including the ends of jobs that were running at the boundary.
+
+**Range:** >= 0.0
+
+**Default:** 0.0 (nodes are reusable at the job's end)
+
+### `--node_release_delay_model MODEL`
+
+How the delay of one job is determined from `--node_release_delay`:
+
+- `constant` (default): every job's nodes return exactly `SECONDS` after it
+  ends.
+- `exponential`: each node's cleanup time is exponential with mean `SECONDS`.
+- `uniform`: each node's cleanup time is uniform on
+  `[SECONDS - spread, SECONDS + spread]`, floored at zero.
+
+Under the sampled models the job's delay is the maximum of its nodes' cleanup
+times, so it grows with job size. One draw per job end suffices (the maximum
+of independent exponential or uniform variables has a closed-form inverse
+distribution function). The scheduler plans with the expected maximum for the
+job's node count: `SECONDS * H(nodes)` (the harmonic number) for
+`exponential`, and `lo + (hi - lo) * nodes / (nodes + 1)` for `uniform`.
+Samples come from a stream seeded from `--seed` independently of run-time
+sampling, so enabling the delay does not change sampled job durations.
+
+**Default:** `constant`
+
+### `--node_release_delay_spread SECONDS`
+
+Half-width of the `uniform` per-node cleanup time. Ignored by the other
+models. A positive spread with a zero `--node_release_delay` still delays
+releases under `uniform`.
+
+**Range:** >= 0.0
+
+**Default:** 0.0
+
+**Example:** 60-second mean cleanup per node, size-dependent job delay:
+```bash
+${CMAKE_INSTALL_PREFIX}/bin/simulator traces/jobs.csv \
+    --node_release_delay 60 \
+    --node_release_delay_model exponential
 ```
 
 ## Limit Options

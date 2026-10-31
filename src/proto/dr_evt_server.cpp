@@ -286,6 +286,20 @@ public:
             sp.m_wait_queue_capacity = r.wait_queue_capacity();
           sp.m_reservation_depth = r.reservation_depth();
 
+          if (!r.node_release_delay_model().empty() &&
+              !dr_evt::set_release_delay_model(sp.m_node_release_delay_model,
+                                               r.node_release_delay_model())) {
+            throw std::runtime_error(
+                "Unknown node_release_delay_model: " +
+                r.node_release_delay_model() +
+                " (valid: constant, exponential, uniform)");
+          }
+          sp.m_node_release_delay = r.node_release_delay();
+          sp.m_node_release_delay_spread = r.node_release_delay_spread();
+          dr_evt::validate_node_release_delay(sp.m_node_release_delay,
+                                              sp.m_node_release_delay_model,
+                                              sp.m_node_release_delay_spread);
+
           if (r.wait_queue_overflow().empty())
             sp.m_wait_queue_overflow = dr_evt::CircularOverflowPolicy::GROW;
           else if (r.wait_queue_overflow() == "abort")

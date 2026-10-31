@@ -73,8 +73,24 @@ time,free_nodes,allocated_nodes
 100,100,0
 ```
 
+With a node release delay (`--node_release_delay`), a `releasing_nodes`
+column follows `allocated_nodes`: nodes whose job has ended but which are not
+yet reusable. `free_nodes` excludes them, so
+`free_nodes + allocated_nodes + releasing_nodes` is the current capacity.
+Each node release adds a row of its own. Without a delay the column is
+absent and the format above is unchanged.
+
+```text
+time,free_nodes,allocated_nodes,releasing_nodes
+0,100,0,0
+0,30,70,0
+200,30,0,70
+230,100,0,0
+```
+
 With `--trace_type pcon`, the resource trace additionally reports the
-quantities carried by the experimental power-usage trace model:
+quantities carried by the experimental power-usage trace model (after the
+`releasing_nodes` column when that is present):
 
 ```text
 time,free_nodes,allocated_nodes,avgpcon,minpcon,maxpcon

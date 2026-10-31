@@ -762,6 +762,19 @@ set_target_properties(test_capacity_schedule-bin PROPERTIES
   CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
 list(APPEND DR_EVT_UNIT_TEST_TARGETS test_capacity_schedule-bin)
 
+# Node release delay: planning values and sampling of the per-job delay,
+# streaming behavior, replay/warm-start boundaries, checkpoint continuation.
+add_executable(test_node_release_delay-bin tests/test_node_release_delay.cpp)
+target_include_directories(test_node_release_delay-bin PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
+  $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}>)
+target_link_libraries(test_node_release_delay-bin PRIVATE dr_evt)
+set_target_properties(test_node_release_delay-bin PROPERTIES
+  OUTPUT_NAME test_node_release_delay
+  CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
+list(APPEND DR_EVT_UNIT_TEST_TARGETS test_node_release_delay-bin)
+
 # Native warm-start coverage: boundary classification, capacity transitions,
 # statistics, all scheduler policies/queue backends, and differential traces.
 add_executable(test_warm_start-bin tests/test_warm_start.cpp)
@@ -869,6 +882,14 @@ if(DR_EVT_WITH_UNIT_TESTING)
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_warm_start_validation_tests.sh
       $<TARGET_FILE:sim-bin>)
   add_test(
+    NAME test_node_release_delay
+    COMMAND $<TARGET_FILE:test_node_release_delay-bin>)
+  add_test(
+    NAME test_node_release_delay_reference
+    COMMAND /bin/bash
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_node_release_delay_tests.sh
+      $<TARGET_FILE:sim-bin>)
+  add_test(
     NAME test_max_time
     COMMAND /bin/bash
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_max_time_tests.sh
@@ -918,7 +939,7 @@ if(DR_EVT_WITH_UNIT_TESTING)
     test_queue_input
     test_batch_vs_streaming test_block_queue test_capacity_schedule
     test_warm_start test_warm_start_validation test_max_time test_cli_input
-    test_swf
+    test_swf test_node_release_delay test_node_release_delay_reference
     PROPERTIES
       LABELS "unit;native"
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

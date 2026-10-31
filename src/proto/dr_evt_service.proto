@@ -101,6 +101,14 @@ message InitRequest {
     // Waiting jobs that hold reservations under backfill_policy "hybrid";
     // must be positive with hybrid and is ignored otherwise.
     uint64 reservation_depth = 19;
+
+    // Seconds a job's nodes stay unavailable after it ends (default 0).
+    // Not applied to replayed history.
+    double node_release_delay = 20;
+    // "constant" (default), "exponential", or "uniform".
+    string node_release_delay_model = 21;
+    // Half-width of the uniform per-node cleanup time; ignored otherwise.
+    double node_release_delay_spread = 22;
 }
 
 // Runs the configured input trace to completion. Unlike AdvanceToRequest,

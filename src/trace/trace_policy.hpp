@@ -55,6 +55,9 @@ struct Standard_Resource_Sample {
   epoch_t time;
   num_nodes_t allocated;
   num_nodes_t capacity;
+  /// Nodes whose job has ended but which are not yet reusable (node release
+  /// delay). Zero unless a delay is configured.
+  num_nodes_t releasing = 0u;
 };
 
 /** Resource-history entry emitted by the Pcon experiment. */
@@ -63,6 +66,9 @@ struct Pcon_Resource_Sample {
   num_nodes_t allocated;
   num_nodes_t capacity;
   Pcon_Values pcon;
+  /// Nodes whose job has ended but which are not yet reusable (node release
+  /// delay). Zero unless a delay is configured.
+  num_nodes_t releasing = 0u;
 };
 
 struct Standard_Trace_Policy {

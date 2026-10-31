@@ -82,8 +82,10 @@ CircularBufferFCFSScheduler::schedule(num_nodes_t free_nodes,
       const auto &job = m_wait_queue.front();
       jobs_to_run.push_back(job.job_id);
       available_nodes -= job.nodes_requested;
-      effective_running_jobs[job.job_id] = {current_time, job.run_time_estimate,
-                                            job.nodes_requested};
+      effective_running_jobs[job.job_id] = {
+          current_time,
+          release_estimate(job.run_time_estimate, job.nodes_requested),
+          job.nodes_requested};
     } else {
       --m_removed_count;
     }
@@ -120,7 +122,9 @@ CircularBufferFCFSScheduler::schedule(num_nodes_t free_nodes,
     // IMPORTANT: strict < (not <=) - see FCFSScheduler::schedule()
     // for why. Backfill jobs must complete BEFORE the reservation
     // time, not at it.
-    if (current_time + job.run_time_estimate < m_fcfs_reservation_time) {
+    if (current_time +
+            release_estimate(job.run_time_estimate, job.nodes_requested) <
+        m_fcfs_reservation_time) {
       jobs_to_run.push_back(job.job_id);
       available_nodes -= job.nodes_requested;
       m_wait_queue[i].removed = true;

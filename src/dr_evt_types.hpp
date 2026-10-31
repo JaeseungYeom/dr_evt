@@ -72,10 +72,27 @@ constexpr const tdiff_t max_batch_job_time = static_cast<tdiff_t>(12 * 60 * 60);
 constexpr const sim_time_t max_sim_time =
     std::numeric_limits<sim_time_t>::max() * 0.9;
 
-/// Arrival event
-constexpr const bool arrival = true;
-/// Departure event
-constexpr const bool departure = false;
+/**
+ * @brief Kind of a resource event.
+ * @details The numeric order is the processing order for events that share a
+ * timestamp: job ends first, then node releases, then job starts, so nodes
+ * freed at an instant are visible to every start processed at that instant.
+ * Release events exist only while a node release delay is configured;
+ * otherwise an end event frees its nodes directly.
+ */
+enum class DR_Event_Kind : std::uint8_t {
+  departure =
+      0,       ///< Job end: completion accounting; frees nodes unless delayed.
+  release = 1, ///< Nodes of an ended job become reusable after a delay.
+  arrival = 2  ///< Job start: nodes become allocated.
+};
+
+/// Arrival (job start) event
+constexpr DR_Event_Kind arrival = DR_Event_Kind::arrival;
+/// Departure (job end) event
+constexpr DR_Event_Kind departure = DR_Event_Kind::departure;
+/// Delayed node-release event
+constexpr DR_Event_Kind node_release = DR_Event_Kind::release;
 
 /** @brief Supported trace queue identities.
  * @details The fixed-width values are shared by both trace-input modes.

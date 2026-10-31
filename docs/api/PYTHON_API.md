@@ -64,6 +64,9 @@ or `None`.
 | `num_max_candidates` | `int` |
 | `reservation_depth` | `int` |
 | `priority_policy` | `PriorityPolicy` |
+| `node_release_delay` | `float`; seconds an ended job's nodes stay unavailable (0 disables) |
+| `node_release_delay_model` | `ReleaseDelayModel` |
+| `node_release_delay_spread` | `float`; `UNIFORM` half-width |
 | `verbose` | `bool` |
 
 `sim_start_time` is the global simulation boundary; it is distinct from each
@@ -90,6 +93,9 @@ arguments use legacy names or numeric IDs.
   `BackfillPolicy.CONSERVATIVE`
 - `PriorityPolicy.FCFS`, `PriorityPolicy.FCFS_CONSERVATIVE`,
   `PriorityPolicy.SJF`, `PriorityPolicy.LJF`
+- `ReleaseDelayModel.CONSTANT`, `ReleaseDelayModel.EXPONENTIAL`,
+  `ReleaseDelayModel.UNIFORM` (see `--node_release_delay_model` in
+  [Command-Line Options](../user-guide/command-line.md))
 - `JobState.PENDING`, `JobState.RUNNING`, `JobState.COMPLETED`,
   `JobState.REJECTED` (returned by the job status query)
 
@@ -114,7 +120,8 @@ Their scheduling semantics are documented in
 | `get_nodes_in_use()` | Return allocated nodes. |
 | `get_current_utilization()` | Return instantaneous usage of effective scheduled capacity. |
 | `get_resource_area()` | Return Custom-FCFS allocated-node area in node-seconds; unavailable for standard schedulers. |
-| `get_available_nodes()` | Return free nodes. |
+| `get_available_nodes()` | Return nodes a new job could use now; excludes releasing nodes. |
+| `get_nodes_releasing()` | Return nodes whose job has ended but which are not yet reusable (node release delay). |
 | `get_active_job_count()` | Return waiting jobs. |
 | `get_fcfs_head_shadow_time()` | Return the FCFS-head reservation time, or `-1`. |
 | `get_backfill_window()` | Return the current FCFS/EASY reservation snapshot, including all running-job releases. |
