@@ -12,6 +12,7 @@
 #include "sim/scheduler_base.hpp"
 #include "sim/scheduler_block_fcfs.hpp"
 #include "sim/scheduler_circular_fcfs.hpp"
+#include "sim/scheduler_circular_fcfs_conservative.hpp"
 #include "sim/scheduler_fcfs.hpp"
 #include "sim/scheduler_fcfs_alt.hpp"
 #include "sim/scheduler_fcfs_conservative.hpp"
@@ -135,6 +136,24 @@ const char *queue_impl_name(QueueImplementation impl) {
     return "multimap";
   }
 }
+
+std::unique_ptr<SchedulerBase> create_conservative_scheduler(
+    num_nodes_t total_nodes, size_t initial_job_count,
+    BackfillPolicy backfill_policy, QueueImplementation queue_impl,
+    size_t wait_queue_capacity, CircularOverflowPolicy wait_queue_overflow,
+    size_t reservation_depth) {
+  if (queue_impl == QueueImplementation::DEQUE) {
+    return std::make_unique<FCFSConservativeScheduler>(
+        total_nodes, backfill_policy, reservation_depth);
+  }
+  if (queue_impl != QueueImplementation::CIRCULAR) {
+    std::cerr << "Warning: queue_impl '" << queue_impl_name(queue_impl)
+              << "' not supported for FCFS_CONSERVATIVE, using circular\n";
+  }
+  return std::make_unique<CircularBufferFCFSConservativeScheduler>(
+      total_nodes, initial_job_count, backfill_policy, wait_queue_capacity,
+      wait_queue_overflow, reservation_depth);
+}
 } // anonymous namespace
 
 std::unique_ptr<SchedulerBase>
@@ -156,8 +175,9 @@ create_scheduler(num_nodes_t total_nodes, size_t initial_job_count,
       throw std::invalid_argument(
           "hybrid backfilling is supported with FCFS ordering only");
     }
-    return std::make_unique<FCFSConservativeScheduler>(
-        total_nodes, backfill_policy, reservation_depth);
+    return create_conservative_scheduler(
+        total_nodes, initial_job_count, backfill_policy, queue_impl,
+        wait_queue_capacity, wait_queue_overflow, reservation_depth);
   }
 
   switch (priority_policy) {
@@ -245,16 +265,9 @@ create_scheduler(num_nodes_t total_nodes, size_t initial_job_count,
     return std::make_unique<FCFSAltScheduler>(total_nodes, backfill_policy);
 
   case PriorityPolicy::FCFS_CONSERVATIVE:
-    // FCFS with conservative backfilling or no backfilling
-    // TODO: Implement CircularBufferFCFSConservativeScheduler for better
-    // performance Currently only deque implementation exists
-    if (queue_impl != QueueImplementation::DEQUE) {
-      std::cerr << "Warning: queue_impl '" << queue_impl_name(queue_impl)
-                << "' not supported for FCFS_CONSERVATIVE, only deque is "
-                   "implemented. Using deque.\n";
-    }
-    return std::make_unique<FCFSConservativeScheduler>(
-        total_nodes, backfill_policy, reservation_depth);
+    return create_conservative_scheduler(
+        total_nodes, initial_job_count, backfill_policy, queue_impl,
+        wait_queue_capacity, wait_queue_overflow, reservation_depth);
 
   case PriorityPolicy::SJF:
     // SJF only uses multimap (already efficient)

@@ -178,7 +178,7 @@ semantics in the [C++ Streaming API](../docs/api/STREAMING_API.md).
 
 ```bash
 ./tests/run_fcfs_queue_implementation_tests.sh --correctness
-./tests/benchmark_block_sizes.sh
+./tests/benchmark_wait_queues.sh
 ${CMAKE_INSTALL_PREFIX}/bin/tests/test_block_queue
 ```
 
@@ -187,12 +187,14 @@ compares the
 scheduled-job and resource traces produced by the `circular`, `deque`,
 `multimap`, and `block` FCFS queues. [`test_block_queue.cpp`](test_block_queue.cpp)
 directly exercises the block queue at every supported block size.
-[`benchmark_block_sizes.sh`](benchmark_block_sizes.sh)
-runs the end-to-end performance and output-equivalence benchmark documented in
-[Wait Queues](../docs/dev/WAIT_QUEUES.md#benchmark-record). Its workload is
+[`benchmark_wait_queues.sh`](benchmark_wait_queues.sh)
+runs the whole-simulation performance and output-equivalence benchmark documented
+in [Wait Queues](../docs/dev/WAIT_QUEUES.md#benchmark-record). It measures
+complete simulator runs—not isolated wait-queue operations—and its workload is
 [`test_traces/scale/huge_10000jobs.csv`](test_traces/scale/huge_10000jobs.csv);
 it byte-compares every C++ queue output with `deque` and compares the normalized
-Python EASY schedule with `deque` using a `0.001` time tolerance. The
+Python EASY and conservative schedules with their respective C++ `deque`
+baselines using a `0.001` time tolerance. The
 differential runner uses the
 [`scheduler_correctness`](test_traces/scheduler_correctness/) fixtures.
 

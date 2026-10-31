@@ -30,13 +30,9 @@ namespace dr_evt {
  *   Fluxion's hybrid queue policy.
  * - NONE: No backfilling (strict FCFS order)
  *
- * Based on FCFSScheduler with the same deque-based iterator tracking
- * optimization.
- *
- * NOTE: Currently only std::deque implementation exists. For optimal
- * performance, a CircularBufferFCFSConservativeScheduler should be implemented
- * (similar to CircularBufferFCFSScheduler) as circular buffer provides ~10-15%
- * better performance than deque for FCFS scheduling.
+ * This is the deque-backed implementation. The default conservative scheduler
+ * uses CircularBufferFCFSConservativeScheduler; select
+ * QueueImplementation::DEQUE to retain this unbounded queue.
  */
 class FCFSConservativeScheduler : public SchedulerBase {
 private:

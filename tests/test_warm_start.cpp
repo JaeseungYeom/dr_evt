@@ -524,9 +524,7 @@ void test_every_policy_and_queue() {
       QueueImplementation::MULTIMAP, QueueImplementation::BLOCK};
 
   for (const auto priority : priorities) {
-    const auto supported_queue = priority == PriorityPolicy::FCFS_CONSERVATIVE
-                                     ? QueueImplementation::DEQUE
-                                 : priority == PriorityPolicy::FCFS_ALT
+    const auto supported_queue = priority == PriorityPolicy::FCFS_ALT
                                      ? QueueImplementation::MULTIMAP
                                      : QueueImplementation::CIRCULAR;
     for (const auto backfill : backfills) {
@@ -538,6 +536,13 @@ void test_every_policy_and_queue() {
     for (const auto backfill : backfills) {
       compare_equivalent(warm, reference, 10.0, 10, 2, PriorityPolicy::FCFS,
                          backfill, queue);
+    }
+  }
+  for (const auto queue :
+       {QueueImplementation::CIRCULAR, QueueImplementation::DEQUE}) {
+    for (const auto backfill : backfills) {
+      compare_equivalent(warm, reference, 10.0, 10, 2,
+                         PriorityPolicy::FCFS_CONSERVATIVE, backfill, queue);
     }
   }
 }

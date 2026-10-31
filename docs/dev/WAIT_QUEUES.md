@@ -26,7 +26,7 @@ FCFS with EASY backfilling on an Intel Sapphire Rapids node (112 cores,
 256 GB memory). Values are the mean of 10 end-to-end runs; `±` is the
 population standard deviation.
 
-**Benchmark script:** [`tests/benchmark_block_sizes.sh`](../../tests/benchmark_block_sizes.sh)
+**Benchmark script:** [`tests/benchmark_wait_queues.sh`](../../tests/benchmark_wait_queues.sh)
 
 The timing includes trace parsing, scheduling and backfilling, event handling,
 and trace output. It is not an isolated wait-queue microbenchmark. The queue
@@ -64,12 +64,37 @@ are compared with the C++ `deque` schedule using a `0.001` tolerance.
 Run the same benchmark with:
 
 ```bash
-tests/benchmark_block_sizes.sh
+tests/benchmark_wait_queues.sh
 ```
 
-The script tests `deque`, `multimap`, `circular`, every supported `block` size,
-and the Python reference. It byte-compares the C++ queue outputs with `deque`
-and compares the normalized Python schedule with `deque` within `0.001`.
+By default the script runs both comparisons. The EASY comparison tests `deque`,
+`multimap`, `circular`, every supported `block` size, and the Python reference.
+The conservative comparison tests the deque and circular implementations plus
+the Python conservative oracle. Each C++ comparison is byte-for-byte against
+its deque baseline; Python schedules use a `0.001` time tolerance.
+
+To reproduce only the historical EASY table:
+
+```bash
+tests/benchmark_wait_queues.sh --backfill-policy easy
+```
+
+### Conservative backfill comparison
+
+Conservative backfilling has two equivalent FCFS implementations: `deque` and
+`circular`. The block and multimap queues do not implement the conservative
+reservation algorithm, so benchmark those two C++ queues and the Python
+conservative oracle separately:
+
+```bash
+tests/benchmark_wait_queues.sh --backfill-policy conservative
+```
+
+The command byte-compares the C++ deque and circular schedules, then compares
+the Python conservative schedule with deque using a `0.001` time tolerance.
+It does not replace the EASY results above; record the conservative results in
+a separate table with the workload, node count, run count, mean, and standard
+deviation.
 
 The unit and differential coverage is listed under
 [Wait-queue tests](https://github.com/LLNL/dr_evt/blob/main/tests/README.md#wait-queue-tests).
