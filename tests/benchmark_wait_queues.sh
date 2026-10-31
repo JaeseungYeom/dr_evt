@@ -204,6 +204,7 @@ run_hybrid_benchmark() {
     if "$PYTHON_BIN" scripts/python_conservative_scheduler.py "$TRACE_FILE" \
         --nodes "$TOTAL_NODES" --outdir "$python_out_dir" \
         --reservation-depth "$HYBRID_RESERVATION_DEPTH" \
+        --backfill-queue-depth "$HYBRID_QUEUE_DEPTH" \
         >"$outdir/python.log" 2>&1; then
         python_end=$(date +%s%N)
         python_time=$(elapsed_seconds "$python_start" "$python_end")

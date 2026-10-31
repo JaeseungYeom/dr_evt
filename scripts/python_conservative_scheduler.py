@@ -80,12 +80,14 @@ class ConservativeBackfillingScheduler:
     """
 
     def __init__(self, total_nodes: int, verbose: bool = False,
-                 reservation_depth: int = 0):
+                 reservation_depth: int = 0, backfill_queue_depth: int = 0):
         self.total_nodes = total_nodes
         self.verbose = verbose
         # Waiting jobs that hold reservations; 0 means every waiting job,
         # 1 reproduces EASY (hybrid depth as in Slurm and Fluxion).
         self.reservation_depth = reservation_depth
+        # Waiting jobs examined in one backfill pass; 0 means unlimited.
+        self.backfill_queue_depth = backfill_queue_depth
 
         # State
         self.current_time = 0.0
@@ -227,6 +229,7 @@ class ConservativeBackfillingScheduler:
         3. Other jobs can backfill if they fit AND finish before ANY waiting job's reservation
         """
         free_nodes = self.get_free_nodes()
+        started = False
 
         # Step 1: Start jobs from the front as long as they fit
         while self.wait_queue and self.wait_queue[0].nodes <= free_nodes:
@@ -234,9 +237,10 @@ class ConservativeBackfillingScheduler:
             self.log(f"Starting FCFS head job {head.idx}")
             self.start_job(head)
             free_nodes -= head.nodes
+            started = True
 
         if not self.wait_queue:
-            return
+            return started
 
         # Step 2: Try conservative backfilling
         # For each job in the queue (after the head), check if it can backfill
@@ -244,7 +248,13 @@ class ConservativeBackfillingScheduler:
         remaining = []
         backfilled_jobs = {}  # Track backfilled jobs as {job_id: (start_time, pessimistic_end)}
 
+        examined = 0
         for pos, job in enumerate(self.wait_queue):
+            if (self.backfill_queue_depth and
+                    examined >= self.backfill_queue_depth):
+                remaining.extend(self.wait_queue[pos:])
+                break
+            examined += 1
             # Check if job fits in available resources
             if job.nodes > free_nodes:
                 remaining.append(job)
@@ -264,6 +274,7 @@ class ConservativeBackfillingScheduler:
                 self.log(f"Backfilling job {job.idx} (no jobs ahead)")
                 self.start_job(job)
                 free_nodes -= job.nodes
+                started = True
                 continue
 
             # Job can backfill if it completes before the earliest reservation
@@ -272,6 +283,7 @@ class ConservativeBackfillingScheduler:
                 self.log(f"Conservative backfill job {job.idx} (ends {job_end} < earliest reservation {conservative_window})")
                 self.start_job(job)
                 free_nodes -= job.nodes
+                started = True
 
                 # Track this backfilled job so next jobs see it as running
                 pessimistic_end = self.current_time + job.duration
@@ -282,6 +294,7 @@ class ConservativeBackfillingScheduler:
                 remaining.append(job)
 
         self.wait_queue = remaining
+        return started
 
     def start_job(self, job: Job):
         """Start a job immediately"""
@@ -343,7 +356,8 @@ class ConservativeBackfillingScheduler:
                 elif evt.type == 'END':
                     self.handle_end(evt.job_idx)
 
-            self.try_start_jobs()
+            while self.try_start_jobs():
+                pass
 
         # Return jobs with simulation results
         return list(job_map.values())
@@ -419,7 +433,7 @@ def write_resource_trace(jobs: List[Job], filename: str, total_nodes: int):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python_conservative_scheduler.py <trace.csv> [--verbose] [--nodes N] [--outdir DIR] [--reservation-depth N]")
+        print("Usage: python_conservative_scheduler.py <trace.csv> [--verbose] [--nodes N] [--outdir DIR] [--reservation-depth N] [--backfill-queue-depth N]")
         print()
         print("Python reference CONSERVATIVE backfilling scheduler for verification")
         print()
@@ -429,6 +443,8 @@ def main():
         print("  --outdir DIR Output directory for generated files (default: /tmp)")
         print("  --reservation-depth N  Reserve for only the first N waiting jobs")
         print("               (default: 0 = all; 1 reproduces EASY)")
+        print("  --backfill-queue-depth N  Examine at most N waiting jobs per pass")
+        print("               (default: 0 = all)")
         print()
         print("Generates reference output for CONSERVATIVE backfilling verification")
         print("Output files are written to /tmp by default to avoid directory pollution")
@@ -455,11 +471,17 @@ def main():
         idx = sys.argv.index('--reservation-depth')
         reservation_depth = int(sys.argv[idx + 1])
 
+    backfill_queue_depth = 0
+    if '--backfill-queue-depth' in sys.argv:
+        idx = sys.argv.index('--backfill-queue-depth')
+        backfill_queue_depth = int(sys.argv[idx + 1])
+
     print(f"=== Python Reference CONSERVATIVE Backfilling Scheduler ===", file=sys.stderr)
     print(f"Trace: {trace_file}", file=sys.stderr)
     print(f"Total nodes: {total_nodes}", file=sys.stderr)
     print(f"Output directory: {outdir}", file=sys.stderr)
     print(f"Reservation depth: {reservation_depth or 'all'}", file=sys.stderr)
+    print(f"Queue depth: {backfill_queue_depth or 'all'}", file=sys.stderr)
     print(f"Verbose: {verbose}", file=sys.stderr)
     print(file=sys.stderr)
 
@@ -469,7 +491,8 @@ def main():
 
     # Run scheduler
     scheduler = ConservativeBackfillingScheduler(total_nodes, verbose=verbose,
-                                                 reservation_depth=reservation_depth)
+                                                 reservation_depth=reservation_depth,
+                                                 backfill_queue_depth=backfill_queue_depth)
     jobs = scheduler.simulate(jobs)
 
     # Write output files to specified directory
