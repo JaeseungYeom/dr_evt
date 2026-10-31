@@ -46,17 +46,17 @@ should not be compared numerically.
 
 | Implementation | Time (s) | vs deque | Change | Peak queue | Correctness |
 | --- | ---: | ---: | ---: | ---: | --- |
-| `deque` | 0.4735 ± 0.0173 | 1.00× | baseline | 8,904 | baseline |
-| `multimap` | 7.4367 ± 0.0420 | 15.71× | +1,471% | 8,904 | PASS |
-| **`circular`** | **0.3238 ± 0.0035** | **0.68×** | **−32%** | **8,904** | **PASS** |
-| Python reference | 7.5574 ± 0.0124 | 15.96× | +1,496% | N/A | PASS |
-| `block`-4 | 0.4293 ± 0.0022 | 0.91× | −9% | 8,904 | PASS |
-| `block`-8 | 0.3753 ± 0.0005 | 0.79× | −21% | 8,904 | PASS |
-| `block`-16 | 0.3570 ± 0.0006 | 0.75× | −25% | 8,904 | PASS |
-| `block`-32 | 0.3837 ± 0.0014 | 0.81× | −19% | 8,904 | PASS |
-| `block`-64 | 0.3978 ± 0.0022 | 0.84× | −16% | 8,904 | PASS |
-| `block`-128 | 0.4197 ± 0.0021 | 0.89× | −11% | 8,904 | PASS |
-| `block`-256 | 0.4350 ± 0.0036 | 0.92× | −8% | 8,904 | PASS |
+| `deque` | 0.5269 ± 0.0388 | 1.00× | baseline | 8,904 | baseline |
+| `multimap` | 7.2542 ± 0.0307 | 13.77× | +1,277% | 8,904 | PASS |
+| **`circular`** | **0.3144 ± 0.0007** | **0.60×** | **−40%** | **8,904** | **PASS** |
+| Python reference | 7.6404 ± 0.0080 | 14.50× | +1,350% | N/A | PASS |
+| `block`-4 | 0.4217 ± 0.0009 | 0.80× | −20% | 8,904 | PASS |
+| `block`-8 | 0.3730 ± 0.0008 | 0.71× | −29% | 8,904 | PASS |
+| `block`-16 | 0.3586 ± 0.0007 | 0.68× | −32% | 8,904 | PASS |
+| `block`-32 | 0.3766 ± 0.0010 | 0.71× | −29% | 8,904 | PASS |
+| `block`-64 | 0.3956 ± 0.0013 | 0.75× | −25% | 8,904 | PASS |
+| `block`-128 | 0.4149 ± 0.0018 | 0.79× | −21% | 8,904 | PASS |
+| `block`-256 | 0.4607 ± 0.0043 | 0.87× | −13% | 8,904 | PASS |
 
 `circular` was fastest overall, and `block`-16 was the fastest block size.
 
@@ -77,6 +77,19 @@ population standard deviation.
 | `deque` | 15.6164 ± 0.0438 | 1.00× | baseline | baseline |
 | **`circular`** | **14.6416 ± 0.0076** | **0.94×** | **−6.2%** | **PASS** |
 | Python reference | 420.5650 ± 1.0565 | 26.93× | +2,593% | PASS |
+
+### Hybrid backfill result
+
+Ten end-to-end runs of `huge_10000jobs.csv` with 500 nodes,
+`run_time_mode=limit`, reservation depth 32, and queue depth 32 produced
+matching C++ and Python schedules. Values are means; `±` is the population
+standard deviation.
+
+| Implementation | Time (s) | vs deque | Change | Correctness |
+| --- | ---: | ---: | ---: | --- |
+| `deque` | 0.1881 ± 0.0003 | 1.00× | baseline | baseline |
+| **`circular`** | **0.1821 ± 0.0005** | **0.97×** | **−3%** | **PASS** |
+| Python reference | 6.0346 ± 0.0155 | 32.08× | +3,108% | PASS |
 
 Reproduce the current benchmark modes with:
 
