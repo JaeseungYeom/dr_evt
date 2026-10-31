@@ -50,9 +50,9 @@ private:
   Pcon_Values m_pcon;
 };
 
-/** Standard resource-history entry; preserves the existing representation. */
+/** Standard resource-history entry with a scalar simulation timestamp. */
 struct Standard_Resource_Sample {
-  epoch_t time;
+  sim_time_t time;
   num_nodes_t allocated;
   num_nodes_t capacity;
   /// Nodes whose job has ended but which are not yet reusable (node release
@@ -62,7 +62,7 @@ struct Standard_Resource_Sample {
 
 /** Resource-history entry emitted by the Pcon experiment. */
 struct Pcon_Resource_Sample {
-  epoch_t time;
+  sim_time_t time;
   num_nodes_t allocated;
   num_nodes_t capacity;
   Pcon_Values pcon;
@@ -85,7 +85,7 @@ struct Standard_Trace_Policy {
     return record_type(submit_time, num_nodes, queue, limit_time);
   }
 
-  static resource_sample_type sample(const epoch_t &time, num_nodes_t allocated,
+  static resource_sample_type sample(sim_time_t time, num_nodes_t allocated,
                                      num_nodes_t capacity) {
     return {time, allocated, capacity};
   }
@@ -113,7 +113,7 @@ struct Pcon_Trace_Policy {
     return record_type(Job_Record(submit_time, num_nodes, queue, limit_time));
   }
 
-  resource_sample_type sample(const epoch_t &time, num_nodes_t allocated,
+  resource_sample_type sample(sim_time_t time, num_nodes_t allocated,
                               num_nodes_t capacity) const {
     return {time, allocated, capacity, m_current};
   }
@@ -228,7 +228,7 @@ struct Swf_Trace_Policy {
    *  @param[in] allocated Nodes in use.
    *  @param[in] capacity Nodes available in total.
    *  @return Standard sample; SWF adds no resource columns. */
-  static resource_sample_type sample(const epoch_t &time, num_nodes_t allocated,
+  static resource_sample_type sample(sim_time_t time, num_nodes_t allocated,
                                      num_nodes_t capacity) {
     return {time, allocated, capacity};
   }

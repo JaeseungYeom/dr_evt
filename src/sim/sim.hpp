@@ -670,8 +670,7 @@ public:
       m_scheduler->sync_to(m_current_time); // get_next_arrival_time() needs it
       sim_time_t next = m_scheduler->get_next_arrival_time();
       if (!m_trace.pending_events().empty()) {
-        const auto &ts = m_trace.pending_events().begin()->get_time();
-        next = std::min(next, static_cast<sim_time_t>(ts.first) + ts.second);
+        next = std::min(next, m_trace.pending_events().begin()->get_time());
       }
       if (m_next_capacity_change < m_capacity_changes.size()) {
         next = std::min(next, m_capacity_changes[m_next_capacity_change].time);

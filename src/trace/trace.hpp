@@ -172,7 +172,9 @@ public:
     /// Nodes whose job has ended but which stay unavailable until their
     /// node-release event (node release delay). Always zero without one.
     num_nodes_t m_n_nodes_releasing;
-    event_q_t m_evtq;             ///< Pending resource start and end events.
+    /// Pending resource start, end, and release events. Its allocator owns
+    /// the node pool, so the queue is not copied between contexts.
+    event_q_t m_evtq;
 
     /// (time, allocated_nodes) sampled every time an event changes
     /// occupancy. free_nodes isn't stored here since total_nodes isn't
@@ -190,6 +192,8 @@ public:
 
     /** @brief Construct an empty trace-processing context. */
     Context();
+    Context(const Context &) = delete;
+    Context &operator=(const Context &) = delete;
     /** @brief Render the transient simulation context for diagnostics. */
     std::string to_string() const;
   };
@@ -701,9 +705,8 @@ public:
   void reset_resource_recording(sim_time_t start_time) {
     m_ctx.m_resource_history.clear();
     m_resource_recording_start = start_time;
-    const time_t sec = static_cast<time_t>(start_time);
-    m_resource_recording_baseline = make_resource_sample(
-        {sec, static_cast<float>(start_time - sec)}, m_ctx.m_n_nodes_in_use);
+    m_resource_recording_baseline =
+        make_resource_sample(start_time, m_ctx.m_n_nodes_in_use);
     m_has_resource_recording_baseline = true;
   }
 
@@ -834,8 +837,9 @@ public:
 
 protected:
   /** @brief Process queued resource events through a submission timestamp.
-   * @param[in] t_sub Inclusive timestamp through which events are handled. */
-  void process_events_until(const epoch_t &t_sub);
+   * @param[in] t_sub Inclusive simulation time through which events are
+   * handled. */
+  void process_events_until(sim_time_t t_sub);
 
   /// Resolve m_resource_history_capacity (0 -> sized from m_data) and
   /// call m_ctx.m_resource_history.set_capacity() - once, the first time
@@ -856,13 +860,13 @@ protected:
   /// safe to reclaim here - see m_resource_history's own comment - so this
   /// always succeeds, unlike a wait queue or job store, which may need an
   /// abort/grow fallback when nothing is currently reclaimable).
-  /// @param[in] time Sample timestamp.
+  /// @param[in] time Sample time in simulation seconds.
   /// @param[in] allocated Number of allocated nodes.
-  void record_resource_sample(const epoch_t &time, num_nodes_t allocated);
+  void record_resource_sample(sim_time_t time, num_nodes_t allocated);
 
   /// Build a policy sample at the current capacity, carrying the current
   /// releasing-node count.
-  resource_sample_t make_resource_sample(const epoch_t &time,
+  resource_sample_t make_resource_sample(sim_time_t time,
                                          num_nodes_t allocated) const {
     resource_sample_t sample =
         this->sample(time, allocated, m_resource_trace_current_capacity);
@@ -883,7 +887,7 @@ protected:
   /// Account for a departed job's nodes: free them now, or move them to the
   /// releasing pool and queue their node-release event when a delay is
   /// active. Shared by both event-processing paths.
-  void finish_job_nodes(job_no_t job_idx, const epoch_t &end_time,
+  void finish_job_nodes(job_no_t job_idx, sim_time_t end_time,
                         num_nodes_t nodes);
 
   /// @brief Resolve and apply the initial job-store capacity.

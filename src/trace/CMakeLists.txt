@@ -4,6 +4,7 @@ set_full_path(THIS_DIR_HEADERS
     data_columns.hpp
     dr_event.hpp
     epoch.hpp
+    event_pool_allocator.hpp
     job_io.hpp
     job_record.hpp
     job_stat_submit.hpp

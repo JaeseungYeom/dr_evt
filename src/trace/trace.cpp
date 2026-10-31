@@ -180,22 +180,17 @@ std::string BasicTrace<Policy>::Context::to_string() const {
 }
 
 template <typename Policy>
-void BasicTrace<Policy>::finish_job_nodes(job_no_t job_idx,
-                                          const epoch_t &end_time,
+void BasicTrace<Policy>::finish_job_nodes(job_no_t job_idx, sim_time_t end_time,
                                           num_nodes_t nodes) {
   if (m_release_delay.active()) {
-    const sim_time_t end = convert_epoch<sim_time_t>(end_time);
-    if (end >= m_release_delay_from) {
+    if (end_time >= m_release_delay_from) {
       // The nodes leave the allocated pool now but stay unavailable until
-      // the release event. Round the release time through epoch_t so the
-      // stored projection and the event's own timestamp are the same value.
-      const sim_time_t release = end + m_release_delay.sample(nodes);
-      const time_t sec = static_cast<time_t>(release);
-      const epoch_t release_epoch = {sec, static_cast<float>(release - sec)};
+      // the release event.
+      const sim_time_t release = end_time + m_release_delay.sample(nodes);
       m_ctx.m_n_nodes_in_use -= nodes;
       m_ctx.m_n_nodes_releasing += nodes;
-      m_ctx.m_evtq.insert(DR_Event::release(job_idx, release_epoch, nodes));
-      m_last_release_time = convert_epoch<sim_time_t>(release_epoch);
+      m_ctx.m_evtq.insert(DR_Event::release(job_idx, release, nodes));
+      m_last_release_time = release;
       m_last_departure_delayed = true;
       return;
     }
@@ -205,7 +200,7 @@ void BasicTrace<Policy>::finish_job_nodes(job_no_t job_idx,
 }
 
 template <typename Policy>
-void BasicTrace<Policy>::process_events_until(const epoch_t &t_sub) {
+void BasicTrace<Policy>::process_events_until(sim_time_t t_sub) {
   if (m_ctx.m_evtq.empty()) {
 #if MARK_DAT_PERIOD
     if (m_ctx.m_dat_span > 0.0) {
@@ -221,7 +216,7 @@ void BasicTrace<Policy>::process_events_until(const epoch_t &t_sub) {
   while (!m_ctx.m_evtq.empty()) {
     auto cur = m_ctx.m_evtq.begin();
     // Time of the earliest event in the queue
-    auto &t = cur->get_time();
+    const sim_time_t t = cur->get_time();
 
     if (t_sub < t) {
       // Process events upto the current submission time
@@ -230,9 +225,8 @@ void BasicTrace<Policy>::process_events_until(const epoch_t &t_sub) {
     if (cur->is_release()) {
       // Carries its own node count; its job record may be gone already.
       m_ctx.m_n_nodes_releasing -= cur->get_nodes();
-      const epoch_t event_time = t; // copy: erase() below invalidates t
       m_ctx.m_evtq.erase(cur);
-      record_resource_sample(event_time, m_ctx.m_n_nodes_in_use);
+      record_resource_sample(t, m_ctx.m_n_nodes_in_use);
       continue;
     }
     const auto &job_of_evt = job_at(cur->get_job_idx());
@@ -252,7 +246,7 @@ void BasicTrace<Policy>::process_events_until(const epoch_t &t_sub) {
             m_reserved.emplace_back(m_ctx.m_dat_start, m_ctx.m_dat_end);
           }
 
-          m_ctx.m_dat_start = cur->get_time();
+          m_ctx.m_dat_start = to_epoch(t);
           m_ctx.m_dat_span = 0.0;
         }
         job_at(cur->get_job_idx()).set_busy_nodes(total_nodes, true);
@@ -277,8 +271,8 @@ void BasicTrace<Policy>::process_events_until(const epoch_t &t_sub) {
 #endif
         m_ctx.m_pAll_cnt--;
         if (m_ctx.m_pAll_cnt == static_cast<num_jobs_t>(0u)) {
-          m_ctx.m_dat_span = cur->get_time() - m_ctx.m_dat_start;
-          m_ctx.m_dat_end = cur->get_time();
+          m_ctx.m_dat_span = t - convert_epoch<sim_time_t>(m_ctx.m_dat_start);
+          m_ctx.m_dat_end = to_epoch(t);
         }
       } else {
         finish_job_nodes(cur->get_job_idx(), t, job_of_evt.get_num_nodes());
@@ -287,16 +281,14 @@ void BasicTrace<Policy>::process_events_until(const epoch_t &t_sub) {
       finish_job_nodes(cur->get_job_idx(), t, job_of_evt.get_num_nodes());
 #endif
     }
-    const epoch_t event_time = t; // copy: erase() below invalidates t
-    m_ctx.m_evtq.erase(cur);      // Remove processed event from the queue
-    record_resource_sample(event_time, m_ctx.m_n_nodes_in_use);
+    m_ctx.m_evtq.erase(cur); // Remove processed event from the queue
+    record_resource_sample(t, m_ctx.m_n_nodes_in_use);
 #if MARK_DAT_PERIOD
     m_ctx.m_prev_job_q = job_q;
 #endif
   }
   if (departures_processed != 0) {
-    maybe_flush_completed_jobs(convert_epoch<sim_time_t>(t_sub),
-                               departures_processed);
+    maybe_flush_completed_jobs(t_sub, departures_processed);
   }
 }
 
@@ -338,8 +330,9 @@ void BasicTrace<Policy>::run_job_trace(const std::string &resource_trace_file,
   const job_no_t jobs_end =
       static_cast<job_no_t>(m_num_reclaimed + m_data.size());
   for (job_no_t job_no = first_job; job_no < jobs_end; ++job_no) {
-    const auto t_sub = job_at(job_no).get_submit_time();
-    if (convert_epoch<sim_time_t>(t_sub) > max_time) {
+    const sim_time_t t_sub =
+        convert_epoch<sim_time_t>(job_at(job_no).get_submit_time());
+    if (t_sub > max_time) {
       break;
     }
     process_events_until(t_sub);
@@ -352,14 +345,16 @@ void BasicTrace<Policy>::run_job_trace(const std::string &resource_trace_file,
     job.set_busy_nodes(m_ctx.m_n_nodes_in_use);
 #endif
     // Add the events created by this submission
-    m_ctx.m_evtq.emplace(job_no, job.get_begin_time(), arrival);
-    m_ctx.m_evtq.emplace(job_no, job.get_end_time(), departure);
+    m_ctx.m_evtq.emplace(
+        job_no, convert_epoch<sim_time_t>(job.get_begin_time()), arrival);
+    m_ctx.m_evtq.emplace(job_no, convert_epoch<sim_time_t>(job.get_end_time()),
+                         departure);
     m_replay_jobs_enqueued = static_cast<size_t>(job_no) + 1;
   }
   if (max_time == std::numeric_limits<sim_time_t>::max()) {
     // Process all remaining events. Use any time later than any timestamp in
     // the trace for flushing.
-    process_events_until(convert_time(max_tstamp));
+    process_events_until(convert_epoch<sim_time_t>(convert_time(max_tstamp)));
   } else {
     run_until_inclusive(max_time);
   }
@@ -620,25 +615,18 @@ void BasicTrace<Policy>::insert_job(job_no_t job_idx, sim_time_t start_time) {
     job.set_actual_run_time(job.get_limit_time());
   }
 
-  // Convert sim_time_t to epoch_t
-  time_t start_sec = static_cast<time_t>(start_time);
-  float start_frac = start_time - start_sec;
-  epoch_t start_epoch = {start_sec, start_frac};
+  // The events carry the authoritative clock values: the start is the
+  // current simulation time and the end follows from the actual duration.
+  // The record keeps the same instants in its epoch_t form for output; its
+  // float fraction may differ in the last digits and must not move an event
+  // behind the current simulation clock.
+  const tdiff_t duration = job.get_actual_run_time();
+  m_ctx.m_evtq.emplace(job_idx, start_time, arrival);
+  m_ctx.m_evtq.emplace(job_idx, start_time + duration, departure);
 
-  // Calculate end time using actual duration
-  tdiff_t duration = job.get_actual_run_time();
-  sim_time_t end_time = start_time + duration;
-  time_t end_sec = static_cast<time_t>(end_time);
-  float end_frac = end_time - end_sec;
-  epoch_t end_epoch = {end_sec, end_frac};
-
-  // Insert events into queue (will be automatically sorted by event_q_t)
-  m_ctx.m_evtq.emplace(job_idx, start_epoch, arrival);
-  m_ctx.m_evtq.emplace(job_idx, end_epoch, departure);
-
-  // Update job record with computed times (for output)
-  job_at(job_idx).set_begin_time(start_epoch);
-  job_at(job_idx).compute_end_time();
+  // Store calendar-aware timestamps for output after scheduling the events.
+  job.set_begin_time(to_epoch(start_time));
+  job.compute_end_time();
 
   // A replay-format record rescheduled by Simulation's warm-start path now
   // owns ordinary scheduler-created events. Mark its permanent position as
@@ -653,40 +641,31 @@ void BasicTrace<Policy>::enqueue_replay_job(job_no_t job_idx) {
     throw std::logic_error("enqueue_replay_job() requires replay-format input");
   }
   const auto &job = job_at(job_idx);
-  m_ctx.m_evtq.emplace(job_idx, job.get_begin_time(), arrival);
-  m_ctx.m_evtq.emplace(job_idx, job.get_end_time(), departure);
+  m_ctx.m_evtq.emplace(job_idx, convert_epoch<sim_time_t>(job.get_begin_time()),
+                       arrival);
+  m_ctx.m_evtq.emplace(job_idx, convert_epoch<sim_time_t>(job.get_end_time()),
+                       departure);
   m_replay_jobs_enqueued =
       std::max(m_replay_jobs_enqueued, static_cast<size_t>(job_idx) + 1);
 }
 
 template <typename Policy>
 void BasicTrace<Policy>::run_until_exclusive(sim_time_t target_time) {
-  // Convert sim_time_t to epoch_t for comparison
-  time_t target_sec = static_cast<time_t>(target_time);
-  float target_frac = target_time - target_sec;
-  epoch_t target_epoch = {target_sec, target_frac};
-
-  // Process events until we reach target_time (exclusive)
-  process_events_until(target_epoch);
+  // Process events through target_time; process_events_until() is inclusive
+  // of events at exactly that time, as it always was.
+  process_events_until(target_time);
 }
 
 template <typename Policy>
 void BasicTrace<Policy>::run_until_inclusive(sim_time_t target_time) {
   // Process events at and before target_time
   while (!m_ctx.m_evtq.empty()) {
-    const auto &event = *m_ctx.m_evtq.begin();
-    const epoch_t event_timestamp = event.get_time();
-    sim_time_t event_time =
-        static_cast<sim_time_t>(event_timestamp.first) + event_timestamp.second;
-
+    const sim_time_t event_time = m_ctx.m_evtq.begin()->get_time();
     if (event_time > target_time) {
       break; // Stop after processing all events <= target_time
     }
-
-    // Process this event by running slightly past it
-    // process_events_until() erases this event. Pass an independent timestamp
-    // instead of a reference into the set node that it is about to destroy.
-    process_events_until(event_timestamp);
+    // Processes this event and every other one at the same time.
+    process_events_until(event_time);
   }
 }
 
@@ -734,8 +713,7 @@ template <typename Policy> bool BasicTrace<Policy>::process_single_event() {
   }
   if (simulated_trace_output_active() && timestamp_drained &&
       m_departures_since_job_flush >= effective_job_flush_interval()) {
-    flush_completed_jobs_impl(convert_epoch<sim_time_t>(event.get_time()),
-                              /*sync=*/false);
+    flush_completed_jobs_impl(event.get_time(), /*sync=*/false);
   }
 
   return true;
@@ -758,9 +736,8 @@ BasicTrace<Policy>::resource_trace_row(const resource_sample_t &sample) const {
   const num_nodes_t occupied = sample.allocated + sample.releasing;
   const num_nodes_t free_nodes =
       occupied < sample.capacity ? sample.capacity - occupied : 0;
-  std::string row = format_sim_time(convert_epoch<sim_time_t>(sample.time),
-                                    m_resource_trace_msec) +
-                    "," + std::to_string(free_nodes) + "," +
+  std::string row = format_sim_time(sample.time, m_resource_trace_msec) + "," +
+                    std::to_string(free_nodes) + "," +
                     std::to_string(sample.allocated);
   if (node_release_delay_active()) {
     row += "," + std::to_string(sample.releasing);
@@ -776,7 +753,7 @@ RedisResourceRecord BasicTrace<Policy>::to_redis_resource_record(
     const resource_sample_t &sample) const {
   const num_nodes_t occupied = sample.allocated + sample.releasing;
   RedisResourceRecord record;
-  record.time = convert_epoch<sim_time_t>(sample.time);
+  record.time = sample.time;
   record.free_nodes =
       occupied < sample.capacity ? sample.capacity - occupied : 0;
   record.allocated_nodes = sample.allocated;
@@ -831,14 +808,11 @@ void BasicTrace<Policy>::start_resource_trace(const std::string &filename,
   // Baseline row. For a traditional run this remains time 0 with no
   // allocation. A warm run resets m_resource_recording_start at its boundary
   // while preserving the occupancy and Pcon state established by replay.
-  const time_t baseline_sec = static_cast<time_t>(m_resource_recording_start);
-  const epoch_t baseline_time = {
-      baseline_sec,
-      static_cast<float>(m_resource_recording_start - baseline_sec)};
   const auto baseline_sample =
       m_has_resource_recording_baseline
           ? m_resource_recording_baseline
-          : make_resource_sample(baseline_time, m_ctx.m_n_nodes_in_use);
+          : make_resource_sample(m_resource_recording_start,
+                                 m_ctx.m_n_nodes_in_use);
 #if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)
   if (m_redis_output && m_redis_output->resource_trace_active()) {
     const auto *first = &baseline_sample;
@@ -921,7 +895,7 @@ template <typename Policy> void BasicTrace<Policy>::flush_resource_history() {
 }
 
 template <typename Policy>
-void BasicTrace<Policy>::record_resource_sample(const epoch_t &time,
+void BasicTrace<Policy>::record_resource_sample(sim_time_t time,
                                                 num_nodes_t allocated) {
   resolve_resource_history_capacity();
   if (m_ctx.m_resource_history.full()) {
@@ -937,9 +911,7 @@ template <typename Policy>
 void BasicTrace<Policy>::set_resource_capacity(sim_time_t time,
                                                num_nodes_t capacity) {
   m_resource_trace_current_capacity = capacity;
-  const time_t sec = static_cast<time_t>(time);
-  record_resource_sample({sec, static_cast<float>(time - sec)},
-                         m_ctx.m_n_nodes_in_use);
+  record_resource_sample(time, m_ctx.m_n_nodes_in_use);
 }
 
 template <typename Policy>
@@ -990,8 +962,7 @@ bool BasicTrace<Policy>::is_job_reclaimable(job_no_t job_id,
   // boundary is still queued, resource accounting has not been fully drained.
   // This also handles several departures sharing exactly one timestamp.
   if (!m_ctx.m_evtq.empty() &&
-      convert_epoch<sim_time_t>(m_ctx.m_evtq.begin()->get_time()) <=
-          current_time) {
+      m_ctx.m_evtq.begin()->get_time() <= current_time) {
     return false;
   }
   return convert_epoch<sim_time_t>(job.get_end_time()) <= current_time;

@@ -111,6 +111,14 @@ template <typename T = double> inline T convert_epoch(const epoch_t &e) {
   return static_cast<T>(e.first) + static_cast<T>(e.second);
 }
 
+/** @brief Split a scalar seconds value into an epoch timestamp.
+ * @param[in] t Seconds since the epoch, possibly fractional.
+ * @return Whole seconds and the remaining fraction as epoch_t. */
+inline epoch_t to_epoch(sim_time_t t) {
+  const time_t sec = static_cast<time_t>(t);
+  return {sec, static_cast<float>(t - static_cast<sim_time_t>(sec))};
+}
+
 /**
  * @brief Parse ISO timestamp with timezone offset and convert to UTC
  *
