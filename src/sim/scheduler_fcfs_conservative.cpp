@@ -134,6 +134,10 @@ FCFSConservativeScheduler::schedule(num_nodes_t free_nodes,
     return jobs_to_run;
   }
 
+  if (available_nodes == 0) {
+    return jobs_to_run;
+  }
+
   // Step 3: Try backfilling based on policy
   // Update effective running jobs to include jobs just started
   if (m_backfill_policy == BackfillPolicy::EASY) {

@@ -139,6 +139,10 @@ FCFSScheduler::schedule(num_nodes_t free_nodes,
     return jobs_to_run;
   }
 
+  if (available_nodes == 0) {
+    return jobs_to_run;
+  }
+
   // FCFS head is now genuinely at the front and blocked - calculate
   // reservation for backfilling.
   // Use available_nodes (not the original free_nodes parameter): if any

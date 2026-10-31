@@ -101,6 +101,10 @@ CircularBufferFCFSScheduler::schedule(num_nodes_t free_nodes,
     return jobs_to_run;
   }
 
+  if (available_nodes == 0) {
+    return jobs_to_run;
+  }
+
   // FCFS head is now genuinely at the front and blocked - calculate
   // reservation for backfilling. See FCFSScheduler::schedule() for
   // why effective_running_jobs must include jobs_to_run.

@@ -135,6 +135,10 @@ std::vector<job_no_t> CircularBufferFCFSConservativeScheduler::schedule(
     return jobs_to_run;
   }
 
+  if (available_nodes == 0) {
+    return jobs_to_run;
+  }
+
   if (m_backfill_policy == BackfillPolicy::EASY) {
     m_fcfs_reservation_time = calculate_fcfs_reservation(
         m_wait_queue.front().nodes_requested, available_nodes,
