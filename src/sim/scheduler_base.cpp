@@ -141,10 +141,10 @@ std::unique_ptr<SchedulerBase> create_conservative_scheduler(
     num_nodes_t total_nodes, size_t initial_job_count,
     BackfillPolicy backfill_policy, QueueImplementation queue_impl,
     size_t wait_queue_capacity, CircularOverflowPolicy wait_queue_overflow,
-    size_t reservation_depth) {
+    size_t reservation_depth, size_t backfill_queue_depth) {
   if (queue_impl == QueueImplementation::DEQUE) {
     return std::make_unique<FCFSConservativeScheduler>(
-        total_nodes, backfill_policy, reservation_depth);
+        total_nodes, backfill_policy, reservation_depth, backfill_queue_depth);
   }
   if (queue_impl != QueueImplementation::CIRCULAR) {
     std::cerr << "Warning: queue_impl '" << queue_impl_name(queue_impl)
@@ -152,7 +152,7 @@ std::unique_ptr<SchedulerBase> create_conservative_scheduler(
   }
   return std::make_unique<CircularBufferFCFSConservativeScheduler>(
       total_nodes, initial_job_count, backfill_policy, wait_queue_capacity,
-      wait_queue_overflow, reservation_depth);
+      wait_queue_overflow, reservation_depth, backfill_queue_depth);
 }
 } // anonymous namespace
 
@@ -162,7 +162,7 @@ create_scheduler(num_nodes_t total_nodes, size_t initial_job_count,
                  QueueImplementation queue_impl, size_t block_size,
                  size_t wait_queue_capacity,
                  CircularOverflowPolicy wait_queue_overflow,
-                 size_t reservation_depth) {
+                 size_t reservation_depth, size_t backfill_queue_depth) {
   if (backfill_policy == BackfillPolicy::HYBRID) {
     // Hybrid reservations are implemented by the conservative FCFS
     // scheduler only; route FCFS there and reject other orderings.
@@ -177,7 +177,8 @@ create_scheduler(num_nodes_t total_nodes, size_t initial_job_count,
     }
     return create_conservative_scheduler(
         total_nodes, initial_job_count, backfill_policy, queue_impl,
-        wait_queue_capacity, wait_queue_overflow, reservation_depth);
+        wait_queue_capacity, wait_queue_overflow, reservation_depth,
+        backfill_queue_depth);
   }
 
   switch (priority_policy) {
@@ -267,7 +268,8 @@ create_scheduler(num_nodes_t total_nodes, size_t initial_job_count,
   case PriorityPolicy::FCFS_CONSERVATIVE:
     return create_conservative_scheduler(
         total_nodes, initial_job_count, backfill_policy, queue_impl,
-        wait_queue_capacity, wait_queue_overflow, reservation_depth);
+        wait_queue_capacity, wait_queue_overflow, reservation_depth,
+        backfill_queue_depth);
 
   case PriorityPolicy::SJF:
     // SJF only uses multimap (already efficient)

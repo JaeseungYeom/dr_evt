@@ -9,6 +9,11 @@
 # - Measures whole-simulation wall-clock time, including parsing, scheduling,
 #   event handling, and trace output; it is not a wait-queue microbenchmark
 # - Compares the Python and deque schedules after normalizing their schemas
+#
+# The default run deliberately benchmarks EASY and bounded hybrid backfill, not
+# full conservative backfill. Conservative protects every waiting job and can
+# take minutes on the default 10,000-job trace; run it only as an explicit,
+# separate benchmark with a smaller trace (for example, huge_2000jobs.csv).
 
 set -e
 
@@ -23,7 +28,11 @@ cd "$REPO_ROOT"
 BLOCK_SIZES=(4 8 16 32 64 128 256)
 TRACE_FILE=""
 BENCHMARK_MODE="all"
-VERBOSE=false
+# A depth of 1 reproduces EASY; a depth covering the examined queue approaches
+# conservative backfill. Keep it no larger than the queue-depth cap: the
+# built-in scheduler cannot protect jobs it does not examine in that pass.
+HYBRID_RESERVATION_DEPTH=32
+HYBRID_QUEUE_DEPTH=32
 
 print_usage() {
     echo "Usage: $0 [OPTIONS] [TRACE_FILE]"
@@ -33,16 +42,20 @@ print_usage() {
     echo ""
     echo "ARGUMENTS:"
     echo "  --backfill-policy POLICY"
-    echo "                all (default) runs EASY and conservative comparisons;"
-    echo "                easy benchmarks all FCFS queue variants; conservative"
+    echo "                all (default) runs EASY and hybrid comparisons;"
+    echo "                easy benchmarks all FCFS queue variants; hybrid"
     echo "                benchmarks deque, circular, and the Python oracle."
+    echo "  --reservation-depth N"
+    echo "                Hybrid reservations to protect (default: 32)."
+    echo "  --backfill-queue-depth N"
+    echo "                Eligible jobs considered per hybrid pass (default: 32)."
     echo "  TRACE_FILE    Path to test trace (default: tests/test_traces/scale/huge_10000jobs.csv)"
     echo ""
     echo "EXAMPLES:"
-    echo "  $0                                           # EASY and conservative, default trace"
+    echo "  $0                                           # EASY and hybrid, default trace"
     echo "  $0 --backfill-policy easy                    # Reproduce the EASY table only"
-    echo "  $0 --backfill-policy conservative            # Conservative comparison"
-    echo "  $0 --backfill-policy conservative tests/test_traces/scale/huge_2000jobs.csv"
+    echo "  $0 --backfill-policy hybrid                  # Hybrid comparison (depth 32)"
+    echo "  $0 --backfill-policy hybrid tests/test_traces/scale/huge_2000jobs.csv"
     exit 0
 }
 
@@ -50,10 +63,26 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --backfill-policy)
             if [[ $# -lt 2 ]]; then
-                echo "Error: --backfill-policy requires all, easy, or conservative"
+                echo "Error: --backfill-policy requires all, easy, or hybrid"
                 exit 1
             fi
             BENCHMARK_MODE="$2"
+            shift 2
+            ;;
+        --reservation-depth)
+            if [[ $# -lt 2 || ! "$2" =~ ^[1-9][0-9]*$ ]]; then
+                echo "Error: --reservation-depth requires a positive integer"
+                exit 1
+            fi
+            HYBRID_RESERVATION_DEPTH="$2"
+            shift 2
+            ;;
+        --backfill-queue-depth)
+            if [[ $# -lt 2 || ! "$2" =~ ^[1-9][0-9]*$ ]]; then
+                echo "Error: --backfill-queue-depth requires a positive integer"
+                exit 1
+            fi
+            HYBRID_QUEUE_DEPTH="$2"
             shift 2
             ;;
         -h|--help)
@@ -74,8 +103,8 @@ if [[ -z "$TRACE_FILE" ]]; then
     TRACE_FILE="tests/test_traces/scale/huge_10000jobs.csv"
 fi
 
-if [[ "$BENCHMARK_MODE" != "all" && "$BENCHMARK_MODE" != "easy" && "$BENCHMARK_MODE" != "conservative" ]]; then
-    echo "Error: unsupported backfill policy '$BENCHMARK_MODE' (use all, easy, or conservative)"
+if [[ "$BENCHMARK_MODE" != "all" && "$BENCHMARK_MODE" != "easy" && "$BENCHMARK_MODE" != "hybrid" ]]; then
+    echo "Error: unsupported backfill policy '$BENCHMARK_MODE' (use all, easy, or hybrid)"
     exit 1
 fi
 
@@ -101,17 +130,17 @@ elapsed_seconds() {
     echo "scale=3; ($2 - $1) / 1000000000" | bc
 }
 
-run_conservative_benchmark() {
+run_hybrid_benchmark() {
     local outdir trace_name deque_out circular_out python_out_dir
     local deque_time circular_time python_time python_status circular_status
     local cpp_start cpp_end python_start python_end
 
     if ! select_python_interpreter 3 7; then
-        echo "Error: Python 3.7+ is required for the conservative reference"
+        echo "Error: Python 3.7+ is required for the hybrid reference"
         return 1
     fi
-    if ! outdir=$(mktemp -d "${TMPDIR:-/tmp}/dr-evt-conservative-benchmark.XXXXXXXX" 2>/dev/null); then
-        outdir=$(mktemp -d "/tmp/dr-evt-conservative-benchmark.XXXXXXXX")
+    if ! outdir=$(mktemp -d "${TMPDIR:-/tmp}/dr-evt-hybrid-benchmark.XXXXXXXX" 2>/dev/null); then
+        outdir=$(mktemp -d "/tmp/dr-evt-hybrid-benchmark.XXXXXXXX")
     fi
     trace_name=$(basename "$TRACE_FILE" .csv)
     deque_out="$outdir/deque.csv"
@@ -119,14 +148,15 @@ run_conservative_benchmark() {
     python_out_dir="$outdir/python"
     mkdir -p "$python_out_dir"
 
-    run_conservative_cpp() {
+    run_hybrid_cpp() {
         local label="$1" queue_impl="$2" output="$3" resources="$4" log="$5"
-        echo -n "Running C++ $label... " >&2
         cpp_start=$(date +%s%N)
         if ! "$SIMULATOR" "$TRACE_FILE" \
             --priority_policy fcfs_conservative \
             --queue_impl "$queue_impl" \
-            --backfill_policy conservative \
+            --backfill_policy hybrid \
+            --reservation_depth "$HYBRID_RESERVATION_DEPTH" \
+            --backfill_queue_depth "$HYBRID_QUEUE_DEPTH" \
             --total_nodes "$TOTAL_NODES" \
             --max_jobs "$MAX_JOBS" \
             --trace_format "$TRACE_FORMAT" \
@@ -143,17 +173,21 @@ run_conservative_benchmark() {
 
     echo ""
     echo "=========================================="
-    echo "Conservative Backfill Queue Comparison"
+    echo "Hybrid Backfill Queue Comparison"
     echo "=========================================="
     echo "Trace: $TRACE_FILE"
     echo "Total nodes: $TOTAL_NODES"
     echo "Max jobs: $MAX_JOBS"
+    echo "Reservation depth: $HYBRID_RESERVATION_DEPTH"
+    echo "Queue depth: $HYBRID_QUEUE_DEPTH"
     echo "Measurement: complete simulation wall-clock time (not isolated queue operations)"
     echo ""
 
-    deque_time=$(run_conservative_cpp "deque" deque "$deque_out" "$outdir/deque_resources.csv" "$outdir/deque.log")
+    echo "Running C++ deque..."
+    deque_time=$(run_hybrid_cpp "deque" deque "$deque_out" "$outdir/deque_resources.csv" "$outdir/deque.log")
     echo "done (${deque_time}s)"
-    circular_time=$(run_conservative_cpp "circular" circular "$circular_out" "$outdir/circular_resources.csv" "$outdir/circular.log")
+    echo "Running C++ circular..."
+    circular_time=$(run_hybrid_cpp "circular" circular "$circular_out" "$outdir/circular_resources.csv" "$outdir/circular.log")
     echo "done (${circular_time}s)"
 
     echo -n "Checking C++ schedule equivalence... "
@@ -165,10 +199,11 @@ run_conservative_benchmark() {
         echo "FAIL (outputs retained in $outdir)"
     fi
 
-    echo -n "Running Python conservative reference... "
+    echo -n "Running Python hybrid reference... "
     python_start=$(date +%s%N)
     if "$PYTHON_BIN" scripts/python_conservative_scheduler.py "$TRACE_FILE" \
         --nodes "$TOTAL_NODES" --outdir "$python_out_dir" \
+        --reservation-depth "$HYBRID_RESERVATION_DEPTH" \
         >"$outdir/python.log" 2>&1; then
         python_end=$(date +%s%N)
         python_time=$(elapsed_seconds "$python_start" "$python_end")
@@ -202,14 +237,14 @@ run_conservative_benchmark() {
     fi
 
     if [[ "$circular_status" != "PASS" || "$python_status" != "PASS" ]]; then
-        echo "Conservative benchmark correctness comparison failed. Outputs: $outdir"
+        echo "Hybrid benchmark correctness comparison failed. Outputs: $outdir"
         return 1
     fi
     rm -rf -- "$outdir"
 }
 
-if [[ "$BENCHMARK_MODE" == "conservative" ]]; then
-    run_conservative_benchmark
+if [[ "$BENCHMARK_MODE" == "hybrid" ]]; then
+    run_hybrid_benchmark
     exit $?
 fi
 
@@ -225,9 +260,9 @@ echo ""
 TRACE_NAME=$(basename "$TRACE_FILE" .csv)
 NUM_JOBS=$(wc -l < "$TRACE_FILE" | tr -d ' ')
 
-# This branch benchmarks EASY. Conservative dispatches above to the focused
+# This branch benchmarks EASY. Hybrid dispatches above to the focused
 # deque/circular/Python comparison because block and multimap do not implement
-# the same conservative wait-queue algorithm.
+# the same hybrid reservation algorithm.
 BACKFILL_POLICY="easy"
 
 echo "Parameters:"
@@ -749,6 +784,6 @@ fi
 
 if [[ "$BENCHMARK_MODE" == "all" ]]; then
     echo ""
-    echo "Starting conservative backfill comparison..."
-    run_conservative_benchmark
+    echo "Starting hybrid backfill comparison..."
+    run_hybrid_benchmark
 fi

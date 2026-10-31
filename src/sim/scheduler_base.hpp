@@ -302,7 +302,7 @@ std::unique_ptr<SchedulerBase> create_scheduler(
     QueueImplementation queue_impl = QueueImplementation::CIRCULAR,
     size_t block_size = 128, size_t wait_queue_capacity = 0,
     CircularOverflowPolicy wait_queue_overflow = CircularOverflowPolicy::GROW,
-    size_t reservation_depth = 0);
+    size_t reservation_depth = 0, size_t backfill_queue_depth = 0);
 
 /**@}*/
 

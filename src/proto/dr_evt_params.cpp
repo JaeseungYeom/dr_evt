@@ -116,6 +116,7 @@ set_sim_options(const dr_evt_proto::DR_EVT_Params::Simulation_Params &cfg,
   // Reservation depth for hybrid backfilling; zero is also the Sim_Params
   // default and is rejected when the policy is hybrid.
   sp.m_reservation_depth = cfg.reservation_depth();
+  sp.m_backfill_queue_depth = cfg.backfill_queue_depth();
 
   // Backfill policy (default: EASY)
   if (!cfg.backfill_policy().empty()) {

@@ -193,8 +193,8 @@ in [Wait Queues](../docs/dev/WAIT_QUEUES.md#benchmark-record). It measures
 complete simulator runs—not isolated wait-queue operations—and its workload is
 [`test_traces/scale/huge_10000jobs.csv`](test_traces/scale/huge_10000jobs.csv);
 it byte-compares every C++ queue output with `deque` and compares the normalized
-Python EASY and conservative schedules with their respective C++ `deque`
-baselines using a `0.001` time tolerance. The
+Python EASY and hybrid schedules with their respective C++ `deque` baselines
+using a `0.001` time tolerance. The
 differential runner uses the
 [`scheduler_correctness`](test_traces/scheduler_correctness/) fixtures.
 

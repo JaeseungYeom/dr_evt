@@ -33,6 +33,10 @@ and trace output. It is not an isolated wait-queue microbenchmark. The queue
 implementation is the intended variable, but the complete difference cannot be
 attributed solely to queue operations.
 
+These measurements characterize this workload and configuration only. Results
+can change with the trace's arrival pattern, job sizes and durations, queue
+depth, backfill policy, and machine.
+
 For sampled hot-path measurements within the circular FCFS scheduler, see
 [Performance Analysis](PERFORMANCE_ANALYSIS.md). That profile complements this
 end-to-end queue comparison; the two measurements use different workloads and
@@ -61,6 +65,19 @@ queue variant, including `multimap`. The Python reference is an end-to-end
 baseline. Its CSV schema is normalized before its job order and start/end times
 are compared with the C++ `deque` schedule using a `0.001` tolerance.
 
+### Conservative backfill result
+
+Five end-to-end runs of `huge_2000jobs.csv` with 500 nodes, full conservative
+backfilling, and `run_time_mode=limit` produced identical C++ schedules. This
+is a separate workload from the EASY table above. Values are means; `±` is the
+population standard deviation.
+
+| Implementation | Time (s) | vs deque | Change | Correctness |
+| --- | ---: | ---: | ---: | --- |
+| `deque` | 15.6164 ± 0.0438 | 1.00× | baseline | baseline |
+| **`circular`** | **14.6416 ± 0.0076** | **0.94×** | **−6.2%** | **PASS** |
+| Python reference | 420.5650 ± 1.0565 | 26.93× | +2,593% | PASS |
+
 Run the same benchmark with:
 
 ```bash
@@ -69,9 +86,10 @@ tests/benchmark_wait_queues.sh
 
 By default the script runs both comparisons. The EASY comparison tests `deque`,
 `multimap`, `circular`, every supported `block` size, and the Python reference.
-The conservative comparison tests the deque and circular implementations plus
-the Python conservative oracle. Each C++ comparison is byte-for-byte against
-its deque baseline; Python schedules use a `0.001` time tolerance.
+The hybrid comparison tests the deque and circular implementations plus the
+Python oracle at queue and reservation depth 32. Each C++ comparison is
+byte-for-byte against its deque baseline; Python schedules use a `0.001` time
+tolerance.
 
 To reproduce only the historical EASY table:
 
@@ -79,22 +97,28 @@ To reproduce only the historical EASY table:
 tests/benchmark_wait_queues.sh --backfill-policy easy
 ```
 
-### Conservative backfill comparison
+### Hybrid backfill comparison
 
-Conservative backfilling has two equivalent FCFS implementations: `deque` and
-`circular`. The block and multimap queues do not implement the conservative
-reservation algorithm, so benchmark those two C++ queues and the Python
-conservative oracle separately:
+Hybrid backfilling protects the first 32 waiting jobs considered in a pass.
+The block and multimap queues do not implement this reservation algorithm, so
+benchmark the deque and circular C++ implementations plus the Python oracle
+separately:
 
 ```bash
-tests/benchmark_wait_queues.sh --backfill-policy conservative
+tests/benchmark_wait_queues.sh --backfill-policy hybrid
 ```
 
+Pass `--reservation-depth N` or `--backfill-queue-depth N` to model a
+deployment-specific setting. Keep the reservation depth no larger than queue
+depth: jobs outside the examined prefix cannot be protected. Slurm's analogous
+`bf_job_part_count_reserve` has no portable default; a depth of `1` matches
+EASY and a depth near the queue length approaches conservative backfilling.
+
 The command byte-compares the C++ deque and circular schedules, then compares
-the Python conservative schedule with deque using a `0.001` time tolerance.
-It does not replace the EASY results above; record the conservative results in
-a separate table with the workload, node count, run count, mean, and standard
-deviation.
+the Python hybrid schedule with deque using a `0.001` time tolerance. It does
+not replace the EASY results above; record the hybrid results in a separate
+table with the workload, node count, run count, reservation depth, mean, and
+standard deviation.
 
 The unit and differential coverage is listed under
 [Wait-queue tests](https://github.com/LLNL/dr_evt/blob/main/tests/README.md#wait-queue-tests).

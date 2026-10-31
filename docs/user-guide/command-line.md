@@ -220,9 +220,21 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator traces/jobs.csv --backfill_policy conserva
 ### `--num_max_candidates COUNT`
 
 Maximum number of feasible jobs offered to the callback-driven custom
-EASY scheduler in one selection decision. `COUNT` must be greater than zero.
+EASY scheduler in one selection decision. This is applied after resource and
+reservation-window feasibility checks; it is not a limit on waiting jobs
+scanned. `COUNT` must be greater than zero.
 
 **Default:** `1`
+
+### `--backfill_queue_depth N`
+
+Maximum number of eligible waiting jobs, including the blocked FCFS head, that
+the built-in hybrid or conservative scheduler examines in one scheduling pass.
+Jobs beyond that prefix are not tested for backfill in that pass. `0` leaves
+the scan unlimited. This is independent of `--reservation_depth`, which limits
+only the earlier jobs whose reservations must be protected.
+
+**Default:** `0` (unlimited)
 
 ### `--reservation_depth N`
 

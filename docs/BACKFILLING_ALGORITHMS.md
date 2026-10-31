@@ -74,6 +74,22 @@ offered vector is an error. Returning `std::nullopt` skips backfilling for that
 scheduling decision. The example's cost-only `std::min_element` comparison
 selects the first candidate in vector order when multiple costs are equal.
 
+`num_max_candidates` is not a wait-queue scan limit. It applies only after the
+custom EASY scheduler has tested jobs for resource and reservation-window
+feasibility, and it limits the feasible jobs offered to the callback. In
+contrast, `backfill_queue_depth` bounds how many waiting jobs the built-in
+hybrid or conservative scheduler examines before feasibility testing. They are
+separate current scheduler paths, not two limits applied together:
+
+```text
+built-in hybrid/conservative: waiting queue → backfill_queue_depth → feasibility
+custom EASY selector:           waiting queue → feasibility
+                               → num_max_candidates → callback selection
+```
+
+The callback scheduler currently uses EASY reservations; it does not implement
+hybrid or conservative reservations.
+
 ### Conservative
 
 Conservative backfilling protects every earlier waiting job. For each
@@ -85,7 +101,8 @@ candidates are evaluated.
 
 Use `--priority_policy fcfs_conservative --backfill_policy conservative` for
 the full FCFS conservative-reservation implementation. It currently uses the
-`deque` wait queue.
+`circular` wait queue by default; use `--queue_impl deque` to select the
+deque implementation.
 
 ### Hybrid
 

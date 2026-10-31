@@ -49,9 +49,8 @@ sim_time_t FCFSConservativeScheduler::calculate_conservative_window(
   // Check the reserved jobs ahead of this backfill candidate: every waiting
   // job ahead of it under CONSERVATIVE, or only the first
   // m_reservation_depth of them under HYBRID.
-  const size_t depth = m_backfill_policy == BackfillPolicy::HYBRID
-                           ? m_reservation_depth
-                           : 0;
+  const size_t depth =
+      m_backfill_policy == BackfillPolicy::HYBRID ? m_reservation_depth : 0;
   size_t reserved = 0;
   for (size_t i = 0; i < backfill_index; ++i) {
     const auto &job = m_wait_queue[i];
@@ -144,10 +143,14 @@ FCFSConservativeScheduler::schedule(num_nodes_t free_nodes,
         effective_running_jobs, current_time);
 
     // Try backfilling with remaining eligible jobs
+    size_t examined = 1; // The blocked FCFS head is the first examined job.
     for (size_t i = 1; i < m_eligible_end_idx; ++i) {
       const auto &job = m_wait_queue[i];
       if (job.removed)
         continue;
+      if (m_backfill_queue_depth != 0 && examined >= m_backfill_queue_depth)
+        break;
+      ++examined;
 
       // Check resource fit
       if (job.nodes_requested > available_nodes)

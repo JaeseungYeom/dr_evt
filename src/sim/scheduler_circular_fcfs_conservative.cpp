@@ -159,9 +159,17 @@ std::vector<job_no_t> CircularBufferFCFSConservativeScheduler::schedule(
     return jobs_to_run;
   }
 
+  size_t examined = 1; // The blocked FCFS head is the first examined job.
   for (size_t i = 1; i < m_eligible_end_idx; ++i) {
     const auto &job = m_wait_queue[i];
-    if (job.removed || job.nodes_requested > available_nodes) {
+    if (job.removed) {
+      continue;
+    }
+    if (m_backfill_queue_depth != 0 && examined >= m_backfill_queue_depth) {
+      break;
+    }
+    ++examined;
+    if (job.nodes_requested > available_nodes) {
       continue;
     }
     const sim_time_t conservative_window = calculate_conservative_window(

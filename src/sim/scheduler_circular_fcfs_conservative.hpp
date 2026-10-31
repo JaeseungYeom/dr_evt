@@ -47,6 +47,7 @@ private:
   sim_time_t m_current_tracked_time;
   size_t m_removed_count;
   size_t m_reservation_depth;
+  size_t m_backfill_queue_depth;
 
 public:
   /**
@@ -62,13 +63,14 @@ public:
       num_nodes_t total_nodes, size_t initial_job_count,
       BackfillPolicy bf_policy, size_t initial_capacity = 0,
       CircularOverflowPolicy overflow_policy = CircularOverflowPolicy::GROW,
-      size_t reservation_depth = 0)
+      size_t reservation_depth = 0, size_t backfill_queue_depth = 0)
       : SchedulerBase(total_nodes, bf_policy),
         m_wait_queue(initial_capacity != 0 ? initial_capacity
                                            : initial_job_count),
         m_overflow_policy(overflow_policy), m_eligible_end_idx(0),
         m_current_tracked_time(0.0), m_removed_count(0),
-        m_reservation_depth(reservation_depth) {}
+        m_reservation_depth(reservation_depth),
+        m_backfill_queue_depth(backfill_queue_depth) {}
 
   void insert_job(job_no_t job_id, sim_time_t submit_time,
                   tdiff_t run_time_estimate,
