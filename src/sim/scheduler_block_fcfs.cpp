@@ -109,10 +109,6 @@ BlockQueueFCFSScheduler<BlockSize>::schedule(num_nodes_t free_nodes,
     return jobs_to_run;
   }
 
-  if (available_nodes == 0) {
-    return jobs_to_run;
-  }
-
   // Step 2: Calculate reservation for FCFS head
   job_no_t fcfs_head = static_cast<job_no_t>(-1);
   for (size_t i = 0; i < m_eligible_end_idx; ++i) {

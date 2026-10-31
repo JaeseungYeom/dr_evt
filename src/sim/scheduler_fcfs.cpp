@@ -139,10 +139,6 @@ FCFSScheduler::schedule(num_nodes_t free_nodes,
     return jobs_to_run;
   }
 
-  if (available_nodes == 0) {
-    return jobs_to_run;
-  }
-
   // FCFS head is now genuinely at the front and blocked - calculate
   // reservation for backfilling.
   // Use available_nodes (not the original free_nodes parameter): if any
@@ -168,6 +164,12 @@ FCFSScheduler::schedule(num_nodes_t free_nodes,
   m_fcfs_reservation_time = calculate_fcfs_reservation(
       m_wait_queue.front().nodes_requested, available_nodes,
       effective_running_jobs, current_time);
+
+  // Keep the head-reservation snapshot observable even after FCFS consumed
+  // all free nodes, but skip the backfill scan because no candidate can fit.
+  if (available_nodes == 0) {
+    return jobs_to_run;
+  }
 
   // Try backfilling with remaining eligible jobs. These can be at any
   // position (not just the front), so pop_front() doesn't apply here -

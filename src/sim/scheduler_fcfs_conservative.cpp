@@ -134,10 +134,6 @@ FCFSConservativeScheduler::schedule(num_nodes_t free_nodes,
     return jobs_to_run;
   }
 
-  if (available_nodes == 0) {
-    return jobs_to_run;
-  }
-
   // Step 3: Try backfilling based on policy
   // Update effective running jobs to include jobs just started
   if (m_backfill_policy == BackfillPolicy::EASY) {
@@ -145,6 +141,12 @@ FCFSConservativeScheduler::schedule(num_nodes_t free_nodes,
     m_fcfs_reservation_time = calculate_fcfs_reservation(
         m_wait_queue.front().nodes_requested, available_nodes,
         effective_running_jobs, current_time);
+
+    // The reservation remains part of the public FCFS snapshot. No candidate
+    // can start when FCFS has consumed all free nodes.
+    if (available_nodes == 0) {
+      return jobs_to_run;
+    }
 
     // Try backfilling with remaining eligible jobs
     for (size_t i = 1; i < m_eligible_end_idx; ++i) {
@@ -171,6 +173,10 @@ FCFSConservativeScheduler::schedule(num_nodes_t free_nodes,
     }
   } else if (m_backfill_policy == BackfillPolicy::CONSERVATIVE ||
              m_backfill_policy == BackfillPolicy::HYBRID) {
+    if (available_nodes == 0) {
+      return jobs_to_run;
+    }
+
     // CONSERVATIVE backfilling: Must not delay ANY waiting job.
     // HYBRID: must not delay the first m_reservation_depth waiting jobs.
 

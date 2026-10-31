@@ -101,16 +101,18 @@ CircularBufferFCFSScheduler::schedule(num_nodes_t free_nodes,
     return jobs_to_run;
   }
 
-  if (available_nodes == 0) {
-    return jobs_to_run;
-  }
-
   // FCFS head is now genuinely at the front and blocked - calculate
   // reservation for backfilling. See FCFSScheduler::schedule() for
   // why effective_running_jobs must include jobs_to_run.
   m_fcfs_reservation_time = calculate_fcfs_reservation(
       m_wait_queue.front().nodes_requested, available_nodes,
       effective_running_jobs, current_time);
+
+  // Preserve the head-reservation snapshot, then avoid a scan that cannot
+  // start a backfill job without free nodes.
+  if (available_nodes == 0) {
+    return jobs_to_run;
+  }
 
   // Try backfilling with remaining eligible jobs. These can be at any
   // position (not just the front), so pop_front() doesn't apply here -
