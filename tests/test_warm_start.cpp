@@ -124,7 +124,7 @@ run_trace(const std::string &trace, double sim_start_time, unsigned total_nodes,
           RunTimeMode run_time_mode = RunTimeMode::ACTUAL,
           DistributionType run_time_distribution = DistributionType::NORMAL,
           double run_time_scale = 1.0, double run_time_stddev = 0.0,
-          double max_time = -1.0) {
+          double max_time = -1.0, double backfill_interval = 0.0) {
   const std::string stem = "run_" + std::to_string(run_number++);
   const auto trace_path = work_dir / (stem + ".csv");
   const auto job_path = work_dir / (stem + ".jobs.csv");
@@ -148,6 +148,7 @@ run_trace(const std::string &trace, double sim_start_time, unsigned total_nodes,
   params.m_priority_policy = priority;
   params.m_backfill_policy = backfill;
   params.m_queue_impl = queue;
+  params.m_backfill_interval = backfill_interval;
   params.m_block_size = 4;
   params.m_job_flush_interval = 100000;
   params.m_resource_history_capacity = 100000;
@@ -456,11 +457,16 @@ void compare_equivalent(const std::string &warm_trace,
                         const std::string &reference_trace,
                         double sim_start_time, unsigned total_nodes,
                         size_t seed_count, PriorityPolicy priority,
-                        BackfillPolicy backfill, QueueImplementation queue) {
-  const auto warm = run_trace(warm_trace, sim_start_time, total_nodes, priority,
-                              backfill, queue);
+                        BackfillPolicy backfill, QueueImplementation queue,
+                        double backfill_interval = 0.0) {
+  const auto warm =
+      run_trace(warm_trace, sim_start_time, total_nodes, priority, backfill,
+                queue, {}, RunTimeMode::ACTUAL, DistributionType::NORMAL, 1.0,
+                0.0, -1.0, backfill_interval);
   const auto reference =
-      run_trace(reference_trace, 0.0, total_nodes, priority, backfill, queue);
+      run_trace(reference_trace, 0.0, total_nodes, priority, backfill, queue,
+                {}, RunTimeMode::ACTUAL, DistributionType::NORMAL, 1.0, 0.0,
+                -1.0, backfill_interval);
   const auto reference_jobs = without_seed_jobs(reference.jobs, seed_count);
   assert(warm.jobs.size() == reference_jobs.size());
   for (size_t i = 0; i < warm.jobs.size(); ++i) {
@@ -543,6 +549,64 @@ void test_every_policy_and_queue() {
     for (const auto backfill : backfills) {
       compare_equivalent(warm, reference, 10.0, 10, 2,
                          PriorityPolicy::FCFS_CONSERVATIVE, backfill, queue);
+    }
+  }
+}
+
+// Periodic backfill under warm start. Ticks are anchored at the boundary
+// (first tick at t + interval), so a candidate arriving between ticks waits
+// for the next one while FCFS dispatch stays event-driven, and the
+// warm-start run matches the cold reference whenever the reference's ticks
+// (multiples of the interval from time 0) coincide with the boundary grid.
+void test_periodic_backfill() {
+  // History: A (90 of 100 nodes) runs 2..40. Post-boundary: a head H that
+  // can never fit beside A, and a candidate C behind it, both at t=15; a
+  // second candidate D at t=23. Recorded begin/end of H, C, and D are
+  // placeholders that the counterfactual run replaces.
+  const std::string warm =
+      "job_submit_time,begin_time,end_time,num_nodes,exit_status,time_limit\n"
+      "2,2,40,90,0,50\n"
+      "15,40,41,100,0,1\n"
+      "15,15,16,10,0,1\n"
+      "23,23,24,10,0,1\n";
+  const auto result =
+      run_trace(warm, 10.0, 100, PriorityPolicy::FCFS, BackfillPolicy::EASY,
+                QueueImplementation::CIRCULAR, {}, RunTimeMode::ACTUAL,
+                DistributionType::NORMAL, 1.0, 0.0, -1.0, 10.0);
+  // The output holds the post-boundary jobs only; A's historical end at 40
+  // is visible through H, which can start only once A's nodes are freed.
+  assert(result.jobs.size() == 3);
+  expect_job(result.jobs[0], 15.0, 40.0, 41.0, 100); // head waits for A
+  expect_job(result.jobs[1], 15.0, 20.0, 21.0, 10);  // tick at 20, not 15
+  expect_job(result.jobs[2], 23.0, 30.0, 31.0, 10);  // tick at 30, not 23
+  expect_close(result.stats.makespan, 41.0);
+  assert(result.stats.nodes_in_use == 0);
+
+  // Equivalence with the cold reference: t=10 is on the 2 s and 5 s grids.
+  const std::string equivalent_warm =
+      "job_submit_time,begin_time,end_time,num_nodes,exit_status,time_limit\n"
+      "0,1,4,1,0,10\n"
+      "1,2,15,4,0,10\n"
+      "2,6,12,3,0,10\n"
+      "3,11,14,2,0,10\n"
+      "10,10,14,3,0,10\n"
+      "10,11,13,4,0,10\n"
+      "11,12,15,2,0,10\n"
+      "12,13,14,5,0,10\n";
+  const std::string reference =
+      "job_submit_time,num_nodes,time_limit,actual_run_time\n"
+      "10,4,10,5\n"
+      "10,3,10,2\n"
+      "10,3,10,4\n"
+      "10,4,10,2\n"
+      "11,2,10,3\n"
+      "12,5,10,1\n";
+  for (const auto backfill :
+       {BackfillPolicy::EASY, BackfillPolicy::CONSERVATIVE}) {
+    for (const double interval : {2.0, 5.0}) {
+      compare_equivalent(equivalent_warm, reference, 10.0, 10, 2,
+                         PriorityPolicy::FCFS, backfill,
+                         QueueImplementation::CIRCULAR, interval);
     }
   }
 }
@@ -655,6 +719,7 @@ int main() {
     test_fractional_boundary();
     test_runtime_mode_applies_only_to_simulated_jobs();
     test_every_policy_and_queue();
+    test_periodic_backfill();
     test_seeded_random_differential();
     test_rejected_modes();
   } catch (...) {

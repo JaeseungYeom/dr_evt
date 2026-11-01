@@ -263,7 +263,11 @@ Uses periodic EASY, conservative, or hybrid backfill while retaining
 event-driven FCFS dispatch. It is intended for Slurm-style trigger studies and
 uses the opt-in circular scheduler; it requires an enabled
 `--backfill_policy` and `--queue_impl circular`. `0` retains the default
-event-driven backfill behavior.
+event-driven backfill behavior. Ticks start one interval after the first
+event, or after the `--sim_start_time` boundary in a warm start, and keep that
+cadence whether or not a job is waiting; a tick that passes while nothing waits
+does nothing. Progressive loading (`--infile_list`) keeps the cadence across
+file boundaries.
 
 **Default:** `0` (disabled)
 

@@ -508,6 +508,90 @@ void test_memory_pressure_fraction_is_configurable() {
   std::cout << "  PASSED" << std::endl;
 }
 
+// Test 12: periodic backfill across a file boundary. The tick cadence and
+// the waiting queue must carry over from one input file to the next: a
+// candidate behind a blocked head starts at the tick, whether it was loaded
+// with the head or from the next file, and the split input produces the same
+// schedule as the combined file.
+void test_progressive_periodic_backfill() {
+  std::cout << "\n=== Test 12: periodic backfill across file boundaries ==="
+            << std::endl;
+
+  constexpr const char *part1 = "/tmp/test_progressive_periodic_part1.csv";
+  constexpr const char *part2 = "/tmp/test_progressive_periodic_part2.csv";
+  constexpr const char *combined =
+      "/tmp/test_progressive_periodic_combined.csv";
+  constexpr const char *header = "job_submit_time,num_nodes,time_limit\n";
+  constexpr const char *rows1 = "0,90,30\n"  // A: 90 of 100 nodes until 30
+                                "5,100,1\n"; // H: blocked head
+  constexpr const char *rows2 = "5,10,1\n"   // C: candidate behind H
+                                "12,10,1\n"; // D: arrives between ticks
+  {
+    std::ofstream out(part1);
+    out << header << rows1;
+  }
+  {
+    std::ofstream out(part2);
+    out << header << rows2;
+  }
+  {
+    std::ofstream out(combined);
+    out << header << rows1 << rows2;
+  }
+
+  const auto configure = [](Sim_Params &params) {
+    params.m_backfill_policy = BackfillPolicy::HYBRID;
+    params.m_reservation_depth = 1;
+    params.m_backfill_interval = 10.0;
+  };
+
+  constexpr const char *progressive_out =
+      "/tmp/test_progressive_periodic_out.csv";
+  constexpr const char *combined_out =
+      "/tmp/test_progressive_periodic_combined_out.csv";
+  {
+    auto params = make_progressive_params({part1, part2});
+    configure(params);
+    params.set_outfile(progressive_out);
+    Simulation sim(params);
+    sim.run();
+    sim.write_simulated_trace();
+    assert(sim.get_trace().completed_count() == 4);
+    assert(sim.get_nodes_in_use() == 0);
+  }
+  {
+    Sim_Params params;
+    params.m_infile = combined;
+    params.m_total_nodes = 100;
+    params.m_trace_format = "simple";
+    params.m_timestamp_format = "epoch";
+    params.m_run_time_mode = RunTimeMode::LIMIT;
+    configure(params);
+    params.set_outfile(combined_out);
+    Simulation sim(params);
+    sim.run();
+    sim.write_simulated_trace();
+    assert(sim.get_trace().completed_count() == 4);
+  }
+  const std::string progressive_text = slurp(progressive_out);
+  assert(progressive_text == slurp(combined_out));
+
+  // begin_time is the second column: A at 0, H at 30, C at the tick at 10
+  // (not at its arrival at 5), D at the tick at 20 (not at 12).
+  std::istringstream lines(progressive_text);
+  std::string line;
+  std::getline(lines, line); // header
+  const std::vector<std::string> expected_begin = {"0", "30", "10", "20"};
+  for (const auto &begin : expected_begin) {
+    assert(std::getline(lines, line));
+    const auto first_comma = line.find(',');
+    const auto second_comma = line.find(',', first_comma + 1);
+    assert(line.substr(first_comma + 1, second_comma - first_comma - 1) ==
+           begin);
+  }
+  std::cout << "  PASSED" << std::endl;
+}
+
 int main() {
   std::cout << "====================================" << std::endl;
   std::cout << "Progressive Loading (--infile_list) Test Suite" << std::endl;
@@ -525,6 +609,7 @@ int main() {
     test_memory_pressure_disabled_by_default();
     test_memory_pressure_no_false_positive();
     test_memory_pressure_fraction_is_configurable();
+    test_progressive_periodic_backfill();
 
     std::cout << "\n====================================" << std::endl;
     std::cout << "ALL PROGRESSIVE LOADING TESTS PASSED" << std::endl;
