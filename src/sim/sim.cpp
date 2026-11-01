@@ -328,7 +328,7 @@ BasicSimulation<TraceType>::BasicSimulation(Sim_Params params)
           m_params.m_queue_impl, m_params.m_block_size,
           m_params.m_wait_queue_capacity, m_params.m_wait_queue_overflow,
           m_params.m_reservation_depth, m_params.m_backfill_queue_depth,
-          m_params.m_backfill_interval)),
+          m_params.m_backfill_interval, m_params.m_planning_horizon)),
       m_custom_scheduler(nullptr), m_current_time(0.0),
       m_next_backfill_evaluation(std::numeric_limits<sim_time_t>::max()),
       m_periodic_backfill_dirty(true),
@@ -1823,7 +1823,7 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
           m_params.m_queue_impl, m_params.m_block_size,
           m_params.m_wait_queue_capacity, m_params.m_wait_queue_overflow,
           m_params.m_reservation_depth, m_params.m_backfill_queue_depth,
-          m_params.m_backfill_interval);
+          m_params.m_backfill_interval, m_params.m_planning_horizon);
       if (m_trace.node_release_delay_active()) {
         m_scheduler->set_node_release_delay(&m_trace.node_release_delay());
       }
@@ -1831,7 +1831,7 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
         const auto &job = m_trace.m_data[job_id - first_resident_job];
         m_scheduler->insert_job(
             job_id, convert_epoch<sim_time_t>(job.get_submit_time()),
-            job.get_limit_time(), job.get_num_nodes());
+            planning_time_limit(job.get_limit_time()), job.get_num_nodes());
       }
       m_scheduler->sync_to(m_current_time);
     }

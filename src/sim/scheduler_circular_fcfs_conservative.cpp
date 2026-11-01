@@ -81,9 +81,12 @@ CircularBufferFCFSConservativeScheduler::calculate_conservative_window(
     if (depth != 0 && reserved >= depth) {
       break;
     }
-    ++reserved;
     const sim_time_t job_reservation = calculate_fcfs_reservation(
         job.nodes_requested, available_nodes, running_jobs, current_time);
+    if (!reservation_within_horizon(job_reservation, current_time)) {
+      continue;
+    }
+    ++reserved;
     earliest_conflict = std::min(earliest_conflict, job_reservation);
   }
   return earliest_conflict;
@@ -139,6 +142,8 @@ std::vector<job_no_t> CircularBufferFCFSConservativeScheduler::schedule(
     m_fcfs_reservation_time = calculate_fcfs_reservation(
         m_wait_queue.front().nodes_requested, available_nodes,
         effective_running_jobs, current_time);
+    const bool head_reservation_within_horizon = reservation_within_horizon(
+        m_fcfs_reservation_time, current_time);
     if (available_nodes == 0) {
       return jobs_to_run;
     }
@@ -147,9 +152,11 @@ std::vector<job_no_t> CircularBufferFCFSConservativeScheduler::schedule(
       if (job.removed || job.nodes_requested > available_nodes) {
         continue;
       }
-      if (current_time +
-              release_estimate(job.run_time_estimate, job.nodes_requested) <
-          m_fcfs_reservation_time) {
+      if (!head_reservation_within_horizon ||
+          current_time +
+                  release_estimate(job.run_time_estimate,
+                                   job.nodes_requested) <
+              m_fcfs_reservation_time) {
         jobs_to_run.push_back(job.job_id);
         available_nodes -= job.nodes_requested;
         m_wait_queue[i].removed = true;

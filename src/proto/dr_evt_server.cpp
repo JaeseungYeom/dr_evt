@@ -298,6 +298,14 @@ public:
                 "planning_time_resolution must be finite and nonnegative");
           }
           sp.m_planning_time_resolution = r.planning_time_resolution();
+          if (r.has_planning_horizon()) {
+            if (!std::isfinite(r.planning_horizon()) ||
+                r.planning_horizon() < 0.0) {
+              throw std::runtime_error(
+                  "planning_horizon must be finite and nonnegative");
+            }
+            sp.m_planning_horizon = r.planning_horizon();
+          }
 
           if (!r.node_release_delay_model().empty() &&
               !dr_evt::set_release_delay_model(sp.m_node_release_delay_model,

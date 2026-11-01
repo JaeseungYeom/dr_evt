@@ -15,6 +15,7 @@
 #include "trace/trace.hpp"
 #include <map>
 #include <memory>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -296,6 +297,8 @@ protected:
  * or conservative backfill pass; zero is unlimited.
  * @param[in] backfill_interval Seconds between additional hybrid evaluations;
  * zero retains event-driven evaluation only.
+ * @param[in] planning_horizon Maximum periodic reservation look-ahead;
+ * numeric_limits<tdiff_t>::max() leaves it unlimited.
  * @return Owning pointer to a SchedulerBase implementation.
  * @throws std::invalid_argument if HYBRID is requested with a zero depth or
  * with a non-FCFS priority policy.
@@ -307,7 +310,8 @@ std::unique_ptr<SchedulerBase> create_scheduler(
     size_t block_size = 128, size_t wait_queue_capacity = 0,
     CircularOverflowPolicy wait_queue_overflow = CircularOverflowPolicy::GROW,
     size_t reservation_depth = 0, size_t backfill_queue_depth = 0,
-    tdiff_t backfill_interval = 0.0);
+    tdiff_t backfill_interval = 0.0,
+    tdiff_t planning_horizon = std::numeric_limits<tdiff_t>::max());
 
 /**@}*/
 

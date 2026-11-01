@@ -57,14 +57,17 @@ The statements below describe the code, not an idealization of it.
   reservation, not a bound on how far ahead the scheduler plans. Jobs started
   earlier in the same pass are included when later candidates are tested.
 - **Planning horizon.** A planning horizon is the furthest future timestamp
-  considered while building reservations. DR_EVT has no cutoff: it can
-  project reservations arbitrarily far ahead. There is no DR_EVT planning-
-  horizon option. This differs from Slurm's `bf_window`; it is independent of
-  queue depth and of a candidate's backfill test window.
-  In the Slurm comparison, a job reached by the queue scan but projected beyond
-  `bf_window` still consumes a tested-job (`bf_max_job_test`) slot, but it
-  receives no in-window reservation and does not consume a
-  `bf_job_part_count_reserve` reservation slot.
+  considered while building reservations. During periodic scheduling,
+  [`--planning_horizon SECONDS`](../user-guide/command-line.md#--planning_horizon-seconds)
+  applies that cutoff; when omitted, DR_EVT uses the largest `tdiff_t` value
+  as an unlimited sentinel. Event-driven schedulers do not apply a horizon.
+  This corresponds to Slurm's `bf_window` and is independent of queue depth
+  and of a candidate's backfill test window. A job reached by DR_EVT's
+  hybrid/conservative queue scan still consumes its
+  [`--backfill_queue_depth`](../user-guide/command-line.md#--backfill_queue_depth-n)
+  slot when its reservation is outside the horizon, but it receives no
+  reservation and does not consume a `--reservation_depth` slot. This mirrors
+  Slurm's `bf_max_job_test` / `bf_job_part_count_reserve` distinction.
 - **Run-time knowledge.** The scheduler plans with the requested time limit.
   The observed run time comes from the trace or from a sampled distribution
   and never exceeds the limit, which is equivalent to killing a job at its
@@ -250,7 +253,7 @@ DR_EVT controls relevant to the comparison are:
 |---|---|---|
 | Evaluation trigger | Event-driven by default; periodic backfill is optional | Slurm and LSF run periodic backfill; Fluxion is event-driven. Default DR_EVT backfill reacts sooner than Slurm or LSF. |
 | Time resolution | Exact planning by default; optional grid | Slurm uses a 60-second grid; Fluxion uses one second. Matching the grid narrows boundary differences. |
-| Planning horizon | Unlimited | Slurm uses `bf_window`; Fluxion is unlimited; LSF is bounded by reservation settings. |
+| Planning horizon | Unlimited by default; `--planning_horizon` bounds periodic reservations | Slurm uses `bf_window`; Fluxion is unlimited; LSF is bounded by reservation settings. |
 | Queue and reservation depth | Unlimited scan by default; EASY 1, hybrid N, conservative all | Slurm and Fluxion cap queue/reservation scope; matching depths improves comparability. |
 | Completion and node reuse | Strict completion test; immediate reuse by default | Production systems use their own resolution and cleanup behavior. Calibrate the release delay to reduce optimism. |
 | Priority and resources | FCFS/SJF/LJF; stock homogeneous pool | Production systems add policy plugins, partitions, and resource topology. The experimental scheduler adds homogeneous multi-system placement. |
@@ -293,9 +296,10 @@ to the degree that
 
 Each of the following is a contained change if a study needs it:
 
-- **Reservation horizon.** Planning resolution is already configurable with
-  [`--planning_time_resolution`](../user-guide/command-line.md#--planning_time_resolution-seconds);
-  a reservation horizon remains unavailable.
+- **Reservation-horizon calibration.**
+  [`--planning_horizon`](../user-guide/command-line.md#--planning_horizon-seconds)
+  supplies a periodic reservation cutoff. Calibrate it against the target
+  scheduler's configured planning window (for example Slurm `bf_window`).
 - **Priority hooks.** The experimental external selector already lets a
   caller rank backfill candidates by an arbitrary cost; extending the same
   callback to queue ordering would allow multifactor priority experiments

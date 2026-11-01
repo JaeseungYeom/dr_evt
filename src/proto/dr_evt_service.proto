@@ -109,8 +109,12 @@ message InitRequest {
     // evaluations. Zero retains event-driven backfill behavior.
     double backfill_interval = 24;
 
-    // Planning time-limit grid for backfill reservations; zero is exact.
+    // Planning time-limit grid for scheduler projections; zero is exact.
     double planning_time_resolution = 25;
+
+    // Maximum reservation look-ahead for periodic backfill. Presence is
+    // explicit so zero is a valid immediate horizon.
+    optional double planning_horizon = 26;
 
     // Seconds a job's nodes stay unavailable after it ends (default 0).
     // Not applied to replayed history.

@@ -22,6 +22,7 @@ Complete reference for all DR_EVT command-line options for the `simulator` binar
 | Scheduling | `--backfill_queue_depth N` | Cap jobs inspected by built-in hybrid or conservative backfill. |
 | Scheduling | `--backfill_interval SECONDS` | Run built-in backfill at periodic ticks instead of every event. |
 | Scheduling | `--planning_time_resolution SECONDS` | Round planning durations up to a grid. |
+| Scheduling | `--planning_horizon SECONDS` | Limit reservations during periodic backfill. |
 | Scheduling | `--reservation_depth N` | Number of reserved waiting jobs under `hybrid` backfilling. |
 | Scheduling | `-p, --priority_policy POLICY` | Select the job-ordering policy. |
 | Scheduling | `-q, --queue_impl IMPLEMENTATION` | Select the FCFS wait-queue implementation. |
@@ -277,6 +278,18 @@ scheduler's planning grid—for example, `60` for Slurm's typical
 `bf_resolution`—or leave it at `0` for exact floating-point planning.
 
 **Default:** `0` (exact planning)
+
+### `--planning_horizon SECONDS`
+
+Limits how far ahead the periodic scheduler creates or protects reservations.
+A projected reservation whose start is more than `SECONDS` after the current
+planning time is treated as out of horizon: it does not block a backfill job
+and does not consume a hybrid reservation-depth slot. It still consumes a
+`--backfill_queue_depth` scan slot. This option only affects periodic
+scheduling selected by `--backfill_interval`; event-driven schedulers retain
+unlimited planning. It corresponds most closely to Slurm `bf_window`.
+
+**Default:** unlimited (the largest `tdiff_t` value)
 
 ### `--reservation_depth N`
 

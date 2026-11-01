@@ -124,6 +124,14 @@ set_sim_options(const dr_evt_proto::DR_EVT_Params::Simulation_Params &cfg,
         "planning_time_resolution must be finite and nonnegative");
   }
   sp.m_planning_time_resolution = cfg.planning_time_resolution();
+  if (cfg.has_planning_horizon()) {
+    if (!std::isfinite(cfg.planning_horizon()) ||
+        cfg.planning_horizon() < 0.0) {
+      throw std::runtime_error(
+          "planning_horizon must be finite and nonnegative");
+    }
+    sp.m_planning_horizon = cfg.planning_horizon();
+  }
 
   // Backfill policy (default: EASY)
   if (!cfg.backfill_policy().empty()) {
