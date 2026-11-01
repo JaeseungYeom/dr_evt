@@ -200,20 +200,28 @@ does not quantize DR_EVT's clock or actual job execution.
 This table includes both remaining model gaps and differences that can be
 narrowed through DR_EVT configuration. A row remains when a setting can match
 one aspect of another scheduler but cannot reproduce its full model; the
-DR_EVT column identifies the available mitigation where applicable.
+DR_EVT controls relevant to the comparison are:
 
-| Aspect | DR_EVT | Slurm | Flux (Fluxion) | LSF | Direction of bias in DR_EVT |
-|---|---|---|---|---|---|
-| Evaluation trigger | Default: every event, repeated until nothing starts. `--backfill_interval SECONDS` retains event-driven FCFS dispatch and runs backfill at periodic ticks (`0` is default) | Main scheduler on events; backfill every `bf_interval` (30 s) | Every event, from the reactor check phase; resumes in chunks of six jobs | Sessions at least `JOB_SCHEDULING_INTERVAL` (5 s) apart | Default backfill reacts sooner than in Slurm or LSF; configure an interval to narrow that difference |
-| Time resolution | Exact by default; optional `--backfill_time_resolution` planning grid | `bf_resolution` (60 s) grid | 1 s | 1 s class | Exact defaults provide slightly more backfill opportunities; configure a matching grid to reduce this gap |
-| Planning horizon | Unlimited | `bf_window` (1 day) | Unlimited | Bounded by reservation settings | Long reservations are honored that Slurm would not create |
-| Queue depth examined | All eligible by default; `backfill_queue_depth` caps hybrid/conservative passes | `bf_max_job_test` (500), `default_queue_depth` (100) | `queue-depth` (32 per cycle) | All pending jobs per session | More candidates per decision, more backfill |
-| Reservation depth | [`--backfill_policy`](../user-guide/command-line.md#-b---backfill_policy-policy): 1 (EASY), N (`hybrid` via [`--reservation_depth`](../user-guide/command-line.md#--reservation_depth-n)), all (`conservative`); [`--backfill_queue_depth`](../user-guide/command-line.md#--backfill_queue_depth-n) caps the pass | All tested jobs, or `bf_job_part_count_reserve` | 1 (`easy`), `reservation-depth` (64 default, `hybrid`), queue depth (`conservative`); all reservations re-planned every cycle | Top pending jobs | Comparable when depths are matched |
-| Completion test | Strict: projected end before reservation, using exact or configured grid-rounded planning duration | Grid-rounded comparison | Second-resolution comparison | Run limit must fit | Marginal cases differ at the resolution boundary when the planning grid differs |
-| Node reuse after completion | Immediate by default; `--node_release_delay` models cleanup, constant or growing with job size | After epilog; nodes stay COMPLETING | After epilog; `t_inactive` after `t_cleanup` | After post-execution | Optimistic by the cleanup time per job unless the delay is enabled |
-| Priority | [`--priority_policy`](../user-guide/command-line.md#-p---priority_policy-policy): FCFS, SJF, LJF | Multifactor | Priority plugins, FCFS default | Fair share, queues | Different job order; small effect on utilization, larger on per-job wait |
-| Run-time knowledge | Requested limit plus [trace time fields](../user-guide/trace-formats.md#simple-format-columns); select actual duration with [`--run_time_mode`](../user-guide/command-line.md#-r---run_time_mode-mode) and its [related options](../user-guide/command-line.md#simulation-mode-options) | Same | Same | Same | None |
-| Resources | Stock: [`--total_nodes`](../user-guide/command-line.md#-n---total_nodes-count) and [`--capacity_schedule`](../user-guide/command-line.md#--capacity_schedule-filename). Experimental: shared queue across homogeneous [systems/partitions](../user-guide/multi-cluster-backfill.md) | Partitions, topology, features, failures | Resource graph | Hosts, slots, resource requirements | The stock model omits fragmentation and placement losses; the experimental multi-system model captures only system-level capacity differences |
+- [Priority policy](../user-guide/command-line.md#-p---priority_policy-policy)
+  (`--priority_policy`)
+- [Backfill policy](../user-guide/command-line.md#-b---backfill_policy-policy),
+  [`--reservation_depth`](../user-guide/command-line.md#--reservation_depth-n),
+  and [`--backfill_queue_depth`](../user-guide/command-line.md#--backfill_queue_depth-n)
+- [Run-time mode and related options](../user-guide/command-line.md#simulation-mode-options),
+  plus [trace time fields](../user-guide/trace-formats.md#simple-format-columns)
+- [`--total_nodes`](../user-guide/command-line.md#-n---total_nodes-count),
+  [`--capacity_schedule`](../user-guide/command-line.md#--capacity_schedule-filename),
+  and the experimental [multi-system scheduler](../user-guide/multi-cluster-backfill.md)
+
+| Aspect | DR_EVT | Production-scheduler comparison |
+|---|---|---|
+| Evaluation trigger | Event-driven by default; periodic backfill is optional | Slurm and LSF run periodic backfill; Fluxion is event-driven. Default DR_EVT backfill reacts sooner than Slurm or LSF. |
+| Time resolution | Exact planning by default; optional grid | Slurm uses a 60-second grid; Fluxion uses one second. Matching the grid narrows boundary differences. |
+| Planning horizon | Unlimited | Slurm uses `bf_window`; Fluxion is unlimited; LSF is bounded by reservation settings. |
+| Queue and reservation depth | Unlimited scan by default; EASY 1, hybrid N, conservative all | Slurm and Fluxion cap queue/reservation scope; matching depths improves comparability. |
+| Completion and node reuse | Strict completion test; immediate reuse by default | Production systems use their own resolution and cleanup behavior. Calibrate the release delay to reduce optimism. |
+| Priority and resources | FCFS/SJF/LJF; stock homogeneous pool | Production systems add policy plugins, partitions, and resource topology. The experimental scheduler adds homogeneous multi-system placement. |
+| Run-time knowledge | Requested limit; observed time does not exceed it | Same high-level limit model. |
 
 With DR_EVT's default settings, the first four rows compound in the same
 direction: its backfilling is an upper bound on what a production scheduler
