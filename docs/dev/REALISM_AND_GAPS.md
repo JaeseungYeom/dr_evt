@@ -14,7 +14,7 @@ The node release delay (nodes staying unavailable after a job ends) closes
 one of these gaps; it is off by default and documented under
 [`--node_release_delay`](../user-guide/command-line.md#--node_release_delay-seconds).
 
-## What DR_EVT models
+## DR_EVT model and relevant options
 
 The statements below describe the code, not an idealization of it.
 
@@ -47,8 +47,11 @@ The statements below describe the code, not an idealization of it.
   The observed run time comes from the trace or from a sampled distribution
   and never exceeds the limit, which is equivalent to killing a job at its
   limit. An early completion triggers a new pass but does not revise earlier
-  decisions.
+  decisions. See the [simulation-mode options](../user-guide/command-line.md#simulation-mode-options)
+  and [trace time fields](../user-guide/trace-formats.md#simple-format-columns).
 - **Priority.** FCFS by submission time, or SJF/LJF by estimated run time.
+  Configure the available choices with
+  [`--priority_policy`](../user-guide/command-line.md#-p---priority_policy-policy).
   DR_EVT currently does not model multifactor priority (age, fair share,
   QOS, or partition priority), preemption, job dependencies or arrays, or
   per-user and per-account limits. Whether a production deployment enables
@@ -61,7 +64,7 @@ The statements below describe the code, not an idealization of it.
   topology, placement constraints, failures, draining, or Slurm's complete
   partition and policy model.
 
-## How production schedulers differ
+## Production scheduler comparisons
 
 ### Slurm
 
@@ -100,46 +103,6 @@ time settings; between passes, its main scheduler does not backfill.
 DR_EVT offers `--backfill_interval` for circular EASY, conservative, or hybrid
 backfill. Events still dispatch FCFS heads, while periodic ticks run the
 configured backfill pass.
-
-### Slurm and Fluxion configuration mappings
-
-These settings reproduce trigger and reservation behavior in the stock,
-single-pool FCFS simulator; they do not add Slurm's full partition and policy
-model or Flux's resource graph. The experimental
-[`multi_system_backfill_sim`](../user-guide/multi-cluster-backfill.md) adds a
-shared-queue, homogeneous multi-system/partition model, but is not a Slurm
-partition emulation.
-
-| Target | Backfill policy | Interval | Reservation depth | Queue depth | Planning resolution |
-|---|---|---:|---:|---:|---:|
-| Slurm, reserve all tested jobs | `conservative` | `bf_interval` (30 s default) | N/A | `bf_max_job_test` (500 default) | 60 s (`bf_resolution`) |
-| Slurm, reserve a fixed prefix | `hybrid` | `bf_interval` | `bf_job_part_count_reserve` | `bf_max_job_test` | 60 s |
-| Slurm EASY-like head reservation | `hybrid` | `bf_interval` | `1` | `bf_max_job_test` | 60 s |
-| Fluxion hybrid | `hybrid` | `0` (event-driven) | Flux `reservation-depth` | Flux `queue-depth` (32 default) | 1 s |
-
-For a Slurm comparison, the relationship between DR_EVT's reservation options
-is as follows: `--backfill_policy easy` protects only the FCFS head, which is
-equivalent to `--backfill_policy hybrid --reservation_depth 1`. The
-combination of `--backfill_policy hybrid` and `--reservation_depth N`
-approximates protecting a fixed prefix of `N` higher-priority jobs, analogous
-to Slurm's `bf_job_part_count_reserve=N`. `--backfill_policy conservative`
-protects all eligible jobs considered in the pass, analogous to Slurm's
-unrestricted reserve behavior (`bf_job_part_count_reserve=0`) within its
-tested queue. This is a comparison of reservation count only: DR_EVT has one
-homogeneous pool and one queue, while Slurm applies its reservation settings
-per partition and also limits its tested queue with `bf_max_job_test`.
-
-Use `--backfill_interval 0` for DR_EVT's ordinary event-driven backfill. A
-positive interval keeps event-driven FCFS dispatch but runs backfill only at
-periodic ticks.
-
-Use `--backfill_time_resolution SECONDS` to apply the last column without
-changing simulated execution. It rounds each time limit used for scheduling up
-once when the job is enqueued; `0` retains exact planning. Thus a 61-second
-limit becomes 120 seconds with Slurm's 60-second grid and remains 61 seconds
-with Flux's 1-second grid. For a Fluxion comparison, set
-`--backfill_time_resolution 1`; this matches its one-second planning grid but
-does not quantize DR_EVT's clock or actual job execution.
 
 ### Flux (Fluxion)
 
@@ -192,7 +155,47 @@ on post-execution processing. The interval default is taken from the IBM
 documentation; the reservation and post-execution statements are summarized
 from it and should be checked against the installed version.
 
-## Scheduler comparison and configurable mitigations
+## Configuration mappings and remaining differences
+
+These settings reproduce trigger and reservation behavior in the stock,
+single-pool FCFS simulator; they do not add Slurm's full partition and policy
+model or Flux's resource graph. The experimental
+[`multi_system_backfill_sim`](../user-guide/multi-cluster-backfill.md) adds a
+shared-queue, homogeneous multi-system/partition model, but is not a Slurm
+partition emulation.
+
+| Target | Backfill policy | Interval | Reservation depth | Queue depth | Planning resolution |
+|---|---|---:|---:|---:|---:|
+| Slurm, reserve all tested jobs | `conservative` | `bf_interval` (30 s default) | N/A | `bf_max_job_test` (500 default) | 60 s (`bf_resolution`) |
+| Slurm, reserve a fixed prefix | `hybrid` | `bf_interval` | `bf_job_part_count_reserve` | `bf_max_job_test` | 60 s |
+| Slurm EASY-like head reservation | `hybrid` | `bf_interval` | `1` | `bf_max_job_test` | 60 s |
+| Fluxion hybrid | `hybrid` | `0` (event-driven) | Flux `reservation-depth` | Flux `queue-depth` (32 default) | 1 s |
+
+For a Slurm comparison, the relationship between DR_EVT's reservation options
+is as follows: `--backfill_policy easy` protects only the FCFS head, which is
+equivalent to `--backfill_policy hybrid --reservation_depth 1`. The
+combination of `--backfill_policy hybrid` and `--reservation_depth N`
+approximates protecting a fixed prefix of `N` higher-priority jobs, analogous
+to Slurm's `bf_job_part_count_reserve=N`. `--backfill_policy conservative`
+protects all eligible jobs considered in the pass, analogous to Slurm's
+unrestricted reserve behavior (`bf_job_part_count_reserve=0`) within its
+tested queue. This is a comparison of reservation count only: DR_EVT has one
+homogeneous pool and one queue, while Slurm applies its reservation settings
+per partition and also limits its tested queue with `bf_max_job_test`.
+
+Use `--backfill_interval 0` for DR_EVT's ordinary event-driven backfill. A
+positive interval keeps event-driven FCFS dispatch but runs backfill only at
+periodic ticks.
+
+Use `--backfill_time_resolution SECONDS` to apply the last column without
+changing simulated execution. It rounds each time limit used for scheduling up
+once when the job is enqueued; `0` retains exact planning. Thus a 61-second
+limit becomes 120 seconds with Slurm's 60-second grid and remains 61 seconds
+with Flux's 1-second grid. For a Fluxion comparison, set
+`--backfill_time_resolution 1`; this matches its one-second planning grid but
+does not quantize DR_EVT's clock or actual job execution.
+
+### Comparison table and configurable mitigations
 
 This table includes both remaining model gaps and differences that can be
 narrowed through DR_EVT configuration. A row remains when a setting can match
@@ -201,16 +204,16 @@ DR_EVT column identifies the available mitigation where applicable.
 
 | Aspect | DR_EVT | Slurm | Flux (Fluxion) | LSF | Direction of bias in DR_EVT |
 |---|---|---|---|---|---|
-| Evaluation trigger | Every event, repeated until nothing starts | Main scheduler on events; backfill every `bf_interval` (30 s) | Every event, from the reactor check phase; resumes in chunks of six jobs | Sessions at least `JOB_SCHEDULING_INTERVAL` (5 s) apart | Backfill reacts sooner than in Slurm or LSF |
+| Evaluation trigger | Default: every event, repeated until nothing starts. `--backfill_interval SECONDS` retains event-driven FCFS dispatch and runs backfill at periodic ticks (`0` is default) | Main scheduler on events; backfill every `bf_interval` (30 s) | Every event, from the reactor check phase; resumes in chunks of six jobs | Sessions at least `JOB_SCHEDULING_INTERVAL` (5 s) apart | Default backfill reacts sooner than in Slurm or LSF; configure an interval to narrow that difference |
 | Time resolution | Exact by default; optional `--backfill_time_resolution` planning grid | `bf_resolution` (60 s) grid | 1 s | 1 s class | Exact defaults provide slightly more backfill opportunities; configure a matching grid to reduce this gap |
 | Planning horizon | Unlimited | `bf_window` (1 day) | Unlimited | Bounded by reservation settings | Long reservations are honored that Slurm would not create |
 | Queue depth examined | All eligible by default; `backfill_queue_depth` caps hybrid/conservative passes | `bf_max_job_test` (500), `default_queue_depth` (100) | `queue-depth` (32 per cycle) | All pending jobs per session | More candidates per decision, more backfill |
-| Reservation depth | 1 (EASY), N (hybrid), all (conservative) | All tested jobs, or `bf_job_part_count_reserve` | 1 (`easy`), `reservation-depth` (64 default, `hybrid`), queue depth (`conservative`); all reservations re-planned every cycle | Top pending jobs | Comparable when depths are matched |
+| Reservation depth | [`--backfill_policy`](../user-guide/command-line.md#-b---backfill_policy-policy): 1 (EASY), N (`hybrid` via [`--reservation_depth`](../user-guide/command-line.md#--reservation_depth-n)), all (`conservative`); [`--backfill_queue_depth`](../user-guide/command-line.md#--backfill_queue_depth-n) caps the pass | All tested jobs, or `bf_job_part_count_reserve` | 1 (`easy`), `reservation-depth` (64 default, `hybrid`), queue depth (`conservative`); all reservations re-planned every cycle | Top pending jobs | Comparable when depths are matched |
 | Completion test | Strict: projected end before reservation, using exact or configured grid-rounded planning duration | Grid-rounded comparison | Second-resolution comparison | Run limit must fit | Marginal cases differ at the resolution boundary when the planning grid differs |
 | Node reuse after completion | Immediate by default; `--node_release_delay` models cleanup, constant or growing with job size | After epilog; nodes stay COMPLETING | After epilog; `t_inactive` after `t_cleanup` | After post-execution | Optimistic by the cleanup time per job unless the delay is enabled |
-| Priority | FCFS, SJF, LJF | Multifactor | Priority plugins, FCFS default | Fair share, queues | Different job order; small effect on utilization, larger on per-job wait |
-| Run-time knowledge | Time limit; actual run time at most the limit | Same | Same | Same | None |
-| Resources | Stock: homogeneous pool and capacity schedule. Experimental: shared queue across homogeneous systems/partitions | Partitions, topology, features, failures | Resource graph | Hosts, slots, resource requirements | The stock model omits fragmentation and placement losses; the experimental multi-system model captures only system-level capacity differences |
+| Priority | [`--priority_policy`](../user-guide/command-line.md#-p---priority_policy-policy): FCFS, SJF, LJF | Multifactor | Priority plugins, FCFS default | Fair share, queues | Different job order; small effect on utilization, larger on per-job wait |
+| Run-time knowledge | Requested limit plus [trace time fields](../user-guide/trace-formats.md#simple-format-columns); select actual duration with [`--run_time_mode`](../user-guide/command-line.md#-r---run_time_mode-mode) and its [related options](../user-guide/command-line.md#simulation-mode-options) | Same | Same | Same | None |
+| Resources | Stock: [`--total_nodes`](../user-guide/command-line.md#-n---total_nodes-count) and [`--capacity_schedule`](../user-guide/command-line.md#--capacity_schedule-filename). Experimental: shared queue across homogeneous [systems/partitions](../user-guide/multi-cluster-backfill.md) | Partitions, topology, features, failures | Resource graph | Hosts, slots, resource requirements | The stock model omits fragmentation and placement losses; the experimental multi-system model captures only system-level capacity differences |
 
 With DR_EVT's default settings, the first four rows compound in the same
 direction: its backfilling is an upper bound on what a production scheduler
@@ -225,7 +228,7 @@ graph and scheduling-cycle behavior. The node-reuse difference is removed only
 to the degree that
 `--node_release_delay` is calibrated to the target system.
 
-## Validation that bounds the gaps
+## Validation evidence
 
 - The 34 scheduler-correctness workloads match a from-scratch Python
   reference exactly in schedule and resource trace, so the EASY and
@@ -236,7 +239,7 @@ to the degree that
   reproduces two effects in miniature: RAPS advances on a one-second tick and
   frees nodes on the tick after completion, which adds a one-second lag per
   completion a job waits behind. In RAPS's
-  [`find_backfill_job`](https://github.com/ExaDigiT/RAPS/blob/3f21cd35b7bf6a8f5decc41050c8d871809608ad/raps/schedulers/default.py#L167-L188),
+  [`find_backfill_job` (RAPS permalink, lines 167–188)](https://github.com/ExaDigiT/RAPS/blob/3f21cd35b7bf6a8f5decc41050c8d871809608ad/raps/schedulers/default.py#L167-L188),
   running jobs are sorted by `time_limit` (line 167), then the shadow time is
   assigned from the selected job's `start_time + time_limit` (lines 172–179),
   rather than choosing the earliest projected end. This can select backfill
@@ -245,13 +248,12 @@ to the degree that
   DR_EVT's reservation-preserving backfill policy. Both differences are
   visible on the CTC SP2 archive trace from roughly the 200th job on.
 
-## Closing the gaps
+## Remaining extensions and calibration
 
 Each of the following is a contained change if a study needs it:
 
-- **Planning resolution and window.** `--backfill_time_resolution` already
-  rounds planning durations up to a grid without changing execution. A
-  reservation horizon remains unavailable.
+- **Reservation horizon.** Planning resolution is already configurable with
+  `--backfill_time_resolution`; a reservation horizon remains unavailable.
 - **Priority hooks.** The experimental external selector already lets a
   caller rank backfill candidates by an arbitrary cost; extending the same
   callback to queue ordering would allow multifactor priority experiments
