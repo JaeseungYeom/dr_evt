@@ -180,6 +180,14 @@ jobs:
           echo "========================================"
           ./tests/run_periodic_backfill_tests.sh
 
+      - name: Run Planning Horizon Tests
+        id: planning-horizon
+        run: |
+          echo "========================================"
+          echo "Running Planning Horizon Tests (event-driven policies vs Python references)"
+          echo "========================================"
+          ./tests/run_planning_horizon_tests.sh
+
       - name: Run Queue Implementation Differential Tests
         id: queue-impl
         run: |

@@ -46,9 +46,10 @@ Each item describes the code on this branch.
   [`--backfill_queue_depth`](../user-guide/command-line.md#--backfill_queue_depth-n)
   caps how many waiting jobs one pass inspects (default unlimited).
   [`--planning_horizon`](../user-guide/command-line.md#--planning_horizon-seconds)
-  drops reservations that would start beyond the horizon in periodic mode;
+  drops reservations that would start beyond the horizon in event-driven and
+  periodic mode;
   such a job still consumes a queue-depth slot but no reservation slot, as in
-  Slurm. Event-driven mode has no horizon.
+  Slurm, and is reconsidered on the next pass.
   [`--planning_time_resolution`](../user-guide/command-line.md#--planning_time_resolution-seconds)
   rounds each projected release up to a grid once its start is known; the
   clock and actual execution stay exact.
@@ -77,6 +78,9 @@ Each item describes the code on this branch.
   shares one FCFS queue across several homogeneous systems.
 
 ## Production schedulers
+
+All four systems discussed here run at LLNL: Flux on El Capitan and Tuolumne,
+LSF on Sierra and Lassen, and Slurm on most other LC clusters.
 
 ### Slurm
 
@@ -112,6 +116,17 @@ fresh reservation plan
 It examines at most `queue-depth` jobs per cycle and yields after six jobs,
 plans in integer seconds, and places jobs on a resource graph.
 
+Fluxion keeps a blocked list for jobs that cannot be allocated or reserved
+within the planner's span, including requests affected by down resources. At
+the cited revision the planner's duration is effectively `INT64_MAX`, so this
+list is a satisfiability filter rather than a finite-window mechanism: the
+[`MATCH_ALLOCATE_ORELSE_RESERVE`](https://github.com/flux-framework/flux-sched/blob/3b49d1998ed53836618e54188f45b52bc1aac811/resource/traversers/dfu.cpp#L106-L139)
+path searches the planner first and then makes a satisfiability check. On
+[`EBUSY`](https://github.com/flux-framework/flux-sched/blob/3b49d1998ed53836618e54188f45b52bc1aac811/qmanager/policies/queue_policy_bf_base_impl.hpp#L120-L141),
+the backfill policy moves a reservation candidate to `m_blocked` and removes
+it from `m_scheduled_cnt`; [`reconsider_blocked_jobs()`](https://github.com/flux-framework/flux-sched/blob/3b49d1998ed53836618e54188f45b52bc1aac811/qmanager/policies/base/queue_policy_base.hpp#L188-L194)
+returns it when resource status changes.
+
 | Setting | Default or policy-fixed behavior | Meaning |
 |---|---|---|
 | `queue-policy` | `fcfs`, `easy`, `conservative`, `hybrid` | Reservation depth 0, 1, all, or N. |
@@ -144,12 +159,23 @@ reproduce trigger and reservation behavior in the single-pool FCFS model;
 Slurm applies them per partition. Add `--node_release_delay` calibrated to
 the target system's cleanup time where node reuse matters.
 
+### Out-of-horizon accounting
+
+| Planner | Out-of-horizon or unplannable job | Reservation slot | Re-examination |
+|---|---|---|---|
+| Slurm `bf_window` | Counts toward `bf_max_job_test` | No reservation slot | Retested every pass |
+| Fluxion blocked list | Not counted (`--m_scheduled_cnt`) | No reservation slot | Returned only on resource status change |
+| DR_EVT `--planning_horizon` | Counts toward `--backfill_queue_depth` | No reservation slot | Retested every pass |
+
+DR_EVT follows Slurm's accounting. A follow-on option will add Fluxion-style
+blocked handling without changing this default.
+
 ## Remaining differences
 
 | Aspect | DR_EVT | Difference and bias |
 |---|---|---|
 | Evaluation trigger | Event-driven by default | Slurm and LSF backfill periodically. Default DR_EVT backfill reacts sooner, so waits of backfillable jobs are optimistic. `--backfill_interval` removes this. |
-| Planning grid and horizon | Exact and unlimited by default | Slurm grids planned times and bounds the window; Fluxion plans in whole seconds. Both options reproduce them; event-driven mode has no horizon. |
+| Planning grid and horizon | Exact and unlimited by default | Slurm grids planned times and bounds the window; Fluxion plans in whole seconds. Both options reproduce them in event-driven and periodic mode. |
 | Scan and reservation depth | Unlimited scan by default | Slurm and Fluxion cap both. Matching depths removes the difference. |
 | Node reuse | Immediate by default | Production nodes return after cleanup. `--node_release_delay` removes the optimism only to the degree it is calibrated. |
 | Eligible time | Submission time | Held or dependent jobs in a real trace become eligible later than they were submitted. Their simulated wait is counted from submission, which overstates it relative to the production record. |
@@ -201,7 +227,9 @@ gap to the last three rows.
   time. Flux records it per job as `t_inactive - t_cleanup`; a replay trace
   bounds it from above by the gap before the freed nodes are next needed.
 - **Planning horizon.** Set it to the target's configured window (Slurm
-  `bf_window`). An event-driven horizon is future work.
+  `bf_window`). A follow-on `--planning_horizon_mode=block` option is planned
+  to model Fluxion-style blocked-list handling; the current mode retests on
+  every pass.
 - **Priority hooks.** The experimental external selector ranks backfill
   candidates by a caller-supplied cost; extending the same callback to queue
   ordering would allow priority experiments without changing the built-in
@@ -211,14 +239,21 @@ gap to the last three rows.
 
 - Slurm: `slurm.conf(5)` (SchedulerType, SchedulerParameters) and the
   Scheduling Configuration Guide, read from the `master` branch of the
-  SchedMD repository on 2026-10-30.
+  SchedMD repository on 2026-10-30; pinned source:
+  [`_attempt_backfill`](https://github.com/SchedMD/slurm/blob/slurm-25-11-8-1/src/plugins/sched/backfill/backfill.c#L2126-L2150),
+  [`job_test_count` before the window test](https://github.com/SchedMD/slurm/blob/slurm-25-11-8-1/src/plugins/sched/backfill/backfill.c#L2610-L2618),
+  and the [`backfill_window` comparison](https://github.com/SchedMD/slurm/blob/slurm-25-11-8-1/src/plugins/sched/backfill/backfill.c#L3536-L3544).
 - Flux: flux-sched at commit
   [3b49d19](https://github.com/flux-framework/flux-sched/tree/3b49d1998ed53836618e54188f45b52bc1aac811),
   `qmanager/policies/queue_policy_bf_base_impl.hpp`, the `easy`, `hybrid`,
   and `conservative` policy constructors,
   `qmanager/config/queue_system_defaults.hpp`,
   `qmanager/modules/qmanager_callbacks.cpp`, and
-  `doc/man5/flux-config-sched-fluxion-qmanager.rst`.
+  `doc/man5/flux-config-sched-fluxion-qmanager.rst`; pinned source:
+  [`resource_match.cpp`](https://github.com/flux-framework/flux-sched/blob/3b49d1998ed53836618e54188f45b52bc1aac811/resource/modules/resource_match.cpp),
+  [`dfu.cpp`](https://github.com/flux-framework/flux-sched/blob/3b49d1998ed53836618e54188f45b52bc1aac811/resource/traversers/dfu.cpp#L106-L139),
+  [`allocate_orelse_reserve_jobs()` EBUSY branch](https://github.com/flux-framework/flux-sched/blob/3b49d1998ed53836618e54188f45b52bc1aac811/qmanager/policies/queue_policy_bf_base_impl.hpp#L120-L141),
+  and [`reconsider_blocked_jobs()`](https://github.com/flux-framework/flux-sched/blob/3b49d1998ed53836618e54188f45b52bc1aac811/qmanager/policies/base/queue_policy_base.hpp#L188-L194).
 - LSF: IBM Spectrum LSF 10.1 documentation, `lsb.params`
   `JOB_SCHEDULING_INTERVAL` (read 2026-10-30); the slot-reservation and
   post-execution statements are summarized from the `lsb.queues` reference.

@@ -137,10 +137,13 @@ std::vector<job_no_t> CircularBufferFCFSConservativeScheduler::schedule(
     return jobs_to_run;
   }
 
+  // The blocked head's projection is kept for every policy so that
+  // get_fcfs_head_shadow_time() reports it whether or not it is planned.
+  m_fcfs_reservation_time = calculate_fcfs_reservation(
+      m_wait_queue.front().nodes_requested, available_nodes,
+      effective_running_jobs, current_time);
+
   if (m_backfill_policy == BackfillPolicy::EASY) {
-    m_fcfs_reservation_time = calculate_fcfs_reservation(
-        m_wait_queue.front().nodes_requested, available_nodes,
-        effective_running_jobs, current_time);
     const bool head_reservation_within_horizon = reservation_within_horizon(
         m_fcfs_reservation_time, current_time);
     if (available_nodes == 0) {

@@ -92,26 +92,6 @@ public:
 protected:
   size_t wait_queue_size() const override { return m_wait_queue.size(); }
 
-  /**
-   * Maximum future planning duration for reservations.  The event-driven
-   * schedulers leave this unlimited; the periodic subclass overrides it.
-   */
-  virtual tdiff_t planning_horizon() const {
-    return std::numeric_limits<tdiff_t>::max();
-  }
-
-  /**
-   * @brief Check whether a projected reservation is in the planning window.
-   * @param[in] reservation_time Projected reservation start timestamp.
-   * @param[in] current_time Timestamp at which planning occurs.
-   * @return true when the reservation is no farther than planning_horizon().
-   */
-  bool reservation_within_horizon(sim_time_t reservation_time,
-                                  sim_time_t current_time) const {
-    return static_cast<tdiff_t>(reservation_time - current_time) <=
-           planning_horizon();
-  }
-
 private:
   sim_time_t calculate_conservative_window(size_t job_index,
                                            num_nodes_t available_nodes,

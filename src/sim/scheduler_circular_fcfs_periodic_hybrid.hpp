@@ -38,19 +38,15 @@ public:
    * @param[in] reservation_depth Waiting jobs protected by reservations.
    * @param[in] backfill_queue_depth Eligible jobs examined per pass; zero is
    * unlimited.
-   * @param[in] planning_horizon Maximum reservation look-ahead in seconds;
-   * numeric_limits<tdiff_t>::max() leaves planning unbounded.
    */
   CircularBufferFCFSPeriodicHybridScheduler(
       num_nodes_t total_nodes, size_t initial_job_count,
       size_t initial_capacity, CircularOverflowPolicy overflow_policy,
       BackfillPolicy backfill_policy, size_t reservation_depth,
-      size_t backfill_queue_depth,
-      tdiff_t planning_horizon = std::numeric_limits<tdiff_t>::max())
+      size_t backfill_queue_depth)
       : CircularBufferFCFSConservativeScheduler(
             total_nodes, initial_job_count, backfill_policy, initial_capacity,
-            overflow_policy, reservation_depth, backfill_queue_depth),
-        m_planning_horizon(planning_horizon) {}
+            overflow_policy, reservation_depth, backfill_queue_depth) {}
 
   /**
    * @brief Perform an event-driven FCFS pass without backfill scanning.
@@ -62,12 +58,6 @@ public:
   std::vector<job_no_t> schedule_event(num_nodes_t free_nodes,
                                        const running_jobs_t &running_jobs,
                                        sim_time_t current_time);
-
-protected:
-  tdiff_t planning_horizon() const override { return m_planning_horizon; }
-
-private:
-  tdiff_t m_planning_horizon;
 };
 
 } // namespace dr_evt

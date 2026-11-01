@@ -128,8 +128,10 @@ PYBIND11_MODULE(dr_evt, m) {
                      "float: Grid, in seconds, that planned run times are "
                      "rounded up to; 0 (default) plans exactly.")
       .def_readwrite("planning_horizon", &Sim_Params::m_planning_horizon,
-                     "float: Seconds ahead within which periodic backfill "
-                     "holds reservations; the default is unlimited.")
+                     "float: Seconds ahead within which backfill plans "
+                     "reservations (Slurm bf_window); a job projected beyond "
+                     "it holds no reservation and is retested every pass. "
+                     "The default is unlimited.")
       .def_readwrite("priority_policy", &Sim_Params::m_priority_policy,
                      "PriorityPolicy: Waiting-job ordering policy.")
       .def_readwrite("node_release_delay", &Sim_Params::m_node_release_delay,

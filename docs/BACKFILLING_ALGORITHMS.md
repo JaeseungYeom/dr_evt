@@ -118,6 +118,8 @@ scheduler and accepts `fcfs` or `fcfs_conservative` ordering. The Python
 oracle `scripts/python_conservative_scheduler.py` accepts the same reservation
 and queue-depth limits via `--reservation-depth` and
 `--backfill-queue-depth`.
+Reservations beyond `--planning_horizon` consume a queue-depth scan slot but
+no hybrid reservation-depth slot, and are reconsidered on the next pass.
 
 ## Runtime estimates and completion
 

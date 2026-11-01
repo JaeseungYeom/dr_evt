@@ -117,6 +117,10 @@ FCFSAltScheduler::schedule(num_nodes_t free_nodes,
   }
 
   tdiff_t backfill_window = m_fcfs_reservation_time - current_time;
+  // A head reserved beyond the planning horizon is not planned, so the
+  // window does not constrain candidates (Slurm bf_window).
+  const bool head_within_horizon =
+      reservation_within_horizon(m_fcfs_reservation_time, current_time);
 
   // Scan in FCFS order (earliest submit_time first) for backfill candidates
   for (auto it = m_wait_queue.begin(); it != m_wait_queue.end(); ++it) {
@@ -136,6 +140,7 @@ FCFSAltScheduler::schedule(num_nodes_t free_nodes,
     // event to be processed first, causing a delay. Therefore, backfill jobs
     // must complete BEFORE (not at) the reservation time.
     bool fits_window =
+        !head_within_horizon ||
         (release_estimate(current_time, entry.run_time) < backfill_window);
 
     if (m_backfill_policy == BackfillPolicy::EASY) {

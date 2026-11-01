@@ -106,6 +106,10 @@ CircularBufferFCFSScheduler::schedule(num_nodes_t free_nodes,
   m_fcfs_reservation_time = calculate_fcfs_reservation(
       m_wait_queue.front().nodes_requested, available_nodes,
       effective_running_jobs, current_time);
+  // A head whose reservation starts beyond the planning horizon is not
+  // planned: candidates are not tested against it (Slurm bf_window).
+  const bool head_within_horizon =
+      reservation_within_horizon(m_fcfs_reservation_time, current_time);
 
   // Preserve the head-reservation snapshot, then avoid a scan that cannot
   // start a backfill job without free nodes.
@@ -127,8 +131,9 @@ CircularBufferFCFSScheduler::schedule(num_nodes_t free_nodes,
     // IMPORTANT: strict < (not <=) - see FCFSScheduler::schedule()
     // for why. Backfill jobs must complete BEFORE the reservation
     // time, not at it.
-    if (current_time + release_estimate(current_time, job.run_time_estimate) <
-        m_fcfs_reservation_time) {
+    if (!head_within_horizon ||
+        current_time + release_estimate(current_time, job.run_time_estimate) <
+            m_fcfs_reservation_time) {
       jobs_to_run.push_back(job.job_id);
       available_nodes -= job.nodes_requested;
       m_wait_queue[i].removed = true;

@@ -526,7 +526,7 @@ def main():
         print("               (default: 0 = event-driven backfill)")
         print("  --planning-time-resolution SECONDS  Round planning durations up")
         print("               to this grid (default: 0 = exact planning)")
-        print("  --planning-horizon SECONDS  Limit periodic reservations to this")
+        print("  --planning-horizon SECONDS  Limit event-driven and periodic reservations to this")
         print("               look-ahead (default: unlimited)")
         print()
         print("Generates reference output for CONSERVATIVE backfilling verification")

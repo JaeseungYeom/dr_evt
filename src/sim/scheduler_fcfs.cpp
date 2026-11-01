@@ -163,6 +163,10 @@ FCFSScheduler::schedule(num_nodes_t free_nodes,
   m_fcfs_reservation_time = calculate_fcfs_reservation(
       m_wait_queue.front().nodes_requested, available_nodes,
       effective_running_jobs, current_time);
+  // A head whose reservation starts beyond the planning horizon is not
+  // planned: candidates are not tested against it (Slurm bf_window).
+  const bool head_within_horizon =
+      reservation_within_horizon(m_fcfs_reservation_time, current_time);
 
   // Keep the head-reservation snapshot observable even after FCFS consumed
   // all free nodes, but skip the backfill scan because no candidate can fit.
@@ -188,8 +192,9 @@ FCFSScheduler::schedule(num_nodes_t free_nodes,
     // at the reservation time, the FCFS head must wait for that completion
     // event to be processed first, causing a delay. Therefore, backfill jobs
     // must complete BEFORE (not at) the reservation time.
-    if (current_time + release_estimate(current_time, job.run_time_estimate) <
-        m_fcfs_reservation_time) {
+    if (!head_within_horizon ||
+        current_time + release_estimate(current_time, job.run_time_estimate) <
+            m_fcfs_reservation_time) {
       jobs_to_run.push_back(job.job_id);
       available_nodes -= job.nodes_requested;
       // Index already known here - set the flag directly instead of

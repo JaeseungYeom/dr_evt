@@ -130,14 +130,20 @@ BlockQueueFCFSScheduler<BlockSize>::schedule(num_nodes_t free_nodes,
 
   m_fcfs_reservation_time = calculate_fcfs_reservation(
       head_nodes, available_nodes, effective_running_jobs, current_time);
+  // A head reserved beyond the planning horizon is not planned: the block
+  // queue's window test then sees no bound (Slurm bf_window).
+  const sim_time_t planned_reservation =
+      reservation_within_horizon(m_fcfs_reservation_time, current_time)
+          ? m_fcfs_reservation_time
+          : std::numeric_limits<sim_time_t>::max();
 
   // Step 3: Backfill
   while (available_nodes > 0) {
     tdiff_t backfill_run_time = 0.0;
     num_nodes_t backfill_nodes = 0;
     auto backfill_candidate = m_wait_queue.find_and_remove_backfill_candidate(
-        available_nodes, current_time, m_fcfs_reservation_time,
-        &backfill_run_time, &backfill_nodes);
+        available_nodes, current_time, planned_reservation, &backfill_run_time,
+        &backfill_nodes);
 
     if (!backfill_candidate.has_value()) {
       break;
