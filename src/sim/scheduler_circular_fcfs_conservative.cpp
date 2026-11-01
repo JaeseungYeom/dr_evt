@@ -137,10 +137,13 @@ std::vector<job_no_t> CircularBufferFCFSConservativeScheduler::schedule(
     return jobs_to_run;
   }
 
+  // The blocked head's projection is kept for every policy so that
+  // get_fcfs_head_shadow_time() reports it whether or not it is planned.
+  m_fcfs_reservation_time = calculate_fcfs_reservation(
+      m_wait_queue.front().nodes_requested, available_nodes,
+      effective_running_jobs, current_time);
+
   if (m_backfill_policy == BackfillPolicy::EASY) {
-    m_fcfs_reservation_time = calculate_fcfs_reservation(
-        m_wait_queue.front().nodes_requested, available_nodes,
-        effective_running_jobs, current_time);
     const bool head_reservation_within_horizon = reservation_within_horizon(
         m_fcfs_reservation_time, current_time);
     if (available_nodes == 0) {
@@ -170,10 +173,21 @@ std::vector<job_no_t> CircularBufferFCFSConservativeScheduler::schedule(
     return jobs_to_run;
   }
 
-  size_t examined = 1; // The blocked FCFS head is the first examined job.
+  // Out-of-horizon jobs stay queued but do not consume a scan slot. They are
+  // projected again on the next pass instead of requiring blocked-list state.
+  size_t examined = reservation_within_horizon(m_fcfs_reservation_time,
+                                                current_time)
+                        ? 1
+                        : 0;
   for (size_t i = 1; i < m_eligible_end_idx; ++i) {
     const auto &job = m_wait_queue[i];
     if (job.removed) {
+      continue;
+    }
+    const sim_time_t job_reservation = calculate_fcfs_reservation(
+        job.nodes_requested, available_nodes, effective_running_jobs,
+        current_time);
+    if (!reservation_within_horizon(job_reservation, current_time)) {
       continue;
     }
     if (m_backfill_queue_depth != 0 && examined >= m_backfill_queue_depth) {

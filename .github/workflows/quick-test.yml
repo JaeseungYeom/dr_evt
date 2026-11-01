@@ -71,6 +71,14 @@ jobs:
           # values.
           ./tests/run_periodic_backfill_tests.sh
 
+      - name: Run Planning Horizon Tests
+        id: planning-horizon
+        run: |
+          # Event-driven planning horizon for easy, hybrid, conservative, and
+          # sjf against the Python references, unlimited-horizon identity on
+          # the 34 workloads, and rejected values.
+          ./tests/run_planning_horizon_tests.sh
+
       - name: Run Trace Schema Unit Tests
         id: trace-schema
         run: |

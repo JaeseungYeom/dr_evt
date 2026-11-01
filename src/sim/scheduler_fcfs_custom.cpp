@@ -290,13 +290,18 @@ backfill_candidates_t CustomFCFSScheduler::find_backfill_candidates_from(
     return candidates;
   }
 
+  // A head reserved beyond the planning horizon is not planned, so every
+  // fitting job is a candidate (Slurm bf_window).
+  const bool head_within_horizon =
+      reservation_within_horizon(reservation_time, current_time);
   for (size_t i = std::max<size_t>(1, begin_idx); i < m_eligible_end_idx; ++i) {
     const auto &job = m_wait_queue[i];
     if (job.removed || job.nodes_requested > available_nodes) {
       continue;
     }
-    if (current_time + release_estimate(current_time, job.run_time_estimate) >=
-        reservation_time) {
+    if (head_within_horizon &&
+        current_time + release_estimate(current_time, job.run_time_estimate) >=
+            reservation_time) {
       continue;
     }
     candidates.emplace_back(job.job_id, job.m_cost);

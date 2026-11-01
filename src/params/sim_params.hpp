@@ -215,7 +215,8 @@ public:
   tdiff_t m_backfill_interval;
   /// Planning time-limit grid for scheduler projections; zero is exact.
   tdiff_t m_planning_time_resolution;
-  /// Periodic backfill reservation look-ahead; max value means unlimited.
+  /// Reservation look-ahead for backfill planning (Slurm bf_window); the
+  /// max value means unlimited.
   tdiff_t m_planning_horizon;
   /// Job priority/order policy applied by the scheduler.
   PriorityPolicy m_priority_policy;

@@ -328,7 +328,7 @@ BasicSimulation<TraceType>::BasicSimulation(Sim_Params params)
           m_params.m_queue_impl, m_params.m_block_size,
           m_params.m_wait_queue_capacity, m_params.m_wait_queue_overflow,
           m_params.m_reservation_depth, m_params.m_backfill_queue_depth,
-          m_params.m_backfill_interval, m_params.m_planning_horizon)),
+          m_params.m_backfill_interval)),
       m_custom_scheduler(nullptr), m_current_time(0.0),
       m_next_backfill_evaluation(std::numeric_limits<sim_time_t>::max()),
       m_periodic_backfill_dirty(true),
@@ -348,6 +348,7 @@ BasicSimulation<TraceType>::BasicSimulation(Sim_Params params)
   m_trace.set_cores_per_node(m_params.m_cores_per_node);
   m_scheduler->set_planning_time_resolution(
       m_params.m_planning_time_resolution);
+  m_scheduler->set_planning_horizon(m_params.m_planning_horizon);
   configure_node_release_delay();
   reset_capacity_schedule();
 }
@@ -384,6 +385,7 @@ BasicSimulation<TraceType>::BasicSimulation(Sim_Params params,
   m_trace.set_cores_per_node(m_params.m_cores_per_node);
   m_scheduler->set_planning_time_resolution(
       m_params.m_planning_time_resolution);
+  m_scheduler->set_planning_horizon(m_params.m_planning_horizon);
   configure_node_release_delay();
   reset_capacity_schedule();
 }
@@ -418,6 +420,7 @@ BasicSimulation<TraceType>::BasicSimulation(
   m_trace.set_cores_per_node(m_params.m_cores_per_node);
   m_scheduler->set_planning_time_resolution(
       m_params.m_planning_time_resolution);
+  m_scheduler->set_planning_horizon(m_params.m_planning_horizon);
   configure_node_release_delay();
   reset_capacity_schedule();
 }
@@ -1465,6 +1468,8 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
                              m_params.m_run_time_scale, "run_time_scale");
     require_checkpoint_match(recorded.m_run_time_stddev,
                              m_params.m_run_time_stddev, "run_time_stddev");
+    require_checkpoint_match(recorded.m_planning_horizon,
+                             m_params.m_planning_horizon, "planning_horizon");
     require_checkpoint_match(recorded.m_node_release_delay,
                              m_params.m_node_release_delay,
                              "node_release_delay");
@@ -1836,9 +1841,10 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
           m_params.m_queue_impl, m_params.m_block_size,
           m_params.m_wait_queue_capacity, m_params.m_wait_queue_overflow,
           m_params.m_reservation_depth, m_params.m_backfill_queue_depth,
-          m_params.m_backfill_interval, m_params.m_planning_horizon);
+          m_params.m_backfill_interval);
       m_scheduler->set_planning_time_resolution(
           m_params.m_planning_time_resolution);
+      m_scheduler->set_planning_horizon(m_params.m_planning_horizon);
       for (const auto job_id : pending_job_ids) {
         const auto &job = m_trace.m_data[job_id - first_resident_job];
         m_scheduler->insert_job(

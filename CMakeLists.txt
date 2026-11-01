@@ -895,6 +895,11 @@ if(DR_EVT_WITH_UNIT_TESTING)
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_periodic_backfill_tests.sh
       $<TARGET_FILE:sim-bin>)
   add_test(
+    NAME test_planning_horizon_reference
+    COMMAND /bin/bash
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_planning_horizon_tests.sh
+      $<TARGET_FILE:sim-bin>)
+  add_test(
     NAME test_max_time
     COMMAND /bin/bash
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_max_time_tests.sh

@@ -35,6 +35,15 @@ def main():
         assert [(row["start_time"], row["end_time"]) for row in horizon] == [
             ("0.0", "100.0"), ("104.0", "114.0"), ("5.0", "104.0")]
 
+        # Event-driven (no interval): the head's reservation at t=100 lies
+        # beyond a 10 s horizon, so job 2 backfills at its arrival, t=1.
+        event_driven = run_reference(
+            source_dir, "tests/test_traces/feature/planning_horizon.csv", outdir,
+            "--planning-horizon", "10",
+        )
+        assert [(row["start_time"], row["end_time"]) for row in event_driven] == [
+            ("0.0", "100.0"), ("100.0", "110.0"), ("1.0", "100.0")]
+
         resolution = run_reference(
             source_dir,
             "tests/test_traces/feature/planning_time_resolution.csv",

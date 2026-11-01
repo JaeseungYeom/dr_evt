@@ -135,8 +135,9 @@ message DR_EVT_Params {
         // Planning time-limit grid for scheduler projections; zero is exact.
         double planning_time_resolution = 43;
 
-        // Maximum reservation look-ahead for periodic backfill. Presence is
-        // explicit so zero is a valid immediate horizon.
+        // Maximum reservation look-ahead for backfill planning, event-driven
+        // or periodic (Slurm bf_window). Presence is explicit so zero is a
+        // valid immediate horizon.
         optional double planning_horizon = 44;
 
         // Seconds a job's nodes stay unavailable after it ends before another

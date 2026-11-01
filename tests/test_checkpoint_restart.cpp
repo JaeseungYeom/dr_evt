@@ -643,6 +643,21 @@ void test_rejected_checkpoints() {
     mismatch_rejected = true;
   }
   assert(mismatch_rejected);
+
+  // The planning horizon shapes every reservation, so a file written with
+  // the unlimited default is not restored into a bounded configuration.
+  auto horizon_params = make_params();
+  horizon_params.m_planning_horizon = 3600.0;
+  Simulation bounded_horizon(horizon_params);
+  checkpoint.clear();
+  checkpoint.seekg(0);
+  bool horizon_rejected = false;
+  try {
+    bounded_horizon.load_checkpoint(checkpoint);
+  } catch (const std::runtime_error &) {
+    horizon_rejected = true;
+  }
+  assert(horizon_rejected);
 }
 
 /** @brief Verify Pcon records, live totals, and resource output survive

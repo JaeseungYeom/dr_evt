@@ -22,7 +22,7 @@ Complete reference for all DR_EVT command-line options for the `simulator` binar
 | Scheduling | `--backfill_queue_depth N` | Cap jobs inspected by built-in hybrid or conservative backfill. |
 | Scheduling | `--backfill_interval SECONDS` | Run built-in backfill at periodic ticks instead of every event. |
 | Scheduling | `--planning_time_resolution SECONDS` | Round planning durations up to a grid. |
-| Scheduling | `--planning_horizon SECONDS` | Limit reservations during periodic backfill. |
+| Scheduling | `--planning_horizon SECONDS` | Limit reservation planning in event-driven and periodic backfill. |
 | Scheduling | `--reservation_depth N` | Number of reserved waiting jobs under `hybrid` backfilling. |
 | Scheduling | `-p, --priority_policy POLICY` | Select the job-ordering policy. |
 | Scheduling | `-q, --queue_impl IMPLEMENTATION` | Select the FCFS wait-queue implementation. |
@@ -287,14 +287,14 @@ it at `0` for exact floating-point planning.
 
 ### `--planning_horizon SECONDS`
 
-Limits how far ahead the periodic scheduler creates or protects reservations.
+Limits how far ahead the scheduler creates or protects reservations.
 A projected reservation whose start is more than `SECONDS` after the current
 planning time is treated as out of horizon: it does not block a backfill job
-and does not consume a hybrid reservation-depth slot. It still consumes a
-`--backfill_queue_depth` scan slot. This option only affects periodic
-scheduling selected by `--backfill_interval`; event-driven schedulers retain
-unlimited planning. An event-driven planning horizon remains future work. It
-corresponds most closely to Slurm `bf_window`.
+and consumes neither a hybrid reservation-depth nor a
+`--backfill_queue_depth` scan slot. It keeps its queue position and is
+re-evaluated on the next scheduling pass, so newly released resources or a
+scheduled capacity change can bring its reservation into the horizon. This
+applies to both event-driven and periodic scheduling.
 
 **Default:** unlimited (the largest `tdiff_t` value)
 

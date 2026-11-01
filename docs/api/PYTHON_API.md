@@ -66,7 +66,7 @@ or `None`.
 | `backfill_queue_depth` | `int`; waiting jobs examined per backfill pass (0 is unlimited) |
 | `backfill_interval` | `float`; seconds between periodic backfill passes (0 backfills at every event) |
 | `planning_time_resolution` | `float`; grid planned run times are rounded up to (0 is exact) |
-| `planning_horizon` | `float`; reservation look-ahead of periodic backfill (default unlimited) |
+| `planning_horizon` | `float`; reservation look-ahead of event-driven and periodic backfill (default unlimited) |
 | `priority_policy` | `PriorityPolicy` |
 | `node_release_delay` | `float`; seconds an ended job's nodes stay unavailable (0 disables) |
 | `node_release_delay_model` | `ReleaseDelayModel` |

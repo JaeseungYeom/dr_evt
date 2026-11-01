@@ -101,14 +101,19 @@ std::vector<job_no_t> LJFScheduler::schedule(num_nodes_t free_nodes,
 
   // FCFS head blocked - try backfilling
   // Calculate FCFS reservation time
-  sim_time_t reservation_time = calculate_fcfs_reservation(
+  m_fcfs_reservation_time = calculate_fcfs_reservation(
       head_nodes, free_nodes, running_jobs, current_time);
+  const sim_time_t reservation_time = m_fcfs_reservation_time;
 
   if (reservation_time <= current_time) {
     return {}; // No valid reservation window
   }
 
   tdiff_t backfill_window = reservation_time - current_time;
+  // A head reserved beyond the planning horizon is not planned, so the
+  // window does not constrain candidates (Slurm bf_window).
+  const bool head_within_horizon =
+      reservation_within_horizon(reservation_time, current_time);
 
   // Scan in LJF order (longest first) for backfill candidates
   for (auto it = m_wait_queue.begin(); it != m_wait_queue.end(); ++it) {
@@ -122,6 +127,7 @@ std::vector<job_no_t> LJFScheduler::schedule(num_nodes_t free_nodes,
     // Check backfill constraints
     bool fits_nodes = (entry.nodes <= free_nodes);
     bool fits_window =
+        !head_within_horizon ||
         (release_estimate(current_time, entry.run_time) <= backfill_window);
 
     if (m_backfill_policy == BackfillPolicy::EASY) {

@@ -799,6 +799,74 @@ void test_reservations_follow_capacity_schedule() {
   std::cout << "  PASSED" << std::endl;
 }
 
+// Event-driven planning horizon (Slurm bf_window): a head whose reservation
+// starts beyond the horizon is not planned, so a candidate that would run
+// past that reservation backfills now; the head keeps its queue position and
+// the shadow time still reports the projection.
+void test_planning_horizon_event_driven() {
+  std::cout << "\n=== Event-driven planning horizon ===" << std::endl;
+
+  struct Case {
+    BackfillPolicy policy;
+    size_t depth;
+    size_t queue_depth;
+    PriorityPolicy priority;
+    const char *name;
+  };
+  const Case cases[] = {
+      {BackfillPolicy::EASY, 0, 0, PriorityPolicy::FCFS, "easy"},
+      // A one-job scan depth proves that the out-of-horizon head does not
+      // consume the only slot needed by C.
+      {BackfillPolicy::HYBRID, 1, 1, PriorityPolicy::FCFS, "hybrid"},
+      {BackfillPolicy::CONSERVATIVE, 0, 1, PriorityPolicy::FCFS,
+       "conservative"},
+      {BackfillPolicy::EASY, 0, 0, PriorityPolicy::SJF, "sjf"},
+  };
+  for (const auto &c : cases) {
+    for (const double horizon :
+         {std::numeric_limits<tdiff_t>::max(), tdiff_t{100.0}}) {
+      Sim_Params params = make_params();
+      params.m_backfill_policy = c.policy;
+      params.m_reservation_depth = c.depth;
+      params.m_backfill_queue_depth = c.queue_depth;
+      params.m_priority_policy = c.priority;
+      params.m_planning_horizon = horizon;
+      Simulation sim(params);
+      sim.get_trace().load_data(0);
+      // A holds 90 nodes until t=1000; H (100 nodes) is reserved at 1000;
+      // C (10 nodes, 2000 s) fits now but would end after the reservation.
+      (void)sim.append_job(0.0, 90, kTestQueueInput, 1000.0);
+      // Start A before H and C enter the queue.  This is essential for the
+      // SJF variant, which would otherwise correctly choose H's short limit
+      // ahead of A and eliminate the blocked-head scenario.
+      sim.advance_to(0.0);
+      const auto head = sim.append_job(0.0, 100, kTestQueueInput, 10.0);
+      const auto candidate = sim.append_job(0.0, 10, kTestQueueInput, 2000.0);
+      sim.advance_to(0.0);
+      const auto statuses = sim.get_job_statuses({head, candidate});
+      const bool bounded = horizon < 1000.0;
+      std::cout << "  " << c.name
+                << (bounded ? " (horizon 100)" : " (unlimited)") << std::endl;
+      assert(statuses[0].state == Simulation::Job_State::PENDING);
+      if (bounded) {
+        // Unplanned head: C backfills past it and the projection moves.
+        assert(statuses[1].state == Simulation::Job_State::RUNNING);
+        assert(approx_equal(*statuses[1].start_time, 0.0));
+        assert(approx_equal(sim.get_fcfs_head_shadow_time(), 2000.0));
+      } else {
+        assert(statuses[1].state == Simulation::Job_State::PENDING);
+        assert(approx_equal(sim.get_fcfs_head_shadow_time(), 1000.0));
+      }
+      sim.advance_to(std::numeric_limits<sim_time_t>::max());
+      const auto final_head = sim.get_job_statuses({head}).front();
+      assert(approx_equal(*final_head.start_time, bounded ? 2000.0 : 1000.0));
+      assert(sim.get_statistics().jobs_completed == 3);
+    }
+  }
+
+  std::cout << "  PASSED" << std::endl;
+}
+
 // A finite streaming advance must consume capacity changes even if no jobs
 // exist yet. Capacity zero then pauses a newly appended job until the increase
 // at t=20. Once that job finishes, draining an otherwise empty simulation to
@@ -1545,6 +1613,7 @@ int main() {
     test_advance_to_idle_gap();
     test_capacity_schedule_across_streaming_advances();
     test_reservations_follow_capacity_schedule();
+    test_planning_horizon_event_driven();
     test_submit_job_records_busy_nodes();
     test_append_jobs_memory_pressure();
     test_resource_area_and_time_accounted_utilization();

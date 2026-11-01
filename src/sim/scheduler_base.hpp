@@ -14,10 +14,12 @@
 #include "sim/scheduler_policies.hpp"
 #include "trace/job_record.hpp"
 #include "trace/trace.hpp"
+#include <cmath>
 #include <limits>
 #include <map>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <vector>
 
 namespace dr_evt {
@@ -67,6 +69,9 @@ protected:
   const Capacity_Change *m_outlook_changes_begin = nullptr;
   /// One past the last scheduled capacity change.
   const Capacity_Change *m_outlook_changes_end = nullptr;
+  /// Furthest ahead of the current time a projected reservation may start
+  /// and still be planned (Slurm bf_window); unlimited by default.
+  tdiff_t m_planning_horizon = std::numeric_limits<tdiff_t>::max();
 
 public:
   /**
@@ -88,6 +93,40 @@ public:
    */
   void set_planning_time_resolution(tdiff_t resolution) {
     m_planning_time_resolution = resolution;
+  }
+
+  /**
+   * @brief Set how far ahead reservations are planned.
+   * @details
+   * A waiting job whose projected reservation starts more than this many
+   * seconds after the current time is not planned in that pass: it does not
+   * block backfill candidates and does not consume a hybrid reservation-depth
+   * slot. It still consumes a backfill queue-depth scan slot, keeps its queue
+   * position, and is re-evaluated on the next pass. Applies to event-driven
+   * and periodic scheduling alike.
+   * @param[in] horizon Look-ahead in seconds; numeric_limits<tdiff_t>::max()
+   * leaves planning unbounded.
+   * @throws std::invalid_argument if the horizon is negative or not finite.
+   */
+  void set_planning_horizon(tdiff_t horizon) {
+    if (!std::isfinite(horizon) || horizon < 0.0) {
+      throw std::invalid_argument(
+          "planning_horizon must be finite and nonnegative");
+    }
+    m_planning_horizon = horizon;
+  }
+
+  /**
+   * @brief Check whether a projected reservation is in the planning window.
+   * @param[in] reservation_time Projected reservation start timestamp.
+   * @param[in] current_time Timestamp at which planning occurs.
+   * @return true when the reservation starts no more than the planning
+   * horizon after current_time.
+   */
+  bool reservation_within_horizon(sim_time_t reservation_time,
+                                  sim_time_t current_time) const {
+    return static_cast<tdiff_t>(reservation_time - current_time) <=
+           m_planning_horizon;
   }
 
   /**
@@ -341,9 +380,8 @@ protected:
  * @param[in] backfill_queue_depth Eligible waiting jobs examined per hybrid
  * or conservative backfill pass; zero is unlimited.
  * @param[in] backfill_interval Seconds between additional hybrid evaluations;
- * zero retains event-driven evaluation only.
- * @param[in] planning_horizon Maximum periodic reservation look-ahead;
- * numeric_limits<tdiff_t>::max() leaves it unlimited.
+ * zero retains event-driven evaluation only. The planning horizon is not a
+ * construction parameter; set it with SchedulerBase::set_planning_horizon().
  * @return Owning pointer to a SchedulerBase implementation.
  * @throws std::invalid_argument if HYBRID is requested with a zero depth or
  * with a non-FCFS priority policy.
@@ -355,8 +393,7 @@ std::unique_ptr<SchedulerBase> create_scheduler(
     size_t block_size = 128, size_t wait_queue_capacity = 0,
     CircularOverflowPolicy wait_queue_overflow = CircularOverflowPolicy::GROW,
     size_t reservation_depth = 0, size_t backfill_queue_depth = 0,
-    tdiff_t backfill_interval = 0.0,
-    tdiff_t planning_horizon = std::numeric_limits<tdiff_t>::max());
+    tdiff_t backfill_interval = 0.0);
 
 /**@}*/
 

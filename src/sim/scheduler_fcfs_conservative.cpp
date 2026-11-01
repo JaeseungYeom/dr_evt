@@ -58,11 +58,15 @@ sim_time_t FCFSConservativeScheduler::calculate_conservative_window(
       continue;
     if (depth != 0 && reserved >= depth)
       break;
-    ++reserved;
 
     // Calculate when this job could start
     sim_time_t job_reservation = calculate_fcfs_reservation(
         job.nodes_requested, available_nodes, running_jobs, current_time);
+    // Beyond the planning horizon the job is not planned: no reservation
+    // and no reservation-depth slot (Slurm bf_window).
+    if (!reservation_within_horizon(job_reservation, current_time))
+      continue;
+    ++reserved;
 
     // Track the earliest reservation time
     earliest_conflict = std::min(earliest_conflict, job_reservation);
@@ -135,11 +139,15 @@ FCFSConservativeScheduler::schedule(num_nodes_t free_nodes,
 
   // Step 3: Try backfilling based on policy
   // Update effective running jobs to include jobs just started
+  // The blocked head's projection is kept for every policy so that
+  // get_fcfs_head_shadow_time() reports it whether or not it is planned.
+  m_fcfs_reservation_time = calculate_fcfs_reservation(
+      m_wait_queue.front().nodes_requested, available_nodes,
+      effective_running_jobs, current_time);
   if (m_backfill_policy == BackfillPolicy::EASY) {
     // EASY backfilling: Only consider the head job's reservation
-    m_fcfs_reservation_time = calculate_fcfs_reservation(
-        m_wait_queue.front().nodes_requested, available_nodes,
-        effective_running_jobs, current_time);
+    const bool head_within_horizon =
+        reservation_within_horizon(m_fcfs_reservation_time, current_time);
 
     // The reservation remains part of the public FCFS snapshot. No candidate
     // can start when FCFS has consumed all free nodes.
@@ -157,9 +165,11 @@ FCFSConservativeScheduler::schedule(num_nodes_t free_nodes,
       if (job.nodes_requested > available_nodes)
         continue;
 
-      // Check if job completes before head's reservation
-      if (current_time + release_estimate(current_time, job.run_time_estimate) <
-          m_fcfs_reservation_time) {
+      // Check if job completes before head's reservation; an unplanned head
+      // (beyond the horizon) does not constrain candidates.
+      if (!head_within_horizon ||
+          current_time + release_estimate(current_time, job.run_time_estimate) <
+              m_fcfs_reservation_time) {
         jobs_to_run.push_back(job.job_id);
         available_nodes -= job.nodes_requested;
         m_wait_queue[i].removed = true;
@@ -178,11 +188,22 @@ FCFSConservativeScheduler::schedule(num_nodes_t free_nodes,
     // CONSERVATIVE backfilling: Must not delay ANY waiting job.
     // HYBRID: must not delay the first m_reservation_depth waiting jobs.
 
-    // Try backfilling with jobs that won't delay anyone ahead of them.
-    size_t examined = 1; // The blocked FCFS head is the first examined job.
+    // Jobs with no reservation in the planning horizon stay in queue but do
+    // not consume a scan slot. Their projection is recomputed on every pass,
+    // which captures ordinary resource releases and capacity changes without
+    // modeling an external blocked-list notification.
+    size_t examined = reservation_within_horizon(m_fcfs_reservation_time,
+                                                  current_time)
+                          ? 1
+                          : 0;
     for (size_t i = 1; i < m_eligible_end_idx; ++i) {
       const auto &job = m_wait_queue[i];
       if (job.removed)
+        continue;
+      const sim_time_t job_reservation = calculate_fcfs_reservation(
+          job.nodes_requested, available_nodes, effective_running_jobs,
+          current_time);
+      if (!reservation_within_horizon(job_reservation, current_time))
         continue;
       if (m_backfill_queue_depth != 0 && examined >= m_backfill_queue_depth)
         break;
@@ -192,7 +213,7 @@ FCFSConservativeScheduler::schedule(num_nodes_t free_nodes,
       if (job.nodes_requested > available_nodes)
         continue;
 
-      // Calculate conservative window: earliest reservation of all jobs ahead
+      // Calculate conservative window: earliest in-horizon reservation ahead.
       sim_time_t conservative_window = calculate_conservative_window(
           i, available_nodes, effective_running_jobs, current_time);
 

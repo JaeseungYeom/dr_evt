@@ -77,7 +77,8 @@ class EasyBackfillingScheduler:
     """
 
     def __init__(self, total_nodes: int, verbose: bool = False,
-                 release_delay: float = 0.0):
+                 release_delay: float = 0.0,
+                 planning_horizon: float = float('inf')):
         self.total_nodes = total_nodes
         self.verbose = verbose
         # Node release delay (constant model, block release): after a job
@@ -89,6 +90,10 @@ class EasyBackfillingScheduler:
         # has ended, its nodes are observably releasing and their actual
         # release time is used.
         self.release_delay = release_delay
+        # A head whose reservation starts more than this far ahead is not
+        # planned: it holds no reservation, so candidates are not tested
+        # against it (Slurm bf_window). Infinity plans every reservation.
+        self.planning_horizon = planning_horizon
 
         # State
         self.current_time = 0.0
@@ -203,6 +208,9 @@ class EasyBackfillingScheduler:
         # reservation and try to backfill the rest of the queue against it.
         # free_nodes still holds the correct current value from Step 1.
         reservation_time = self.calculate_reservation_time()
+        head_within_horizon = (
+            reservation_time is not None and
+            reservation_time - self.current_time <= self.planning_horizon)
 
         # Position 0 is the head; the loop above just proved it's blocked
         # (that's why we're here), so it stays parked at the front.
@@ -219,7 +227,8 @@ class EasyBackfillingScheduler:
                 # Tested on its projected end; the release delay is not
                 # planned for, the same as for the reservation above.
                 job_end = self.current_time + job.duration
-                if reservation_time is not None and job_end < reservation_time:
+                if reservation_time is not None and (
+                        not head_within_horizon or job_end < reservation_time):
                     # Backfiller - only if it completes before reservation
                     self.log(f"Backfilling job {job.idx} (ends at {job_end} < reservation {reservation_time})")
                     self.start_job(job)
@@ -431,7 +440,7 @@ def write_resource_trace(jobs: List[Job], filename: str, total_nodes: int,
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python_reference_scheduler.py <trace.csv> [--verbose] [--nodes N] [--outdir DIR] [--release-delay SECONDS]")
+        print("Usage: python_reference_scheduler.py <trace.csv> [--verbose] [--nodes N] [--outdir DIR] [--release-delay SECONDS] [--planning-horizon SECONDS]")
         print()
         print("Python reference EASY backfilling scheduler for verification")
         print()
@@ -444,6 +453,11 @@ def main():
         print("               stay unavailable this long (default: 0). Matches")
         print("               the simulator's --node_release_delay with the")
         print("               constant model.")
+        print("  --planning-horizon SECONDS")
+        print("               Do not plan a head reservation starting more than")
+        print("               this far ahead; candidates are then not tested")
+        print("               against it. Matches the simulator's")
+        print("               --planning_horizon (default: unlimited).")
         print()
         print("Generates reference output for EASY backfilling verification")
         print("Output files are written to /tmp by default to avoid directory pollution")
@@ -473,11 +487,20 @@ def main():
             print("--release-delay must be nonnegative", file=sys.stderr)
             sys.exit(1)
 
+    planning_horizon = float('inf')
+    if '--planning-horizon' in sys.argv:
+        idx = sys.argv.index('--planning-horizon')
+        planning_horizon = float(sys.argv[idx + 1])
+        if planning_horizon < 0:
+            print("--planning-horizon must be nonnegative", file=sys.stderr)
+            sys.exit(1)
+
     print(f"=== Python Reference EASY Backfilling Scheduler ===", file=sys.stderr)
     print(f"Trace: {trace_file}", file=sys.stderr)
     print(f"Total nodes: {total_nodes}", file=sys.stderr)
     print(f"Output directory: {outdir}", file=sys.stderr)
     print(f"Node release delay: {release_delay}", file=sys.stderr)
+    print(f"Planning horizon: {planning_horizon}", file=sys.stderr)
     print(f"Verbose: {verbose}", file=sys.stderr)
     print(file=sys.stderr)
 
@@ -487,7 +510,8 @@ def main():
 
     # Run scheduler
     scheduler = EasyBackfillingScheduler(total_nodes, verbose=verbose,
-                                         release_delay=release_delay)
+                                         release_delay=release_delay,
+                                         planning_horizon=planning_horizon)
     jobs = scheduler.simulate(jobs)
 
     # Write output files to specified directory
