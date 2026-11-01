@@ -62,6 +62,15 @@ jobs:
           # exclusion, and rejected values.
           ./tests/run_node_release_delay_tests.sh
 
+      - name: Run Periodic Backfill Tests
+        id: periodic-backfill
+        run: |
+          # The same 34 workloads under hybrid and conservative periodic
+          # backfill at two tick intervals, compared against the Python
+          # conservative reference, plus zero-interval identity and rejected
+          # values.
+          ./tests/run_periodic_backfill_tests.sh
+
       - name: Run Trace Schema Unit Tests
         id: trace-schema
         run: |

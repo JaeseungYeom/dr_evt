@@ -326,6 +326,63 @@ void test_custom_scheduler_continuation() {
   assert(actual_stats.makespan == expected_stats.makespan);
 }
 
+/** @brief Verify periodic backfill restarts exactly, including its tick state.
+ *
+ * The checkpoint lands on a tick (interval 4, boundary at 60) right after an
+ * arrival, so the pass at the boundary leaves the dirty flag cleared. A
+ * restore that did not carry the flag would re-save a different checkpoint.
+ */
+void test_periodic_backfill_continuation() {
+  auto params = make_params();
+  params.m_queue_impl = QueueImplementation::CIRCULAR;
+  params.m_backfill_policy = BackfillPolicy::HYBRID;
+  params.m_reservation_depth = 1;
+  params.m_backfill_interval = 4;
+
+  Simulation uninterrupted(params);
+  populate_checkpoint_workload(uninterrupted);
+  check_populated_checkpoint_state(uninterrupted);
+  const auto checkpoint_stats = uninterrupted.get_statistics();
+  std::stringstream checkpoint(std::ios::in | std::ios::out | std::ios::binary);
+  uninterrupted.save_checkpoint(checkpoint);
+  append_restarted_workload(uninterrupted);
+  uninterrupted.advance_to(std::numeric_limits<sim_time_t>::max());
+  const auto expected_stats = uninterrupted.get_statistics();
+  assert(expected_stats.jobs_submitted == 2 * scheduler_workload_size);
+
+  checkpoint.seekg(0);
+  Simulation restarted(params);
+  restarted.load_checkpoint(checkpoint);
+  const auto restored_stats = restarted.get_statistics();
+  assert(restored_stats.current_time == checkpoint_stats.current_time);
+  assert(restored_stats.jobs_completed == checkpoint_stats.jobs_completed);
+  assert(restored_stats.jobs_running == checkpoint_stats.jobs_running);
+  assert(restored_stats.jobs_waiting == checkpoint_stats.jobs_waiting);
+  assert(restored_stats.nodes_in_use == checkpoint_stats.nodes_in_use);
+
+  // The restored state re-saves byte for byte: the tick deadline and the
+  // dirty flag survive the round trip.
+  std::stringstream resaved(std::ios::in | std::ios::out | std::ios::binary);
+  restarted.save_checkpoint(resaved);
+  assert(resaved.str() == checkpoint.str());
+
+  append_restarted_workload(restarted);
+  restarted.advance_to(std::numeric_limits<sim_time_t>::max());
+  const auto &expected = uninterrupted.get_trace().data();
+  const auto &actual = restarted.get_trace().data();
+  assert(actual.size() == expected.size());
+  for (size_t i = 0; i < actual.size(); ++i) {
+    assert(actual[i].get_begin_time() == expected[i].get_begin_time());
+    assert(actual[i].get_end_time() == expected[i].get_end_time());
+  }
+  const auto actual_stats = restarted.get_statistics();
+  assert(actual_stats.jobs_submitted == expected_stats.jobs_submitted);
+  assert(actual_stats.jobs_completed == expected_stats.jobs_completed);
+  assert(actual_stats.current_time == expected_stats.current_time);
+  assert(actual_stats.nodes_in_use == expected_stats.nodes_in_use);
+  assert(actual_stats.makespan == expected_stats.makespan);
+}
+
 /** @brief Verify reclaimed jobs and incremental outputs continue exactly once.
  */
 void test_output_continuation() {
@@ -685,6 +742,7 @@ int main() {
   test_exact_continuation();
   test_loaded_jobs_remain_unsubmitted();
   test_custom_scheduler_continuation();
+  test_periodic_backfill_continuation();
   test_output_continuation();
   test_progressive_output_continuation();
 #if defined(DR_EVT_HAS_REDIS_PLUS_PLUS)

@@ -679,6 +679,14 @@ public:
       if (m_next_capacity_change < m_capacity_changes.size()) {
         next = std::min(next, m_capacity_changes[m_next_capacity_change].time);
       }
+      // In periodic mode a backfill tick is an event too, but only while a
+      // job is waiting for a backfill decision (advance_to() applies the same
+      // rule); otherwise the tick is skipped and the cadence kept.
+      if (m_params.m_backfill_interval > 0.0 &&
+          m_scheduler->active_job_count() > 0) {
+        align_backfill_tick();
+        next = std::min(next, m_next_backfill_evaluation);
+      }
       // Stop at the first event at or after the target, or if no progress
       // was made (defensive; advance_to() consumes everything <= next).
       if (next >= target_time || next <= previous) {
@@ -819,15 +827,25 @@ protected:
   void configure_node_release_delay();
 
   /**
-   * Return the planned node-release offset after quantizing the projected
-   * release timestamp. Execution itself remains exact.
+   * Bring the next periodic backfill tick up to date with the clock.
+   *
+   * Initializes the first tick one interval after the current time and moves
+   * a tick left in the past (unconsumed while nothing waited) forward on the
+   * same cadence to the first grid point at or after the current time. No-op
+   * when periodic backfill is not configured.
    */
-  tdiff_t planning_run_time(sim_time_t start_time, tdiff_t run_time_estimate,
-                            num_nodes_t nodes) const {
+  void align_backfill_tick();
+
+  /**
+   * Return the planned node-release offset after quantizing the projected
+   * release timestamp. Execution itself remains exact. A node release delay
+   * is not planned for: the projection is start + estimate, as in production
+   * schedulers; once the job ends, the entry is updated to its actual release.
+   */
+  tdiff_t planning_run_time(sim_time_t start_time,
+                            tdiff_t run_time_estimate) const {
     const tdiff_t resolution = m_params.m_planning_time_resolution;
-    sim_time_t release_time =
-        start_time + run_time_estimate +
-        m_trace.node_release_delay().planning_delay(nodes);
+    sim_time_t release_time = start_time + run_time_estimate;
     if (resolution != 0.0) {
       release_time = std::ceil(release_time / resolution) * resolution;
     }

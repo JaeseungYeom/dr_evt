@@ -86,6 +86,42 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# --- Test 1b: the same comparison under periodic backfill. The tick
+# cadence must not restart at a file boundary.
+echo "Testing: infile_list_matches_combined_periodic_backfill"
+
+OUT_LIST_P="$TEST_WORK_DIR/list_periodic.csv"
+RES_LIST_P="$TEST_WORK_DIR/list_periodic_resources.csv"
+OUT_COMBINED_P="$TEST_WORK_DIR/combined_periodic.csv"
+RES_COMBINED_P="$TEST_WORK_DIR/combined_periodic_resources.csv"
+
+periodic_ok=1
+if ! "$SIMULATOR" --infile_list "$TRACE_DIR/file_list.txt" \
+    --total_nodes 100 --trace_format simple --timestamp_format epoch \
+    --run_time_mode limit --backfill_policy hybrid --reservation_depth 1 \
+    --backfill_interval 7 --outfile "$OUT_LIST_P" --resource_trace "$RES_LIST_P" \
+    > "$TEST_WORK_DIR/list_periodic.log" 2>&1; then
+    periodic_ok=0
+fi
+if ! "$SIMULATOR" "$TRACE_DIR/combined.csv" \
+    --total_nodes 100 --trace_format simple --timestamp_format epoch \
+    --run_time_mode limit --backfill_policy hybrid --reservation_depth 1 \
+    --backfill_interval 7 --outfile "$OUT_COMBINED_P" \
+    --resource_trace "$RES_COMBINED_P" \
+    > "$TEST_WORK_DIR/combined_periodic.log" 2>&1; then
+    periodic_ok=0
+fi
+
+if [ "$periodic_ok" -eq 1 ] && [ -s "$OUT_LIST_P" ] && [ -s "$RES_LIST_P" ] && \
+   diff -w "$OUT_LIST_P" "$OUT_COMBINED_P" > /dev/null 2>&1 && \
+   diff -w "$RES_LIST_P" "$RES_COMBINED_P" > /dev/null 2>&1; then
+    echo "  ✓ PASS"
+    PASS=$((PASS + 1))
+else
+    echo "  ✗ FAIL - periodic schedules or resource traces differ"
+    FAIL=$((FAIL + 1))
+fi
+
 # --- Test 2: --infile_list with a small --job_store_capacity actually
 # bounds memory (only directly observable via the C++-level test's
 # capacity() check - this CLI test just confirms the run itself

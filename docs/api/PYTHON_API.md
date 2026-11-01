@@ -63,11 +63,23 @@ or `None`.
 | `backfill_policy` | `BackfillPolicy` |
 | `num_max_candidates` | `int` |
 | `reservation_depth` | `int` |
+| `backfill_queue_depth` | `int`; waiting jobs examined per backfill pass (0 is unlimited) |
+| `backfill_interval` | `float`; seconds between periodic backfill passes (0 backfills at every event) |
+| `planning_time_resolution` | `float`; grid planned run times are rounded up to (0 is exact) |
+| `planning_horizon` | `float`; reservation look-ahead of periodic backfill (default unlimited) |
 | `priority_policy` | `PriorityPolicy` |
 | `node_release_delay` | `float`; seconds an ended job's nodes stay unavailable (0 disables) |
 | `node_release_delay_model` | `ReleaseDelayModel` |
 | `node_release_delay_spread` | `float`; `UNIFORM` half-width |
 | `verbose` | `bool` |
+
+The four scheduling attributes after `reservation_depth` mirror the
+`--backfill_queue_depth`, `--backfill_interval`,
+`--planning_time_resolution`, and `--planning_horizon` command-line options
+described in [Command-Line Options](../user-guide/command-line.md). A positive
+`backfill_interval` keeps FCFS dispatch event-driven and runs backfill only at
+ticks; it needs an enabled `backfill_policy` and FCFS ordering, and the
+circular wait queue the binding uses by default.
 
 `sim_start_time` is the global simulation boundary; it is distinct from each
 job's historical `begin_time`. A positive value enables replay-based warm start

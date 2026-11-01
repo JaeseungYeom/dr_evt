@@ -114,6 +114,22 @@ PYBIND11_MODULE(dr_evt, m) {
                      "int: Waiting jobs holding reservations under HYBRID "
                      "backfilling; must be positive with HYBRID, ignored "
                      "otherwise. 1 reproduces EASY.")
+      .def_readwrite("backfill_queue_depth",
+                     &Sim_Params::m_backfill_queue_depth,
+                     "int: Eligible waiting jobs examined per HYBRID or "
+                     "CONSERVATIVE backfill pass; 0 is unlimited.")
+      .def_readwrite("backfill_interval", &Sim_Params::m_backfill_interval,
+                     "float: Seconds between periodic backfill passes; FCFS "
+                     "dispatch stays event-driven. 0 (default) backfills at "
+                     "every event. Requires an enabled backfill policy and "
+                     "FCFS ordering.")
+      .def_readwrite("planning_time_resolution",
+                     &Sim_Params::m_planning_time_resolution,
+                     "float: Grid, in seconds, that planned run times are "
+                     "rounded up to; 0 (default) plans exactly.")
+      .def_readwrite("planning_horizon", &Sim_Params::m_planning_horizon,
+                     "float: Seconds ahead within which periodic backfill "
+                     "holds reservations; the default is unlimited.")
       .def_readwrite("priority_policy", &Sim_Params::m_priority_policy,
                      "PriorityPolicy: Waiting-job ordering policy.")
       .def_readwrite("node_release_delay", &Sim_Params::m_node_release_delay,

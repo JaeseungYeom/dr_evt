@@ -179,6 +179,17 @@ def test_sim_params(result):
         assert params.node_release_delay_model == dr_evt.ReleaseDelayModel.EXPONENTIAL
         params.node_release_delay = 0.0
         params.node_release_delay_model = dr_evt.ReleaseDelayModel.CONSTANT
+        params.reservation_depth = 1
+        params.backfill_queue_depth = 16
+        params.backfill_interval = 30.0
+        params.planning_time_resolution = 60.0
+        params.planning_horizon = 86400.0
+        assert params.backfill_queue_depth == 16
+        assert params.backfill_interval == 30.0
+        assert params.planning_time_resolution == 60.0
+        assert params.planning_horizon == 86400.0
+        params.backfill_interval = 0.0
+        params.planning_time_resolution = 0.0
         params.verbose = False
 
         result.record_pass("SimParams creation and configuration")
@@ -684,6 +695,58 @@ def test_checkpoint_restart(result):
         os.unlink(checkpoint_file.name)
 
 
+def test_periodic_backfill(result):
+    """Test 11: periodic backfill and planning options through the binding"""
+    print("\n11. Periodic Backfill and Planning Options")
+
+    trace_file = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+    trace_file.close()
+    try:
+        create_test_trace(trace_file.name, [])
+
+        def make_params():
+            params = dr_evt.SimParams()
+            params.infile = trace_file.name
+            params.total_nodes = 100
+            params.trace_format = "simple"
+            params.timestamp_format = "epoch"
+            params.run_time_mode = dr_evt.RunTimeMode.LIMIT
+            params.backfill_policy = dr_evt.BackfillPolicy.HYBRID
+            params.reservation_depth = 1
+            return params
+
+        # Backfill waits for the tick: a candidate behind a blocked head,
+        # submitted at t=5 with 10 s ticks, starts at t=10 rather than at
+        # its arrival. FCFS dispatch of the first job stays event-driven.
+        params = make_params()
+        params.backfill_interval = 10.0
+        sim = dr_evt.Simulation(params)
+        first = sim.append_job(0.0, 90, QUEUE_INPUT, 30.0)
+        sim.append_job(5.0, 100, QUEUE_INPUT, 1.0)   # blocked head
+        candidate = sim.append_job(5.0, 10, QUEUE_INPUT, 1.0)
+        sim.advance_to(25.0)
+        statuses = sim.get_job_statuses([first, candidate])
+        assert statuses[0].start_time == 0.0
+        assert statuses[1].state == dr_evt.JobState.COMPLETED
+        assert statuses[1].start_time == 10.0
+        result.record_pass("backfill_interval defers backfill to the tick")
+
+        # Planning on a 60 s grid: the running job's 30 s limit is planned
+        # as 60 s, so the waiting head is projected at t=60, not t=30.
+        params = make_params()
+        params.planning_time_resolution = 60.0
+        sim = dr_evt.Simulation(params)
+        sim.append_job(0.0, 90, QUEUE_INPUT, 30.0)
+        head = sim.append_job(0.0, 50, QUEUE_INPUT, 10.0)
+        sim.advance_to(0.0)
+        assert sim.get_job_statuses([head])[0].expected_start_time == 60.0
+        result.record_pass("planning_time_resolution rounds planned run times")
+    except Exception as e:
+        result.record_fail("Periodic backfill", str(e))
+    finally:
+        os.unlink(trace_file.name)
+
+
 def test_warm_start_batch_mode(result):
     """Python run() exposes replay-based warm-start classification/accounting."""
     print("\n10. Warm-start Batch Mode")
@@ -752,6 +815,7 @@ def main():
     if hasattr(dr_evt.Simulation, "save_checkpoint"):
         test_checkpoint_restart(result)
     test_warm_start_batch_mode(result)
+    test_periodic_backfill(result)
 
     # Print summary and exit
     return result.summary()

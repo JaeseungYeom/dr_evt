@@ -1122,6 +1122,127 @@ void test_prediction_horizon() {
   std::cout << "  PASSED" << std::endl;
 }
 
+// A periodic tick that passes while nothing is waiting must not gate later
+// events: completions still happen, a drain still finishes, the clock never
+// moves backward, and a job never starts before its own submission.
+void test_periodic_backfill_idle_ticks() {
+  std::cout << "\n=== Periodic backfill across idle ticks ===" << std::endl;
+
+  auto params = make_params();
+  params.m_backfill_policy = BackfillPolicy::HYBRID;
+  params.m_reservation_depth = 1;
+  params.m_backfill_interval = 10.0;
+
+  // One job, nothing waiting, drained in one call: the end at t=30 must be
+  // processed although the tick at t=10 was never consumed.
+  {
+    Simulation sim(params);
+    sim.get_trace().load_data(0);
+    (void)sim.append_job(0.0, 90, kTestQueueInput, 30.0);
+    sim.advance_to(std::numeric_limits<sim_time_t>::max());
+    assert(sim.get_statistics().jobs_completed == 1);
+    assert(sim.get_nodes_in_use() == 0);
+    assert(sim.get_trace().pending_events().empty());
+    assert(approx_equal(sim.get_current_time(), 30.0));
+  }
+
+  // The same job advanced in steps that straddle the idle tick.
+  {
+    Simulation sim(params);
+    sim.get_trace().load_data(0);
+    (void)sim.append_job(0.0, 90, kTestQueueInput, 30.0);
+    sim.advance_to(15.0);
+    assert(sim.get_nodes_in_use() == 90);
+    sim.advance_to(40.0);
+    assert(sim.get_statistics().jobs_completed == 1);
+    assert(sim.get_nodes_in_use() == 0);
+    assert(approx_equal(sim.get_current_time(), 40.0));
+
+    // A job appended now starts now, not at a stale tick in the past, and
+    // the clock only moves forward.
+    const auto later = sim.append_job(40.0, 50, kTestQueueInput, 5.0);
+    sim.advance_to(41.0);
+    assert(approx_equal(sim.get_current_time(), 41.0));
+    const auto status = sim.get_job_statuses({later}).front();
+    assert(status.start_time.has_value());
+    assert(approx_equal(*status.start_time, 40.0));
+    sim.advance_to(std::numeric_limits<sim_time_t>::max());
+    assert(sim.get_statistics().jobs_completed == 2);
+    assert(sim.get_trace().pending_events().empty());
+    assert(approx_equal(sim.get_current_time(), 45.0));
+  }
+
+  // Backfill still waits for ticks once a job is blocked: after the idle
+  // stretch, a blocked head and a candidate arriving between ticks see the
+  // candidate start at the next tick, with the cadence kept from t=0.
+  {
+    Simulation sim(params);
+    sim.get_trace().load_data(0);
+    (void)sim.append_job(0.0, 90, kTestQueueInput, 30.0);
+    sim.advance_to(15.0);
+    (void)sim.append_job(15.0, 100, kTestQueueInput, 1.0); // blocked head
+    const auto candidate = sim.append_job(15.0, 10, kTestQueueInput, 1.0);
+    sim.advance_to(25.0);
+    const auto status = sim.get_job_statuses({candidate}).front();
+    assert(status.start_time.has_value());
+    assert(approx_equal(*status.start_time, 20.0));
+  }
+
+  // The same scenario in a single call, as a batch run sees it: the tick at
+  // t=10 passes while nothing waits, and the arrivals at t=15 must not
+  // consume that stale tick as a backfill pass. The candidate waits for t=20.
+  {
+    Simulation sim(params);
+    sim.get_trace().load_data(0);
+    (void)sim.append_job(0.0, 90, kTestQueueInput, 30.0);
+    (void)sim.append_job(15.0, 100, kTestQueueInput, 1.0); // blocked head
+    const auto candidate = sim.append_job(15.0, 10, kTestQueueInput, 1.0);
+    sim.advance_to(25.0);
+    const auto status = sim.get_job_statuses({candidate}).front();
+    assert(status.start_time.has_value());
+    assert(approx_equal(*status.start_time, 20.0));
+  }
+
+  std::cout << "  PASSED" << std::endl;
+}
+
+// run_until_exclusive() must step through backfill ticks like advance_to():
+// a waiting candidate is backfilled at the tick before the target, and the
+// clock ends at the last tick processed, not at the last ordinary event.
+void test_periodic_backfill_run_until_exclusive() {
+  std::cout << "\n=== Periodic backfill under run_until_exclusive ==="
+            << std::endl;
+
+  auto params = make_params();
+  params.m_backfill_policy = BackfillPolicy::HYBRID;
+  params.m_reservation_depth = 1;
+  params.m_backfill_interval = 10.0;
+
+  Simulation sim(params);
+  sim.get_trace().load_data(0);
+  (void)sim.append_job(0.0, 90, kTestQueueInput, 30.0);
+  (void)sim.append_job(5.0, 100, kTestQueueInput, 1.0); // blocked head
+  const auto candidate = sim.append_job(5.0, 10, kTestQueueInput, 1.0);
+
+  // Events strictly before 25: start at 0, arrivals at 5, tick at 10
+  // (candidate backfilled), its end at 11, tick at 20 (head still blocked).
+  sim.run_until_exclusive(25.0);
+  const auto status = sim.get_job_statuses({candidate}).front();
+  assert(status.start_time.has_value());
+  assert(approx_equal(*status.start_time, 10.0));
+  assert(sim.get_statistics().jobs_completed == 1);
+  assert(approx_equal(sim.get_current_time(), 20.0));
+
+  // The tick at exactly the target is excluded, like any other event.
+  sim.run_until_exclusive(30.0);
+  assert(approx_equal(sim.get_current_time(), 20.0));
+  sim.advance_to(30.0);
+  assert(sim.get_statistics().jobs_completed == 2);
+  assert(sim.get_nodes_in_use() == 100); // head started when A ended at 30
+
+  std::cout << "  PASSED" << std::endl;
+}
+
 // Periodic hybrid evaluation retains event-driven FCFS dispatch, but reserves
 // backfill scans for ticks. A candidate that arrives between ticks therefore
 // waits for the first tick even though it fits before the blocked head.
@@ -1334,6 +1455,8 @@ int main() {
     test_resource_area_and_time_accounted_utilization();
     test_prediction_horizon();
     test_periodic_hybrid_backfill();
+    test_periodic_backfill_idle_ticks();
+    test_periodic_backfill_run_until_exclusive();
     test_append_with_known_actual_runtime();
     test_fractional_streaming_limits_validate_stored_value();
 

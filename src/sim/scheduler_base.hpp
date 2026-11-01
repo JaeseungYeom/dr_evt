@@ -55,9 +55,6 @@ protected:
   BackfillPolicy m_backfill_policy;
   /// Projected earliest start time reserved for the FCFS queue head.
   sim_time_t m_fcfs_reservation_time;
-  /// Active node release delay the simulation planned releases with, or null
-  /// when nodes are reusable at a job's end. Non-owning; the Trace owns it.
-  const Node_Release_Delay *m_release_delay = nullptr;
   /// Grid used to round projected release timestamps; zero is exact.
   tdiff_t m_planning_time_resolution = 0.0;
 
@@ -73,17 +70,6 @@ public:
 
   /** @brief Destroy a scheduler through its polymorphic base interface. */
   virtual ~SchedulerBase() = default;
-
-  /**
-   * @brief Plan node releases with a node release delay.
-   * @details Projected releases of jobs this scheduler starts, and the
-   * backfill-window test for candidates, then add the model's expected delay
-   * for each job's node count. Pass null to plan releases at job end.
-   * @param[in] model Active model owned by the simulation's Trace, or null.
-   */
-  void set_node_release_delay(const Node_Release_Delay *model) {
-    m_release_delay = model;
-  }
 
   /**
    * @brief Set the grid used for projected reservation timestamps.
@@ -252,20 +238,18 @@ protected:
 
   /**
    * @brief Time from a job's start until its nodes are reusable, as planned.
-   * @details Rounds the projected release timestamp after the start time is
-   * known. Actual execution is not rounded.
+   * @details The time-limit estimate, with the projected release timestamp
+   * rounded to the planning grid once the start time is known. A configured
+   * node release delay is deliberately not included: production schedulers
+   * plan at the time limit and discover cleanup time when nodes fail to
+   * return. Actual execution is not rounded.
    * @param[in] start_time Planned job-start timestamp.
    * @param[in] run_time_estimate Time-limit estimate of the job.
-   * @param[in] nodes Node count of the job.
    * @return Planned release offset in seconds.
    */
-  tdiff_t release_estimate(sim_time_t start_time, tdiff_t run_time_estimate,
-                           num_nodes_t nodes) const {
-    const tdiff_t release_offset =
-        m_release_delay == nullptr
-            ? run_time_estimate
-            : run_time_estimate + m_release_delay->planning_delay(nodes);
-    sim_time_t release_time = start_time + release_offset;
+  tdiff_t release_estimate(sim_time_t start_time,
+                           tdiff_t run_time_estimate) const {
+    sim_time_t release_time = start_time + run_time_estimate;
     if (m_planning_time_resolution != 0.0) {
       release_time = std::ceil(release_time / m_planning_time_resolution) *
                      m_planning_time_resolution;

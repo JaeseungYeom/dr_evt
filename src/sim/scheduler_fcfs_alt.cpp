@@ -136,8 +136,7 @@ FCFSAltScheduler::schedule(num_nodes_t free_nodes,
     // event to be processed first, causing a delay. Therefore, backfill jobs
     // must complete BEFORE (not at) the reservation time.
     bool fits_window =
-        (release_estimate(current_time, entry.run_time, entry.nodes) <
-         backfill_window);
+        (release_estimate(current_time, entry.run_time) < backfill_window);
 
     if (m_backfill_policy == BackfillPolicy::EASY) {
       // EASY: must fit both nodes AND window

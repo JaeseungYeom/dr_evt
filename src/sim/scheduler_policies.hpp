@@ -86,8 +86,10 @@ enum class RunTimeMode {
  * finished cleaning up. Under CONSTANT every node takes the configured delay.
  * Under the other models each node's cleanup time is an independent draw, so
  * the job's delay is the maximum over its node count and grows with job size.
- * The scheduler plans with the expected delay for the job's node count; a
- * zero configured delay disables the model.
+ * The scheduler does not plan with the delay: it projects a running job's
+ * release at start + limit, as production schedulers do, and meets the cleanup
+ * time when the nodes fail to return. A zero configured delay disables the
+ * model.
  */
 enum class ReleaseDelayModel {
   CONSTANT, ///< Every job's nodes return exactly `delay` seconds after it ends.

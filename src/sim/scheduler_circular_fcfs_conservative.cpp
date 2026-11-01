@@ -125,9 +125,7 @@ std::vector<job_no_t> CircularBufferFCFSConservativeScheduler::schedule(
       jobs_to_run.push_back(job.job_id);
       available_nodes -= job.nodes_requested;
       effective_running_jobs[job.job_id] = {
-          current_time,
-          release_estimate(current_time, job.run_time_estimate,
-                           job.nodes_requested),
+          current_time, release_estimate(current_time, job.run_time_estimate),
           job.nodes_requested};
     } else {
       --m_removed_count;
@@ -154,9 +152,7 @@ std::vector<job_no_t> CircularBufferFCFSConservativeScheduler::schedule(
         continue;
       }
       if (!head_reservation_within_horizon ||
-          current_time +
-                  release_estimate(current_time, job.run_time_estimate,
-                                   job.nodes_requested) <
+          current_time + release_estimate(current_time, job.run_time_estimate) <
               m_fcfs_reservation_time) {
         jobs_to_run.push_back(job.job_id);
         available_nodes -= job.nodes_requested;
@@ -189,18 +185,14 @@ std::vector<job_no_t> CircularBufferFCFSConservativeScheduler::schedule(
     }
     const sim_time_t conservative_window = calculate_conservative_window(
         i, available_nodes, effective_running_jobs, current_time);
-    if (current_time +
-            release_estimate(current_time, job.run_time_estimate,
-                             job.nodes_requested) <
+    if (current_time + release_estimate(current_time, job.run_time_estimate) <
         conservative_window) {
       jobs_to_run.push_back(job.job_id);
       available_nodes -= job.nodes_requested;
       m_wait_queue[i].removed = true;
       ++m_removed_count;
       effective_running_jobs[job.job_id] = {
-          current_time,
-          release_estimate(current_time, job.run_time_estimate,
-                           job.nodes_requested),
+          current_time, release_estimate(current_time, job.run_time_estimate),
           job.nodes_requested};
       if (available_nodes == 0) {
         break;

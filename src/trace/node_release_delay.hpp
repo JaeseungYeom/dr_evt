@@ -21,7 +21,6 @@
 #include "sim/scheduler_policies.hpp"
 #include "utils/rngen.hpp"
 #include <string>
-#include <vector>
 
 namespace dr_evt {
 /** \addtogroup dr_evt_trace
@@ -59,10 +58,15 @@ bool node_release_delay_requested(double delay, ReleaseDelayModel model,
                                   double spread);
 
 /**
- * @brief Per-job release delay: planning estimate and sampled value.
+ * @brief Per-job release delay sampler.
  * @details Owns a random engine seeded independently of the run-time sampler,
  * so enabling the delay never changes the sampled job durations of a run with
- * the same seed. The engine state is part of a simulation checkpoint.
+ * the same seed. The engine state is part of a simulation checkpoint. The
+ * scheduler does not plan with the delay: as in Slurm, Flux, and LSF, a
+ * running job's projected release is its start time plus its time limit, and
+ * the cleanup time is discovered when the nodes fail to return. Once a job
+ * has ended, its nodes are observably in cleanup and the simulation projects
+ * their actual sampled release.
  */
 class Node_Release_Delay {
 public:
@@ -75,11 +79,9 @@ public:
    * @param[in] model Delay model.
    * @param[in] spread Uniform half-width in seconds; ignored otherwise.
    * @param[in] seed Simulation seed from which the engine stream is derived.
-   * @param[in] max_nodes Largest node count any job can hold; sizes the
-   * planning table. Larger counts still work, more slowly.
    * @throws std::invalid_argument on an invalid configuration. */
   Node_Release_Delay(double delay, ReleaseDelayModel model, double spread,
-                     unsigned seed, num_nodes_t max_nodes);
+                     unsigned seed);
 
   /** @brief Report whether releases are delayed at all.
    * @return true when sample() can return a positive delay. */
@@ -91,15 +93,6 @@ public:
   ReleaseDelayModel model() const { return m_model; }
   /** @brief Return the configured spread. @return Seconds. */
   double spread() const { return m_spread; }
-
-  /** @brief Return the delay the scheduler plans with for a job size.
-   * @details The expected maximum of @p nodes per-node cleanup times: the
-   * constant itself, `delay * H(nodes)` (harmonic number) for exponential
-   * per-node times, or `lo + (hi - lo) * nodes / (nodes + 1)` for uniform
-   * ones. Zero when inactive.
-   * @param[in] nodes Node count of the job.
-   * @return Expected delay in seconds. */
-  tdiff_t planning_delay(num_nodes_t nodes) const;
 
   /** @brief Draw the delay for one release.
    * @param[in] nodes Node count of the job that ended.
@@ -114,15 +107,11 @@ public:
   const RNGen<> &engine() const { return m_rng; }
 
 private:
-  /** @brief Return the harmonic number H(n), from the table when possible. */
-  double harmonic(num_nodes_t n) const;
-
-  double m_delay;                 ///< Configured delay in seconds.
-  double m_spread;                ///< Configured uniform half-width in seconds.
-  ReleaseDelayModel m_model;      ///< Delay model.
-  bool m_active;                  ///< Whether any delay is applied.
-  std::vector<double> m_harmonic; ///< H(0..max_nodes) for planning.
-  RNGen<> m_rng;                  ///< Engine for sampled delays.
+  double m_delay;            ///< Configured delay in seconds.
+  double m_spread;           ///< Configured uniform half-width in seconds.
+  ReleaseDelayModel m_model; ///< Delay model.
+  bool m_active;             ///< Whether any delay is applied.
+  RNGen<> m_rng;             ///< Engine for sampled delays.
 };
 
 /**@}*/

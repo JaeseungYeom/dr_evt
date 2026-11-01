@@ -890,6 +890,11 @@ if(DR_EVT_WITH_UNIT_TESTING)
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_node_release_delay_tests.sh
       $<TARGET_FILE:sim-bin>)
   add_test(
+    NAME test_periodic_backfill_reference
+    COMMAND /bin/bash
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_periodic_backfill_tests.sh
+      $<TARGET_FILE:sim-bin>)
+  add_test(
     NAME test_max_time
     COMMAND /bin/bash
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_max_time_tests.sh

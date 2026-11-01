@@ -172,6 +172,14 @@ jobs:
           echo "========================================"
           ./tests/run_node_release_delay_tests.sh
 
+      - name: Run Periodic Backfill Tests
+        id: periodic-backfill
+        run: |
+          echo "========================================"
+          echo "Running Periodic Backfill Tests (34 workloads x 2 policies x 2 intervals + 2 option checks)"
+          echo "========================================"
+          ./tests/run_periodic_backfill_tests.sh
+
       - name: Run Queue Implementation Differential Tests
         id: queue-impl
         run: |

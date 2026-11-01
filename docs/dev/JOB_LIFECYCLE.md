@@ -202,12 +202,13 @@ one node-release event at the end time plus the job's delay (block release:
 all nodes return together). The release event carries the node count, so it
 never needs the job record, which may already have been written and
 reclaimed. Available nodes are the capacity minus allocated and releasing
-nodes. The running-job entry stays until the release, with its projected
-release updated to the sampled time, so reservations account for it; the
-scheduler plans a not-yet-ended job's release as its time limit plus the
-expected delay for its size, and a backfill candidate must release before the
-head's reservation. Replayed history is never delayed; in a warm start the
-delay applies to departures at or after the simulation start time.
+nodes. The scheduler does not plan with the delay: a not-yet-ended job's
+projected release is its start plus its time limit, and a backfill candidate
+is tested on its projected end, as production schedulers do. Once the job has
+ended, the running-job entry stays until the release with its projected
+release updated to the sampled time, so reservations account for nodes that
+are observably in cleanup. Replayed history is never delayed; in a warm start
+the delay applies to departures at or after the simulation start time.
 
 `advance_to(t)` is inclusive. A strict-boundary API must stop before events at
 `t`; it can find the latest event earlier than `t` and invoke the same inclusive
