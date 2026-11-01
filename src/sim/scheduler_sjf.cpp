@@ -124,7 +124,8 @@ std::vector<job_no_t> SJFScheduler::schedule(num_nodes_t free_nodes,
     // Check backfill constraints
     bool fits_nodes = (entry.nodes <= free_nodes);
     bool fits_window =
-        (release_estimate(entry.run_time, entry.nodes) <= backfill_window);
+        (release_estimate(current_time, entry.run_time, entry.nodes) <=
+         backfill_window);
 
     if (m_backfill_policy == BackfillPolicy::EASY) {
       // EASY: must fit both nodes AND window

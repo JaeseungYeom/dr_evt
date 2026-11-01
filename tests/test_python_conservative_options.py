@@ -39,10 +39,11 @@ def main():
             "--planning-time-resolution",
             "60",
         )
-        assert resolution[2]["duration"] == "60.0"
+        assert resolution[2]["duration"] == "59.0"
+        assert resolution[2]["start_time"] == "130.0"
         assert float(resolution[2]["end_time"]) - float(
             resolution[2]["start_time"]
-        ) == 58.0
+        ) == 59.0
 
 
 if __name__ == "__main__":

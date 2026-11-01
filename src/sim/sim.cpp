@@ -346,6 +346,8 @@ BasicSimulation<TraceType>::BasicSimulation(Sim_Params params)
       m_rng(m_params.m_seed), m_queue_length_sum(0), m_queue_length_samples(0),
       m_queue_length_peak(0) {
   m_trace.set_cores_per_node(m_params.m_cores_per_node);
+  m_scheduler->set_planning_time_resolution(
+      m_params.m_planning_time_resolution);
   configure_node_release_delay();
   reset_capacity_schedule();
 }
@@ -379,6 +381,8 @@ BasicSimulation<TraceType>::BasicSimulation(Sim_Params params,
       m_rng(m_params.m_seed), m_queue_length_sum(0), m_queue_length_samples(0),
       m_queue_length_peak(0) {
   m_trace.set_cores_per_node(m_params.m_cores_per_node);
+  m_scheduler->set_planning_time_resolution(
+      m_params.m_planning_time_resolution);
   configure_node_release_delay();
   reset_capacity_schedule();
 }
@@ -410,6 +414,8 @@ BasicSimulation<TraceType>::BasicSimulation(
     throw std::invalid_argument("custom scheduler must not be null");
   }
   m_trace.set_cores_per_node(m_params.m_cores_per_node);
+  m_scheduler->set_planning_time_resolution(
+      m_params.m_planning_time_resolution);
   configure_node_release_delay();
   reset_capacity_schedule();
 }
@@ -718,7 +724,8 @@ void BasicSimulation<TraceType>::run_warm_start() {
         // use that known end rather than a possibly stale original limit.
         m_running_jobs[job_no] = {
             begin,
-            planning_run_time(job.get_actual_run_time(), job.get_num_nodes()),
+            planning_run_time(begin, job.get_actual_run_time(),
+                              job.get_num_nodes()),
             job.get_num_nodes()};
         m_warm_resource_area +=
             static_cast<tdiff_t>(job.get_num_nodes()) * (end - sim_start_time);
@@ -1827,11 +1834,13 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
       if (m_trace.node_release_delay_active()) {
         m_scheduler->set_node_release_delay(&m_trace.node_release_delay());
       }
+      m_scheduler->set_planning_time_resolution(
+          m_params.m_planning_time_resolution);
       for (const auto job_id : pending_job_ids) {
         const auto &job = m_trace.m_data[job_id - first_resident_job];
         m_scheduler->insert_job(
             job_id, convert_epoch<sim_time_t>(job.get_submit_time()),
-            planning_time_limit(job.get_limit_time()), job.get_num_nodes());
+            job.get_limit_time(), job.get_num_nodes());
       }
       m_scheduler->sync_to(m_current_time);
     }
@@ -2289,8 +2298,7 @@ void BasicSimulation<TraceType>::submit_job(job_no_t job_idx,
   job.set_busy_nodes(get_nodes_in_use());
 #endif
 
-  m_scheduler->insert_job(job_idx, submit_time,
-                          planning_time_limit(run_time_estimate), nodes);
+  m_scheduler->insert_job(job_idx, submit_time, run_time_estimate, nodes);
   if (m_params.m_backfill_interval > 0.0) {
     m_periodic_backfill_dirty = true;
   }
@@ -2475,7 +2483,8 @@ void BasicSimulation<TraceType>::advance_to_impl(
         const auto &record = m_trace.job_at(job);
         m_running_jobs[job] = {
             m_current_time,
-            planning_run_time(static_cast<tdiff_t>(record.get_limit_time()),
+            planning_run_time(m_current_time,
+                              static_cast<tdiff_t>(record.get_limit_time()),
                               record.get_num_nodes()),
             record.get_num_nodes()};
         m_jobs_started++;
@@ -2764,7 +2773,8 @@ void BasicSimulation<TraceType>::advance_to_impl(
           const auto &record = m_trace.job_at(job);
           m_running_jobs[job] = {
               m_current_time,
-              planning_run_time(static_cast<tdiff_t>(record.get_limit_time()),
+              planning_run_time(m_current_time,
+                                static_cast<tdiff_t>(record.get_limit_time()),
                                 record.get_num_nodes()),
               record.get_num_nodes()};
           m_jobs_started++;

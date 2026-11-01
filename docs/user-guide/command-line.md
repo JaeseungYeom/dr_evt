@@ -269,13 +269,14 @@ event-driven backfill behavior.
 
 ### `--planning_time_resolution SECONDS`
 
-Rounds each job's `time_limit` up to this grid for scheduler planning:
-projected releases, reservations, and backfill feasibility checks. The
+Rounds projected scheduler release timestamps up to this grid after their
+start time is known. It affects projected releases, reservations, and backfill
+feasibility checks. The
 simulation clock and the job's actual execution duration are unchanged. The
 estimate is supplied to every scheduler, but pure FCFS dispatch does not use
-it to decide whether a job can start immediately. Set this to match a target
-scheduler's planning grid—for example, `60` for Slurm's typical
-`bf_resolution`—or leave it at `0` for exact floating-point planning.
+it to decide whether a job can start immediately. For example, `60` models
+Slurm's typical `bf_resolution` grid for planned begin/end timestamps. Leave
+it at `0` for exact floating-point planning.
 
 **Default:** `0` (exact planning)
 

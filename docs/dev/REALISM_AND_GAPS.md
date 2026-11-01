@@ -32,10 +32,9 @@ The statements below describe the code, not an idealization of it.
   floating-point seconds. By default, reservations and backfill completion
   tests use exact planning times.
   [`--planning_time_resolution SECONDS`](../user-guide/command-line.md#--planning_time_resolution-seconds)
-  rounds each enqueued
-  job's time limit up to that grid for every scheduling policy. It affects
-  projected releases, reservations, and backfill tests, but does not round the
-  clock or change actual execution.
+  rounds each projected release timestamp up to that grid after a job has a
+  known or proposed start time. It affects projected releases, reservations,
+  and backfill tests, but does not round the clock or change actual execution.
 - **Queue depth.** Built-in hybrid and conservative backfill scan every
   eligible waiting job by default;
   [`--backfill_queue_depth`](../user-guide/command-line.md#--backfill_queue_depth-n)
@@ -134,7 +133,8 @@ DR_EVT offers `--backfill_interval` for circular EASY, conservative, or hybrid
 backfill. Events still dispatch FCFS heads, while periodic ticks run the
 configured backfill pass. For the periodic model, map Slurm controls
 independently: `bf_interval` to `--backfill_interval`, `bf_window` to
-`--planning_horizon`, `bf_resolution` to `--planning_time_resolution`,
+`--planning_horizon`, and `bf_resolution` approximately to
+`--planning_time_resolution`,
 `bf_max_job_test` to `--backfill_queue_depth`, and
 `bf_job_part_count_reserve` to `--reservation_depth`. The planning horizon
 does not change the planning-time grid; it only decides whether a projected
@@ -224,14 +224,12 @@ positive interval keeps event-driven FCFS dispatch but runs backfill only at
 periodic ticks.
 
 Use `--planning_time_resolution SECONDS` to apply the last column without
-changing simulated execution. It rounds each time limit supplied to the
-scheduler once when the job is enqueued; `0` retains exact planning. It is
+changing simulated execution. It rounds a projected release timestamp after
+its start time is known; `0` retains exact planning. It is
 applied under every policy, but affects FCFS only where projected releases are
-used—immediate FCFS dispatch remains based on currently free nodes. Thus a
-61-second limit becomes 120 seconds with Slurm's 60-second grid and remains
-61 seconds with Flux's 1-second grid. For a Fluxion comparison, set
-`--planning_time_resolution 1`; this matches its one-second planning grid but
-does not quantize DR_EVT's clock or actual job execution.
+used—immediate FCFS dispatch remains based on currently free nodes. Slurm's
+`bf_resolution` likewise grids maintained planned begin/end timestamps.
+DR_EVT does not quantize its clock or actual job execution.
 
 ### Comparison table and configurable mitigations
 
@@ -260,7 +258,7 @@ DR_EVT controls relevant to the comparison are:
 | Aspect | DR_EVT | Production-scheduler comparison |
 |---|---|---|
 | Evaluation trigger | Event-driven by default; periodic backfill is optional | Slurm and LSF run periodic backfill; Fluxion is event-driven. Default DR_EVT backfill reacts sooner than Slurm or LSF. |
-| Time resolution | Exact planning by default; optional grid | Slurm uses a 60-second grid; Fluxion uses one second. Matching the grid narrows boundary differences. |
+| Time resolution | Exact planning by default; optional projected-timestamp grid | Slurm `bf_resolution` grids planned begin/end timestamps; Fluxion plans in integer seconds. |
 | Planning horizon | Unlimited by default; `--planning_horizon` bounds periodic reservations | Slurm uses `bf_window`; Fluxion is unlimited; LSF is bounded by reservation settings. |
 | Queue and reservation depth | Unlimited scan by default; EASY 1, hybrid N, conservative all | Slurm and Fluxion cap queue/reservation scope; matching depths improves comparability. |
 | Completion and node reuse | Strict completion test; immediate reuse by default | Production systems use their own resolution and cleanup behavior. Calibrate the release delay to reduce optimism. |

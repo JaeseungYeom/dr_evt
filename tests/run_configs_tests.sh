@@ -102,10 +102,10 @@ else
 fi
 
 # Test 2b: planning-time resolution changes the reservation/backfill decision
-# but not the actual duration.  Job 2 normally fits from t=1 through t=59,
-# before job 1's reservation at t=60.  A 60-second planning grid rounds its
-# estimate to 60, so it cannot backfill and starts after job 1 at t=70; its
-# execution duration nevertheless remains its unrounded 58 seconds.
+# but not the actual duration. Job 0 starts off-grid at t=1. Its projected
+# release is t=120 on a 60-second timestamp grid, while job 2's proposed
+# release is also t=120; strict backfill safety therefore rejects job 2. This
+# distinguishes timestamp quantization from rounding each duration.
 echo "Test 2b: planning time resolution affects planning, not execution"
 RESOLUTION_TRACE="tests/test_traces/feature/planning_time_resolution.csv"
 $SIMULATOR "$RESOLUTION_TRACE" \
@@ -127,11 +127,11 @@ $SIMULATOR "$RESOLUTION_TRACE" \
 
 if diff -u \
     <(awk -F, 'NR == 1 { print "job_id,start_time,end_time"; next } { print NR - 2 "," $2 "," $3 }' "$TEST_WORK_DIR/exact_planning.csv") \
-    <(printf 'job_id,start_time,end_time\n0,0,60\n1,60,70\n2,1,59\n') > /dev/null && \
+    <(printf 'job_id,start_time,end_time\n0,1,120\n1,120,130\n2,2,61\n') > /dev/null && \
    diff -u \
     <(awk -F, 'NR == 1 { print "job_id,start_time,end_time"; next } { print NR - 2 "," $2 "," $3 }' "$TEST_WORK_DIR/grid_planning.csv") \
-    <(printf 'job_id,start_time,end_time\n0,0,60\n1,60,70\n2,70,128\n') > /dev/null; then
-    echo "  ✓ Planning grid changes backfill while preserving execution duration"
+    <(printf 'job_id,start_time,end_time\n0,1,120\n1,120,130\n2,130,189\n') > /dev/null; then
+    echo "  ✓ Planning grid quantizes projected timestamps only"
     PASS=$((PASS + 1))
 else
     echo "  ✗ Planning-time resolution schedule differs from expected"

@@ -83,6 +83,7 @@ class ConservativeBackfillingScheduler:
     def __init__(self, total_nodes: int, verbose: bool = False,
                  reservation_depth: int = 0, backfill_queue_depth: int = 0,
                  backfill_interval: float = 0.0,
+                 planning_time_resolution: float = 0.0,
                  planning_horizon: float = float('inf')):
         self.total_nodes = total_nodes
         self.verbose = verbose
@@ -94,6 +95,8 @@ class ConservativeBackfillingScheduler:
         # Zero preserves event-driven backfill. A positive interval runs FCFS
         # dispatch on ordinary events and backfill only at ticks.
         self.backfill_interval = backfill_interval
+        # Planning timestamps are rounded only after their start is known.
+        self.planning_time_resolution = planning_time_resolution
         # Reservations outside this periodic planning window are omitted.
         self.planning_horizon = planning_horizon
 
@@ -112,6 +115,14 @@ class ConservativeBackfillingScheduler:
     def log(self, msg: str):
         if self.verbose:
             print(f"[t={self.current_time:6.0f}] {msg}", file=sys.stderr)
+
+    def planned_end(self, start_time: float, duration: float) -> float:
+        """Return the projected end timestamp on the planning grid."""
+        end_time = start_time + duration
+        if self.planning_time_resolution:
+            end_time = (math.ceil(end_time / self.planning_time_resolution) *
+                        self.planning_time_resolution)
+        return end_time
 
     def get_free_nodes(self) -> int:
         """Calculate currently free nodes"""
@@ -312,7 +323,7 @@ class ConservativeBackfillingScheduler:
                 continue
 
             # Job can backfill if it completes before the earliest reservation
-            job_end = self.current_time + job.duration
+            job_end = self.planned_end(self.current_time, job.duration)
             if job_end < conservative_window:
                 self.log(f"Conservative backfill job {job.idx} (ends {job_end} < earliest reservation {conservative_window})")
                 self.start_job(job)
@@ -320,7 +331,8 @@ class ConservativeBackfillingScheduler:
                 started = True
 
                 # Track this backfilled job so next jobs see it as running
-                pessimistic_end = self.current_time + job.duration
+                pessimistic_end = self.planned_end(self.current_time,
+                                                   job.duration)
                 backfilled_jobs[job.idx] = (self.current_time, pessimistic_end, job.nodes)
                 effective_running[job.idx] = (self.current_time, pessimistic_end,
                                               pessimistic_end, job.nodes)
@@ -339,7 +351,7 @@ class ConservativeBackfillingScheduler:
         job.end_time = self.current_time + job.actual_run_time
 
         # Track both actual and pessimistic (scheduler's view) end times
-        pessimistic_end = self.current_time + job.duration
+        pessimistic_end = self.planned_end(self.current_time, job.duration)
         self.running[job.idx] = (self.current_time, job.end_time, pessimistic_end, job.nodes)
 
         # Schedule END event
@@ -408,7 +420,7 @@ class ConservativeBackfillingScheduler:
         # Return jobs with simulation results
         return list(job_map.values())
 
-def load_trace(filename: str, planning_time_resolution: float = 0.0) -> List[Job]:
+def load_trace(filename: str) -> List[Job]:
     """Load job trace from CSV"""
     jobs = []
     with open(filename, 'r') as f:
@@ -418,9 +430,7 @@ def load_trace(filename: str, planning_time_resolution: float = 0.0) -> List[Job
             submit_time = float(row.get('job_submit_time', row.get('submit_time', 0)))
             nodes = int(row.get('num_nodes', row.get('nodes', 1)))
             time_limit = float(row.get('time_limit', row.get('duration', 100)))
-            duration = (time_limit if planning_time_resolution == 0.0 else
-                        math.ceil(time_limit / planning_time_resolution) *
-                        planning_time_resolution)
+            duration = time_limit
 
             # Check for actual_run_time column
             actual_run_time = None
@@ -566,7 +576,7 @@ def main():
     print(file=sys.stderr)
 
     # Load trace
-    jobs = load_trace(trace_file, planning_time_resolution)
+    jobs = load_trace(trace_file)
     print(f"Loaded {len(jobs)} jobs", file=sys.stderr)
 
     # Run scheduler
@@ -574,6 +584,7 @@ def main():
                                                  reservation_depth=reservation_depth,
                                                  backfill_queue_depth=backfill_queue_depth,
                                                  backfill_interval=backfill_interval,
+                                                 planning_time_resolution=planning_time_resolution,
                                                  planning_horizon=planning_horizon)
     jobs = scheduler.simulate(jobs)
 
