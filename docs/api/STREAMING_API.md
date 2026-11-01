@@ -248,6 +248,8 @@ void run_until_exclusive(sim_time_t target_time);
 **Behavior:**
 - Advances through events BEFORE `target_time`
 - Events exactly at `target_time` are NOT processed
+- With `--backfill_interval`, a backfill tick before `target_time` counts as
+  an event while a job is waiting
 - Useful for stopping just before a known event
 - `current_time` becomes the last event time < `target_time`
 

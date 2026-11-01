@@ -1206,6 +1206,43 @@ void test_periodic_backfill_idle_ticks() {
   std::cout << "  PASSED" << std::endl;
 }
 
+// run_until_exclusive() must step through backfill ticks like advance_to():
+// a waiting candidate is backfilled at the tick before the target, and the
+// clock ends at the last tick processed, not at the last ordinary event.
+void test_periodic_backfill_run_until_exclusive() {
+  std::cout << "\n=== Periodic backfill under run_until_exclusive ==="
+            << std::endl;
+
+  auto params = make_params();
+  params.m_backfill_policy = BackfillPolicy::HYBRID;
+  params.m_reservation_depth = 1;
+  params.m_backfill_interval = 10.0;
+
+  Simulation sim(params);
+  sim.get_trace().load_data(0);
+  (void)sim.append_job(0.0, 90, kTestQueueInput, 30.0);
+  (void)sim.append_job(5.0, 100, kTestQueueInput, 1.0); // blocked head
+  const auto candidate = sim.append_job(5.0, 10, kTestQueueInput, 1.0);
+
+  // Events strictly before 25: start at 0, arrivals at 5, tick at 10
+  // (candidate backfilled), its end at 11, tick at 20 (head still blocked).
+  sim.run_until_exclusive(25.0);
+  const auto status = sim.get_job_statuses({candidate}).front();
+  assert(status.start_time.has_value());
+  assert(approx_equal(*status.start_time, 10.0));
+  assert(sim.get_statistics().jobs_completed == 1);
+  assert(approx_equal(sim.get_current_time(), 20.0));
+
+  // The tick at exactly the target is excluded, like any other event.
+  sim.run_until_exclusive(30.0);
+  assert(approx_equal(sim.get_current_time(), 20.0));
+  sim.advance_to(30.0);
+  assert(sim.get_statistics().jobs_completed == 2);
+  assert(sim.get_nodes_in_use() == 100); // head started when A ended at 30
+
+  std::cout << "  PASSED" << std::endl;
+}
+
 // Periodic hybrid evaluation retains event-driven FCFS dispatch, but reserves
 // backfill scans for ticks. A candidate that arrives between ticks therefore
 // waits for the first tick even though it fits before the blocked head.
@@ -1419,6 +1456,7 @@ int main() {
     test_prediction_horizon();
     test_periodic_hybrid_backfill();
     test_periodic_backfill_idle_ticks();
+    test_periodic_backfill_run_until_exclusive();
     test_append_with_known_actual_runtime();
     test_fractional_streaming_limits_validate_stored_value();
 

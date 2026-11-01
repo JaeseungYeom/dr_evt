@@ -679,6 +679,14 @@ public:
       if (m_next_capacity_change < m_capacity_changes.size()) {
         next = std::min(next, m_capacity_changes[m_next_capacity_change].time);
       }
+      // In periodic mode a backfill tick is an event too, but only while a
+      // job is waiting for a backfill decision (advance_to() applies the same
+      // rule); otherwise the tick is skipped and the cadence kept.
+      if (m_params.m_backfill_interval > 0.0 &&
+          m_scheduler->active_job_count() > 0) {
+        align_backfill_tick();
+        next = std::min(next, m_next_backfill_evaluation);
+      }
       // Stop at the first event at or after the target, or if no progress
       // was made (defensive; advance_to() consumes everything <= next).
       if (next >= target_time || next <= previous) {
@@ -817,6 +825,16 @@ protected:
 
   /** Install the configured node release delay in the trace and scheduler. */
   void configure_node_release_delay();
+
+  /**
+   * Bring the next periodic backfill tick up to date with the clock.
+   *
+   * Initializes the first tick one interval after the current time and moves
+   * a tick left in the past (unconsumed while nothing waited) forward on the
+   * same cadence to the first grid point at or after the current time. No-op
+   * when periodic backfill is not configured.
+   */
+  void align_backfill_tick();
 
   /**
    * Return the planned node-release offset after quantizing the projected

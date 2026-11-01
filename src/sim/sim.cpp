@@ -2334,6 +2334,25 @@ void BasicSimulation<TraceType>::record_queue_arrivals(
 }
 
 template <typename TraceType>
+void BasicSimulation<TraceType>::align_backfill_tick() {
+  if (m_params.m_backfill_interval <= 0.0) {
+    return;
+  }
+  if (m_next_backfill_evaluation == std::numeric_limits<sim_time_t>::max()) {
+    m_next_backfill_evaluation = m_current_time + m_params.m_backfill_interval;
+  } else if (m_next_backfill_evaluation < m_current_time) {
+    // Ticks are not consumed while nothing waits, and the clock may have
+    // moved past one at the end of the previous call. Keep the cadence but
+    // never let a tick in the past gate later events or pull the clock
+    // backward.
+    const auto missed_ticks =
+        std::ceil((m_current_time - m_next_backfill_evaluation) /
+                  m_params.m_backfill_interval);
+    m_next_backfill_evaluation += missed_ticks * m_params.m_backfill_interval;
+  }
+}
+
+template <typename TraceType>
 void BasicSimulation<TraceType>::configure_node_release_delay() {
   validate_node_release_delay(m_params.m_node_release_delay,
                               m_params.m_node_release_delay_model,
@@ -2506,19 +2525,7 @@ void BasicSimulation<TraceType>::advance_to_impl(
           ? m_capacity_changes[m_next_capacity_change].time
           : std::numeric_limits<sim_time_t>::max();
   if constexpr (PeriodicBackfill) {
-    if (m_next_backfill_evaluation == std::numeric_limits<sim_time_t>::max()) {
-      m_next_backfill_evaluation =
-          m_current_time + m_params.m_backfill_interval;
-    } else if (m_next_backfill_evaluation < m_current_time) {
-      // Ticks are not consumed while nothing waits, and the clock may have
-      // moved past one at the end of the previous call. Keep the cadence but
-      // never let a tick in the past gate the events below or pull the clock
-      // backward.
-      const auto missed_ticks =
-          std::ceil((m_current_time - m_next_backfill_evaluation) /
-                    m_params.m_backfill_interval);
-      m_next_backfill_evaluation += missed_ticks * m_params.m_backfill_interval;
-    }
+    align_backfill_tick();
   }
 
   m_queue_length_peak = std::max(m_queue_length_peak, active_count);
