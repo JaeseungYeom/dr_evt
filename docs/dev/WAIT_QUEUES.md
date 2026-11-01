@@ -46,17 +46,17 @@ should not be compared numerically.
 
 | Implementation | Time (s) | vs deque | Change | Peak queue | Correctness |
 | --- | ---: | ---: | ---: | ---: | --- |
-| `deque` | 0.5269 ± 0.0388 | 1.00× | baseline | 8,904 | baseline |
-| `multimap` | 7.2542 ± 0.0307 | 13.77× | +1,277% | 8,904 | PASS |
-| **`circular`** | **0.3144 ± 0.0007** | **0.60×** | **−40%** | **8,904** | **PASS** |
-| Python reference | 7.6404 ± 0.0080 | 14.50× | +1,350% | N/A | PASS |
-| `block`-4 | 0.4217 ± 0.0009 | 0.80× | −20% | 8,904 | PASS |
-| `block`-8 | 0.3730 ± 0.0008 | 0.71× | −29% | 8,904 | PASS |
-| `block`-16 | 0.3586 ± 0.0007 | 0.68× | −32% | 8,904 | PASS |
-| `block`-32 | 0.3766 ± 0.0010 | 0.71× | −29% | 8,904 | PASS |
-| `block`-64 | 0.3956 ± 0.0013 | 0.75× | −25% | 8,904 | PASS |
-| `block`-128 | 0.4149 ± 0.0018 | 0.79× | −21% | 8,904 | PASS |
-| `block`-256 | 0.4607 ± 0.0043 | 0.87× | −13% | 8,904 | PASS |
+| `deque` | 0.3230 ± 0.0394 | 1.00× | baseline | 8,904 | baseline |
+| `multimap` | 7.4766 ± 0.0325 | 23.15× | +2,215% | 8,904 | PASS |
+| **`circular`** | **0.2989 ± 0.0045** | **0.93×** | **−7.5%** | **8,904** | **PASS** |
+| Python reference | 7.6510 ± 0.0128 | 23.69× | +2,269% | N/A | PASS |
+| `block`-4 | 0.4171 ± 0.0014 | 1.29× | +29% | 8,904 | PASS |
+| `block`-8 | 0.3716 ± 0.0017 | 1.15× | +15% | 8,904 | PASS |
+| `block`-16 | 0.3646 ± 0.0007 | 1.13× | +13% | 8,904 | PASS |
+| `block`-32 | 0.3756 ± 0.0009 | 1.16× | +16% | 8,904 | PASS |
+| `block`-64 | 0.3953 ± 0.0039 | 1.22× | +22% | 8,904 | PASS |
+| `block`-128 | 0.4227 ± 0.0021 | 1.31× | +31% | 8,904 | PASS |
+| `block`-256 | 0.4380 ± 0.0035 | 1.36× | +36% | 8,904 | PASS |
 
 `circular` was fastest overall, and `block`-16 was the fastest block size.
 
@@ -74,9 +74,9 @@ population standard deviation.
 
 | Implementation | Time (s) | vs deque | Change | Correctness |
 | --- | ---: | ---: | ---: | --- |
-| `deque` | 15.6164 ± 0.0438 | 1.00× | baseline | baseline |
-| **`circular`** | **14.6416 ± 0.0076** | **0.94×** | **−6.2%** | **PASS** |
-| Python reference | 420.5650 ± 1.0565 | 26.93× | +2,593% | PASS |
+| `deque` | 18.0656 ± 0.0200 | 1.00× | baseline | baseline |
+| **`circular`** | **17.0052 ± 0.0180** | **0.94×** | **−5.9%** | **PASS** |
+| Python reference | 177.1860 ± 0.6558 | 9.81× | +881% | PASS |
 
 ### Hybrid backfill result
 
@@ -87,16 +87,16 @@ standard deviation.
 
 | Implementation | Time (s) | vs deque | Change | Correctness |
 | --- | ---: | ---: | ---: | --- |
-| `deque` | 0.1881 ± 0.0003 | 1.00× | baseline | baseline |
-| **`circular`** | **0.1821 ± 0.0005** | **0.97×** | **−3%** | **PASS** |
-| Python reference | 6.0346 ± 0.0155 | 32.08× | +3,108% | PASS |
+| `deque` | 0.2399 ± 0.0021 | 1.00× | baseline | baseline |
+| **`circular`** | **0.2355 ± 0.0012** | **0.98×** | **−1.8%** | **PASS** |
+| Python reference | 2.5096 ± 0.0105 | 10.46× | +946% | PASS |
 
 ### Periodic hybrid backfill result
 
 Ten end-to-end runs of `huge_10000jobs.csv` with 500 nodes,
 `run_time_mode=limit`, a 30-second backfill interval, reservation depth 32,
-and queue depth 500 measured the periodic circular scheduler at **0.0111 ±
-0.0019 s** (range 0.010–0.016 s).
+and queue depth 500 measured the periodic circular scheduler at **3.8381 ±
+0.0028 s** (range 3.834–3.844 s).
 
 This is a circular-only measurement: periodic scheduling has no deque variant,
 and the Python oracle was skipped. It is therefore not a queue-to-queue speedup
@@ -104,7 +104,7 @@ or an additional differential-correctness result.
 
 | Implementation | Time (s) | vs circular | Correctness |
 | --- | ---: | ---: | --- |
-| `circular` | 0.0111 ± 0.0019 | 1.00× | periodic scheduler only |
+| `circular` | 3.8381 ± 0.0028 | 1.00× | periodic scheduler only |
 | Python reference | N/A | N/A | skipped |
 
 Reproduce the current benchmark modes with:
@@ -121,7 +121,7 @@ tests/benchmark_wait_queues.sh --backfill-policy easy \
 tests/benchmark_wait_queues.sh --backfill-policy hybrid \
   --reservation-depth 32 \
   --backfill-queue-depth 32 \
-  tests/test_traces/scale/huge_2000jobs.csv
+  tests/test_traces/scale/huge_10000jobs.csv
 
 # Periodic hybrid backfill. This measures the circular C++ scheduler; the
 # Python oracle is skipped by default because it is impractically slow on
