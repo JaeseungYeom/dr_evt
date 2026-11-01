@@ -244,8 +244,8 @@ DR_EVT controls relevant to the comparison are:
   [`--reservation_depth`](../user-guide/command-line.md#--reservation_depth-n),
   and [`--backfill_queue_depth`](../user-guide/command-line.md#--backfill_queue_depth-n)
 - [`--backfill_interval`](../user-guide/command-line.md#--backfill_interval-seconds)
-  and
-  [`--planning_time_resolution`](../user-guide/command-line.md#--planning_time_resolution-seconds)
+- [`--planning_horizon`](../user-guide/command-line.md#--planning_horizon-seconds)
+- [`--planning_time_resolution`](../user-guide/command-line.md#--planning_time_resolution-seconds)
 - [`--node_release_delay`](../user-guide/command-line.md#--node_release_delay-seconds)
   and its
   [per-node delay model](../user-guide/command-line.md#--node_release_delay_model-model)
@@ -259,7 +259,7 @@ DR_EVT controls relevant to the comparison are:
 |---|---|---|
 | Evaluation trigger | Event-driven by default; periodic backfill is optional | Slurm and LSF run periodic backfill; Fluxion is event-driven. Default DR_EVT backfill reacts sooner than Slurm or LSF. |
 | Time resolution | Exact planning by default; optional projected-timestamp grid | Slurm `bf_resolution` grids planned begin/end timestamps; Fluxion plans in integer seconds. |
-| Planning horizon | Unlimited by default; `--planning_horizon` bounds periodic reservations | Slurm uses `bf_window`; Fluxion is unlimited; LSF is bounded by reservation settings. |
+| Horizon | `--planning_horizon` for periodic reservations | Slurm `bf_window`; Fluxion unlimited; LSF reservation-bounded. |
 | Queue and reservation depth | Unlimited scan by default; EASY 1, hybrid N, conservative all | Slurm and Fluxion cap queue/reservation scope; matching depths improves comparability. |
 | Completion and node reuse | Strict completion test; immediate reuse by default | Production systems use their own resolution and cleanup behavior. Calibrate the release delay to reduce optimism. |
 | Priority and resources | FCFS/SJF/LJF; stock homogeneous pool | Production systems add policy plugins, partitions, and resource topology. The experimental scheduler adds homogeneous multi-system placement. |
