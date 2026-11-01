@@ -18,7 +18,10 @@ Complete reference for all DR_EVT command-line options for the `simulator` binar
 | System | `--capacity_schedule FILENAME` | Apply time-varying capacity change points. |
 | System | `--sim_start_time TIME` | Set the global simulation start time as a nonnegative epoch value or ISO timestamp; a positive value warm-starts replay input. |
 | Scheduling | `-b, --backfill_policy POLICY` | Select `easy`, `conservative`, `hybrid`, or `none`. |
-| Scheduling | `--num_max_candidates COUNT` | Cap candidates offered to the experimental selector. |
+| Scheduling | `--num_max_candidates COUNT` | Cap feasible jobs offered to the experimental custom-EASY selector. |
+| Scheduling | `--backfill_queue_depth N` | Cap jobs inspected by built-in hybrid or conservative backfill. |
+| Scheduling | `--backfill_interval SECONDS` | Run built-in backfill at periodic ticks instead of every event. |
+| Scheduling | `--backfill_time_resolution SECONDS` | Round planning durations up to a grid. |
 | Scheduling | `--reservation_depth N` | Number of reserved waiting jobs under `hybrid` backfilling. |
 | Scheduling | `-p, --priority_policy POLICY` | Select the job-ordering policy. |
 | Scheduling | `-q, --queue_impl IMPLEMENTATION` | Select the FCFS wait-queue implementation. |
@@ -219,10 +222,14 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator traces/jobs.csv --backfill_policy conserva
 
 ### `--num_max_candidates COUNT`
 
-Maximum number of feasible jobs offered to the callback-driven custom
-EASY scheduler in one selection decision. This is applied after resource and
-reservation-window feasibility checks; it is not a limit on waiting jobs
-scanned. `COUNT` must be greater than zero.
+Maximum number of feasible jobs offered to the callback-driven experimental
+custom-EASY scheduler in one selection decision. The scheduler scans its
+eligible queue, performs resource and reservation-window feasibility checks,
+then offers at most `COUNT` feasible jobs to the callback. It does not limit
+how many waiting jobs are scanned. `COUNT` must be greater than zero.
+
+This setting has no effect on the built-in `easy`, `hybrid`, or
+`conservative` schedulers.
 
 **Default:** `1`
 
@@ -231,8 +238,16 @@ scanned. `COUNT` must be greater than zero.
 Maximum number of eligible waiting jobs, including the blocked FCFS head, that
 the built-in hybrid or conservative scheduler examines in one scheduling pass.
 Jobs beyond that prefix are not tested for backfill in that pass. `0` leaves
-the scan unlimited. This is independent of `--reservation_depth`, which limits
-only the earlier jobs whose reservations must be protected.
+the scan unlimited. This is a pre-feasibility queue scan limit: a job counts
+toward the depth even when it cannot fit or cannot complete before its
+reservation window. It has no effect on the experimental custom-EASY selector.
+
+In short, `--backfill_queue_depth` controls how much of the queue the built-in
+hybrid/conservative scheduler considers; `--num_max_candidates` controls how
+many already-feasible jobs the custom-EASY callback can choose from. The two
+settings apply to separate scheduler paths and are never combined. This is
+independent of `--reservation_depth`, which limits only the earlier jobs whose
+reservations must be protected.
 
 **Default:** `0` (unlimited)
 
@@ -245,6 +260,16 @@ uses the opt-in circular scheduler; it requires an enabled
 event-driven backfill behavior.
 
 **Default:** `0` (disabled)
+
+### `--backfill_time_resolution SECONDS`
+
+Rounds each job's `time_limit` up to this grid for backfill planning,
+reservations, and backfill feasibility checks. The simulation clock and the
+job's actual execution duration are unchanged. Set this to match a target
+scheduler's planning grid—for example, `60` for Slurm's typical
+`bf_resolution`—or leave it at `0` for exact floating-point planning.
+
+**Default:** `0` (exact planning)
 
 ### `--reservation_depth N`
 
