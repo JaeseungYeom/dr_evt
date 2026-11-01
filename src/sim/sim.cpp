@@ -13,6 +13,7 @@
 
 #include "sim/sim.hpp"
 #include "sim/block_wait_queue.hpp"
+#include "sim/scheduler_circular_fcfs_periodic_hybrid.hpp"
 #include "trace/epoch.hpp"
 #include "trace/job_io.hpp"
 #include "trace/parse_utils.hpp"
@@ -62,8 +63,9 @@ timeout_t checked_streaming_limit(tdiff_t limit_time) {
 constexpr std::array<char, 8> checkpoint_magic{'D', 'R', 'E', 'V',
                                                'T', 'C', 'K', 'P'};
 constexpr std::uint32_t checkpoint_version =
-    14; // 11: reservation_depth; 12: node release delay; 13: scalar event
-        // and resource-sample times; 14: backfill_queue_depth
+    15; // 11: reservation_depth; 12: node release delay; 13: scalar event
+        // and resource-sample times; 14: backfill_queue_depth; 15: periodic
+        // backfill deadline
 
 /// Trace policy identifier stored in a checkpoint so a file written by one
 /// trace type is not restored into another.
@@ -325,8 +327,10 @@ BasicSimulation<TraceType>::BasicSimulation(Sim_Params params)
           m_params.m_backfill_policy, m_params.m_priority_policy,
           m_params.m_queue_impl, m_params.m_block_size,
           m_params.m_wait_queue_capacity, m_params.m_wait_queue_overflow,
-          m_params.m_reservation_depth, m_params.m_backfill_queue_depth)),
+          m_params.m_reservation_depth, m_params.m_backfill_queue_depth,
+          m_params.m_backfill_interval)),
       m_custom_scheduler(nullptr), m_current_time(0.0),
+      m_next_backfill_evaluation(std::numeric_limits<sim_time_t>::max()),
       m_job_rejection_capacity(m_params.m_total_nodes),
       m_capacity_changes(load_capacity_schedule(m_params.m_capacity_schedule,
                                                 m_params.m_total_nodes)),
@@ -358,7 +362,9 @@ BasicSimulation<TraceType>::BasicSimulation(Sim_Params params,
           std::move(cost_function), std::move(selector),
           m_params.m_wait_queue_capacity, m_params.m_wait_queue_overflow)),
       m_custom_scheduler(static_cast<CustomFCFSScheduler *>(m_scheduler.get())),
-      m_current_time(0.0), m_job_rejection_capacity(m_params.m_total_nodes),
+      m_current_time(0.0),
+      m_next_backfill_evaluation(std::numeric_limits<sim_time_t>::max()),
+      m_job_rejection_capacity(m_params.m_total_nodes),
       m_capacity_changes(load_capacity_schedule(m_params.m_capacity_schedule,
                                                 m_params.m_total_nodes)),
       m_next_capacity_change(0), m_current_capacity(m_params.m_total_nodes),
@@ -384,7 +390,9 @@ BasicSimulation<TraceType>::BasicSimulation(
               m_params.m_timestamp_format, m_params.m_timezone),
       m_scheduler(std::move(scheduler)),
       m_custom_scheduler(static_cast<CustomFCFSScheduler *>(m_scheduler.get())),
-      m_current_time(0.0), m_job_rejection_capacity(m_params.m_total_nodes),
+      m_current_time(0.0),
+      m_next_backfill_evaluation(std::numeric_limits<sim_time_t>::max()),
+      m_job_rejection_capacity(m_params.m_total_nodes),
       m_capacity_changes(load_capacity_schedule(m_params.m_capacity_schedule,
                                                 m_params.m_total_nodes)),
       m_next_capacity_change(0), m_current_capacity(m_params.m_total_nodes),
@@ -794,6 +802,8 @@ void BasicSimulation<TraceType>::run_warm_start() {
   if (m_pre_start_jobs != 0) {
     if (m_custom_scheduler != nullptr) {
       advance_to_impl<true, true>(run_limit, m_custom_scheduler);
+    } else if (m_params.m_backfill_interval > 0.0) {
+      advance_to_impl<false, true, true>(run_limit, nullptr);
     } else {
       advance_to_impl<false, true>(run_limit, nullptr);
     }
@@ -1156,6 +1166,7 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
     }
 
     writer.value(m_current_time);
+    writer.value(m_next_backfill_evaluation);
     writer.value(m_job_rejection_capacity);
     writer.value(m_next_capacity_change);
     writer.value(m_current_capacity);
@@ -1488,6 +1499,7 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
     m_trace.m_resource_trace_ofs.close();
 
     m_current_time = reader.value<sim_time_t>();
+    m_next_backfill_evaluation = reader.value<sim_time_t>();
     m_job_rejection_capacity = reader.value<num_nodes_t>();
     m_next_capacity_change = reader.value<size_t>();
     m_current_capacity = reader.value<num_nodes_t>();
@@ -1809,7 +1821,8 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
           m_params.m_backfill_policy, m_params.m_priority_policy,
           m_params.m_queue_impl, m_params.m_block_size,
           m_params.m_wait_queue_capacity, m_params.m_wait_queue_overflow,
-          m_params.m_reservation_depth, m_params.m_backfill_queue_depth);
+          m_params.m_reservation_depth, m_params.m_backfill_queue_depth,
+          m_params.m_backfill_interval);
       if (m_trace.node_release_delay_active()) {
         m_scheduler->set_node_release_delay(&m_trace.node_release_delay());
       }
@@ -2384,18 +2397,31 @@ bool BasicSimulation<TraceType>::apply_capacity_changes(
 template <typename TraceType>
 void BasicSimulation<TraceType>::advance_to(sim_time_t target_time) {
   if (m_custom_scheduler != nullptr) {
+    if (m_params.m_backfill_interval > 0.0) {
+      throw std::invalid_argument(
+          "periodic backfilling is unsupported by custom schedulers");
+    }
     advance_to_impl<true, false>(target_time, m_custom_scheduler);
+  } else if (m_params.m_backfill_interval > 0.0) {
+    advance_to_impl<false, false, true>(target_time, nullptr);
   } else {
     advance_to_impl<false, false>(target_time, nullptr);
   }
 }
 
 template <typename TraceType>
-template <bool AccountResources, bool WarmStage>
+template <bool AccountResources, bool WarmStage, bool PeriodicBackfill>
 void BasicSimulation<TraceType>::advance_to_impl(
     sim_time_t target_time, CustomFCFSScheduler *custom_scheduler) {
   if constexpr (!AccountResources) {
     (void)custom_scheduler;
+  }
+  constexpr bool periodic_backfill = PeriodicBackfill;
+  CircularBufferFCFSPeriodicHybridScheduler *periodic_scheduler = nullptr;
+  if constexpr (PeriodicBackfill) {
+    periodic_scheduler =
+        static_cast<CircularBufferFCFSPeriodicHybridScheduler *>(
+            m_scheduler.get());
   }
 
   // Validate precondition
@@ -2426,8 +2452,11 @@ void BasicSimulation<TraceType>::advance_to_impl(
     // Call scheduler to evaluate newly arriving jobs
     while (true) {
       num_nodes_t free_nodes = get_available_nodes();
-      auto jobs_to_run =
-          m_scheduler->schedule(free_nodes, m_running_jobs, m_current_time);
+      auto jobs_to_run = periodic_backfill
+                             ? periodic_scheduler->schedule_event(
+                                   free_nodes, m_running_jobs, m_current_time)
+                             : m_scheduler->schedule(free_nodes, m_running_jobs,
+                                                     m_current_time);
 
       if (jobs_to_run.empty()) {
         break;
@@ -2464,6 +2493,12 @@ void BasicSimulation<TraceType>::advance_to_impl(
       m_next_capacity_change < m_capacity_changes.size()
           ? m_capacity_changes[m_next_capacity_change].time
           : std::numeric_limits<sim_time_t>::max();
+  if constexpr (PeriodicBackfill) {
+    if (m_next_backfill_evaluation == std::numeric_limits<sim_time_t>::max()) {
+      m_next_backfill_evaluation =
+          m_current_time + m_params.m_backfill_interval;
+    }
+  }
 
   m_queue_length_peak = std::max(m_queue_length_peak, active_count);
 
@@ -2475,7 +2510,12 @@ void BasicSimulation<TraceType>::advance_to_impl(
   while (active_count > 0 || !m_trace.pending_events().empty() ||
          next_arrival < std::numeric_limits<sim_time_t>::max() ||
          (target_time < std::numeric_limits<sim_time_t>::max() &&
-          next_capacity <= target_time)) {
+          next_capacity <= target_time) ||
+         (periodic_backfill && active_count > 0 &&
+          m_next_backfill_evaluation <= target_time &&
+          (!m_trace.pending_events().empty() ||
+           next_arrival < std::numeric_limits<sim_time_t>::max() ||
+           next_capacity <= target_time))) {
     if (m_params.m_verbose) {
       std::cout << "Loop iter: active=" << active_count
                 << " events=" << m_trace.pending_events().size()
@@ -2496,9 +2536,12 @@ void BasicSimulation<TraceType>::advance_to_impl(
 
     // Decide which event to process
     bool should_schedule = false;
+    bool periodic_evaluation = false;
 
     if (has_replay_event && next_replay_time <= next_arrival &&
-        next_replay_time <= next_capacity && next_replay_time <= target_time) {
+        next_replay_time <= next_capacity &&
+        next_replay_time <= m_next_backfill_evaluation &&
+        next_replay_time <= target_time) {
       // Process replay events at this time
       // Advance time FIRST
       m_current_time = next_replay_time;
@@ -2594,7 +2637,9 @@ void BasicSimulation<TraceType>::advance_to_impl(
                         next_arrival == m_current_time;
 
     } else if (next_arrival < std::numeric_limits<sim_time_t>::max() &&
-               next_arrival <= next_capacity && next_arrival <= target_time) {
+               next_arrival <= next_capacity &&
+               next_arrival <= m_next_backfill_evaluation &&
+               next_arrival <= target_time) {
       // Job arrival - advance time FIRST
       // Note: Check next_arrival < infinity to avoid infinite loop
       // If no jobs arriving, scheduler should pick from waiting queue instead
@@ -2622,6 +2667,7 @@ void BasicSimulation<TraceType>::advance_to_impl(
       // For now, just set flag to schedule
       should_schedule = true;
     } else if (next_capacity < std::numeric_limits<sim_time_t>::max() &&
+               next_capacity <= m_next_backfill_evaluation &&
                next_capacity <= target_time) {
       m_current_time = next_capacity;
       advance_capacity_accounting_to(m_current_time);
@@ -2635,6 +2681,21 @@ void BasicSimulation<TraceType>::advance_to_impl(
         custom_scheduler->notify_resource_change();
       }
       should_schedule = true;
+    } else if (periodic_backfill && active_count > 0 &&
+               m_next_backfill_evaluation <= target_time &&
+               (!m_trace.pending_events().empty() ||
+                next_arrival < std::numeric_limits<sim_time_t>::max() ||
+                next_capacity <= target_time)) {
+      m_current_time = m_next_backfill_evaluation;
+      advance_capacity_accounting_to(m_current_time);
+      if constexpr (AccountResources) {
+        custom_scheduler->advance_resource_accounting_to(m_current_time);
+      }
+      m_scheduler->sync_to(m_current_time);
+      record_queue_arrivals(m_current_time);
+      should_schedule = true;
+      periodic_evaluation = true;
+      m_next_backfill_evaluation += m_params.m_backfill_interval;
     } else {
       // No arrivals and no replay events before target_time
       if (m_params.m_verbose) {
@@ -2654,7 +2715,11 @@ void BasicSimulation<TraceType>::advance_to_impl(
         num_nodes_t free_nodes = get_available_nodes();
 
         auto jobs_to_run =
-            m_scheduler->schedule(free_nodes, m_running_jobs, m_current_time);
+            periodic_backfill && !periodic_evaluation
+                ? periodic_scheduler->schedule_event(free_nodes, m_running_jobs,
+                                                     m_current_time)
+                : m_scheduler->schedule(free_nodes, m_running_jobs,
+                                        m_current_time);
 
         if (jobs_to_run.empty()) {
           break; // Scheduler can't start anything else
@@ -2701,6 +2766,11 @@ void BasicSimulation<TraceType>::advance_to_impl(
     next_capacity = m_next_capacity_change < m_capacity_changes.size()
                         ? m_capacity_changes[m_next_capacity_change].time
                         : std::numeric_limits<sim_time_t>::max();
+
+    if (periodic_backfill && m_next_backfill_evaluation <= m_current_time) {
+      m_next_backfill_evaluation =
+          m_current_time + m_params.m_backfill_interval;
+    }
 
     // Peak queue length after all events and scheduling at this timestamp.
     m_queue_length_peak = std::max(m_queue_length_peak, active_count);

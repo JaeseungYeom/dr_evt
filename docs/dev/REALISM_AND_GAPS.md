@@ -84,6 +84,27 @@ will be scheduled". It does not backfill. The backfill scheduler
 Thus Slurm's backfill pass is periodic and bounded by its queue, horizon, and
 time settings; between passes, its main scheduler does not backfill.
 
+DR_EVT offers `--backfill_interval` for circular EASY, conservative, or hybrid
+backfill. Events still dispatch FCFS heads, while periodic ticks run the
+configured backfill pass.
+
+### Configuration approximations
+
+These settings reproduce trigger and reservation behavior within DR_EVT's
+single-pool FCFS model; they do not add Slurm partitions or Flux's resource
+graph.
+
+| Target | Backfill policy | Interval | Reservation depth | Queue depth |
+|---|---|---:|---:|---:|
+| Slurm, reserve all tested jobs | `conservative` | `bf_interval` (30 s default) | N/A | `bf_max_job_test` (500 default) |
+| Slurm, reserve a fixed prefix | `hybrid` | `bf_interval` | `bf_job_part_count_reserve` | `bf_max_job_test` |
+| Slurm EASY-like head reservation | `hybrid` | `bf_interval` | `1` | `bf_max_job_test` |
+| Fluxion hybrid | `hybrid` | `0` (event-driven) | Flux `reservation-depth` | Flux `queue-depth` (32 default) |
+
+Use `--backfill_interval 0` for DR_EVT's ordinary event-driven backfill. A
+positive interval keeps event-driven FCFS dispatch but runs backfill only at
+periodic ticks.
+
 ### Flux (Fluxion)
 
 Fluxion is event-driven like DR_EVT: a scheduling-relevant event triggers a
@@ -171,9 +192,6 @@ optimistic term, removed when `--node_release_delay` is calibrated.
 
 Each of the following is a contained change if a study needs it:
 
-- **Periodic backfill mode.** Run the backfill pass only every `bf_interval`
-  seconds, letting completions and arrivals in between start only the queue
-  head, to reproduce Slurm's cadence.
 - **Planning resolution and window.** Round projected ends up to a grid and
   drop reservations beyond a horizon.
 - **Priority hooks.** The experimental external selector already lets a

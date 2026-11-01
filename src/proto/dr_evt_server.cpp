@@ -286,6 +286,12 @@ public:
             sp.m_wait_queue_capacity = r.wait_queue_capacity();
           sp.m_reservation_depth = r.reservation_depth();
           sp.m_backfill_queue_depth = r.backfill_queue_depth();
+          if (!std::isfinite(r.backfill_interval()) ||
+              r.backfill_interval() < 0.0) {
+            throw std::runtime_error(
+                "backfill_interval must be finite and nonnegative");
+          }
+          sp.m_backfill_interval = r.backfill_interval();
 
           if (!r.node_release_delay_model().empty() &&
               !dr_evt::set_release_delay_model(sp.m_node_release_delay_model,

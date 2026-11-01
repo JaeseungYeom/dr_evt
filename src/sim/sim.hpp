@@ -71,6 +71,8 @@ protected:
 
   /// Current simulation time
   sim_time_t m_current_time;
+  /// Next periodic backfill evaluation; infinity when periodic mode is idle.
+  sim_time_t m_next_backfill_evaluation;
 
   /// Fixed physical limit used only to reject jobs that can never fit.
   num_nodes_t m_job_rejection_capacity;
@@ -716,7 +718,8 @@ protected:
    * WarmStage is instantiated only while historical jobs remain; the normal
    * stage contains no pre-start-time condition.
    */
-  template <bool AccountResources, bool WarmStage = false>
+  template <bool AccountResources, bool WarmStage = false,
+            bool PeriodicBackfill = false>
   void advance_to_impl(sim_time_t target_time,
                        CustomFCFSScheduler *custom_scheduler);
 

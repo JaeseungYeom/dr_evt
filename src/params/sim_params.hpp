@@ -96,6 +96,7 @@ private:
     visit("num_max_candidates", self.m_num_max_candidates);
     visit("reservation_depth", self.m_reservation_depth);
     visit("backfill_queue_depth", self.m_backfill_queue_depth);
+    visit("backfill_interval", self.m_backfill_interval);
     visit("priority_policy", self.m_priority_policy);
     visit("queue_impl", self.m_queue_impl);
     visit("block_size", self.m_block_size);
@@ -207,6 +208,9 @@ public:
   /// Eligible waiting jobs examined per hybrid/conservative pass; zero is
   /// unlimited.
   size_t m_backfill_queue_depth;
+  /// Seconds between additional hybrid backfill evaluations; zero disables
+  /// periodic evaluation and preserves event-driven scheduling only.
+  tdiff_t m_backfill_interval;
   /// Job priority/order policy applied by the scheduler.
   PriorityPolicy m_priority_policy;
   /// Wait-queue implementation used by FCFS scheduling.
