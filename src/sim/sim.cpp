@@ -2639,7 +2639,8 @@ void BasicSimulation<TraceType>::advance_to_impl(
 
     } else if (next_arrival < std::numeric_limits<sim_time_t>::max() &&
                next_arrival <= next_capacity &&
-               next_arrival <= m_next_backfill_evaluation &&
+               (next_arrival <= m_next_backfill_evaluation ||
+                (periodic_backfill && active_count == 0)) &&
                next_arrival <= target_time) {
       // Job arrival - advance time FIRST
       // Note: Check next_arrival < infinity to avoid infinite loop
@@ -2708,6 +2709,18 @@ void BasicSimulation<TraceType>::advance_to_impl(
       break;
     }
 
+    // An ordinary event wins the event-selection tie at an exact periodic
+    // timestamp.  It still needs the periodic backfill pass after its FCFS
+    // dispatch; otherwise that tick is silently skipped and differs from the
+    // Python reference's same-time event ordering.
+    if constexpr (PeriodicBackfill) {
+      if (!periodic_evaluation &&
+          m_next_backfill_evaluation <= m_current_time) {
+        periodic_evaluation = true;
+        m_next_backfill_evaluation += m_params.m_backfill_interval;
+      }
+    }
+
     // Scheduling loop - let scheduler make decisions after processing END
     // events
     if (should_schedule) {
@@ -2768,9 +2781,15 @@ void BasicSimulation<TraceType>::advance_to_impl(
                         ? m_capacity_changes[m_next_capacity_change].time
                         : std::numeric_limits<sim_time_t>::max();
 
-    if (periodic_backfill && m_next_backfill_evaluation <= m_current_time) {
-      m_next_backfill_evaluation =
-          m_current_time + m_params.m_backfill_interval;
+    if constexpr (PeriodicBackfill) {
+      if (m_next_backfill_evaluation <= m_current_time) {
+        const auto missed_ticks = static_cast<size_t>(
+            std::floor((m_current_time - m_next_backfill_evaluation) /
+                       m_params.m_backfill_interval)) +
+                                 1;
+        m_next_backfill_evaluation +=
+            missed_ticks * m_params.m_backfill_interval;
+      }
     }
 
     // Peak queue length after all events and scheduling at this timestamp.
