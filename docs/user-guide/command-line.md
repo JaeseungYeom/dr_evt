@@ -287,7 +287,8 @@ planning time is treated as out of horizon: it does not block a backfill job
 and does not consume a hybrid reservation-depth slot. It still consumes a
 `--backfill_queue_depth` scan slot. This option only affects periodic
 scheduling selected by `--backfill_interval`; event-driven schedulers retain
-unlimited planning. It corresponds most closely to Slurm `bf_window`.
+unlimited planning. An event-driven planning horizon remains future work. It
+corresponds most closely to Slurm `bf_window`.
 
 **Default:** unlimited (the largest `tdiff_t` value)
 
