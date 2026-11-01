@@ -1,0 +1,206 @@
+#!/bin/bash
+# Periodic backfill tests (--backfill_interval).
+#
+# 1. Differential: run the 34 scheduler-correctness workloads with periodic
+#    backfill on the simulator and with --backfill-interval on the Python
+#    conservative reference, for hybrid (reservation depth 1, EASY-like) and
+#    conservative backfill at two tick intervals, and compare job schedules and
+#    settled resource traces (time, free, allocated). The intervals are not
+#    multiples of the workloads' 5 s arrival cadence, so ticks fall between
+#    events as well as on them, and ticks pass while nothing is waiting.
+# 2. A zero interval must leave the output byte-identical to a run without the
+#    option.
+# 3. Invalid values and an unsupported queue implementation are rejected.
+#
+# Usage: tests/run_periodic_backfill_tests.sh [simulator]
+#   DR_EVT_BACKFILL_INTERVALS overrides the tick intervals (default "7 30").
+
+set -u
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+REPO_ROOT="$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/test_reporting.sh"
+test_report_enable
+cd "$REPO_ROOT"
+
+if [ $# -ge 1 ]; then
+    SIMULATOR="$1"
+fi
+source "$SCRIPT_DIR/set_simulator_path.sh"
+source "$SCRIPT_DIR/select_python.sh"
+if ! select_python_interpreter 3 6; then
+    echo "No Python 3.6+ interpreter found; the reference scheduler needs one."
+    exit 1
+fi
+REFERENCE="$REPO_ROOT/scripts/python_conservative_scheduler.py"
+
+TRACE_DIR="tests/test_traces/scheduler_correctness"
+TOTAL_NODES=100
+read -r -a INTERVALS <<< "${DR_EVT_BACKFILL_INTERVALS:-7 30}"
+WORK=$(mktemp -d "/tmp/dr-evt-periodic-backfill.XXXXXXXX")
+cleanup() { rm -rf -- "$WORK"; }
+test_report_set_cleanup cleanup
+
+TESTS=(
+    "01_backfill_allowed" "02_backfill_blocked_time"
+    "03_backfill_blocked_resources" "04_backfill_resource_competition"
+    "05_multiple_backfills" "06_backfill_out_of_order"
+    "07_simultaneous_submit" "08_simultaneous_completion"
+    "09_simultaneous_submit_complete" "10_queue_drain_idle"
+    "11_multiple_drains" "12_drain_with_backlog" "13_consecutive_fcfs"
+    "14_fcfs_with_backfill" "15_fcfs_partial_overlap"
+    "16_starvation_prevention" "17_late_large_priority"
+    "18_backfill_no_starvation" "19_resource_fragmentation"
+    "20_fragmentation_recovery" "21_sustained_high_load" "22_bursty_load"
+    "23_mixed_load" "24_multiple_running_jobs" "25_early_completion_basic"
+    "26_early_completion_cascading" "27_early_vs_late_completion"
+    "28_simultaneous_completions_backfill"
+    "29_large_completion_multiple_backfills" "30_fcfs_blocked_backfill_past"
+    "31_completion_arrival_with_queue"
+    "32_simultaneous_backfill_with_reservation" "33_five_simultaneous_events"
+    "34_backfill_overallocation"
+)
+
+# Simulator backfill policy and reference reservation depth, per case.
+POLICIES=("hybrid:1" "conservative:0")
+
+PASSED=0
+FAILED=0
+
+echo "=========================================="
+echo "DR_EVT Periodic Backfill Tests (intervals: ${INTERVALS[*]} s)"
+echo "=========================================="
+echo ""
+
+# Keep the last row per timestamp (the settled state) and normalize numbers
+# so "200" and "200.0" compare equal. Drops the simulator's all-free baseline
+# row at time 0, which the reference does not emit.
+settle() {
+    awk -F, 'NR==1 {next}
+             {t=$1+0; if (t==0 && $3+0==0) next;
+              rows[t]=sprintf("%g,%g,%g", t, $2, $3);
+              if (!(t in order)) order[t]=++n}
+             END {for (i=1;i<=n;i++) for (t in order) if (order[t]==i) print rows[t]}' "$1"
+}
+
+for POLICY_SPEC in "${POLICIES[@]}"; do
+    POLICY="${POLICY_SPEC%%:*}"
+    DEPTH="${POLICY_SPEC##*:}"
+    for INTERVAL in "${INTERVALS[@]}"; do
+        echo "--- ${POLICY} backfill, ${INTERVAL} s ticks"
+        for TEST in "${TESTS[@]}"; do
+            INPUT="${TRACE_DIR}/${TEST}.csv"
+            CASE="${TEST}.${POLICY}.${INTERVAL}"
+            if [ ! -f "$INPUT" ]; then
+                echo "✗ $CASE - input not found"
+                ((FAILED++))
+                continue
+            fi
+            if head -1 "$INPUT" | grep -q "actual_run_time"; then
+                RUN_TIME_MODE="actual"
+            else
+                RUN_TIME_MODE="limit"
+            fi
+
+            # Reference schedule and resources with the same ticks. The
+            # reference starts its ticks at the interval, the simulator at
+            # the first event time plus the interval; both are multiples of
+            # the interval for these workloads, which all start at t=0.
+            if ! "$PYTHON_BIN" "$REFERENCE" "$INPUT" --nodes "$TOTAL_NODES" \
+                    --outdir "$WORK" --reservation-depth "$DEPTH" \
+                    --backfill-interval "$INTERVAL" \
+                    > "$WORK/${CASE}.ref.log" 2>&1; then
+                echo "✗ $CASE - reference scheduler failed"
+                sed 's/^/    /' "$WORK/${CASE}.ref.log"
+                ((FAILED++))
+                continue
+            fi
+            REF_JOBS="$WORK/${TEST}_conservative_reference.csv"
+            REF_RES="$WORK/${TEST}_conservative_reference_resources.csv"
+
+            SIM_OUT="$WORK/${CASE}.sim.csv"
+            SIM_RES="$WORK/${CASE}.sim_resources.csv"
+            if ! "$SIMULATOR" "$INPUT" --total_nodes "$TOTAL_NODES" \
+                    --trace_format simple --timestamp_format epoch \
+                    --run_time_mode "$RUN_TIME_MODE" \
+                    --backfill_policy "$POLICY" --reservation_depth "$DEPTH" \
+                    --backfill_interval "$INTERVAL" \
+                    --outfile "$SIM_OUT" --resource_trace "$SIM_RES" \
+                    > "$WORK/${CASE}.sim.log" 2>&1; then
+                echo "✗ $CASE - simulator failed"
+                sed 's/^/    /' "$WORK/${CASE}.sim.log"
+                ((FAILED++))
+                continue
+            fi
+
+            # Schedules: job_id,start,end. Reference columns:
+            # job_idx,submit_time,start_time,end_time,nodes,duration.
+            # Simulator: job_submit_time,begin_time,end_time,...
+            awk -F, 'NR>1 {printf "%d,%g,%g\n", $1, $3, $4}' "$REF_JOBS" > "$WORK/${CASE}.ref_sched"
+            awk -F, 'NR>1 {printf "%d,%g,%g\n", NR-2, $2, $3}' "$SIM_OUT" > "$WORK/${CASE}.sim_sched"
+            settle "$REF_RES" > "$WORK/${CASE}.ref_settled"
+            settle "$SIM_RES" > "$WORK/${CASE}.sim_settled"
+
+            if diff -q "$WORK/${CASE}.ref_sched" "$WORK/${CASE}.sim_sched" > /dev/null && \
+               diff -q "$WORK/${CASE}.ref_settled" "$WORK/${CASE}.sim_settled" > /dev/null; then
+                echo "✓ $CASE"
+                ((PASSED++))
+            else
+                echo "✗ $CASE - mismatch"
+                echo "  schedule diff (reference < > simulator):"
+                diff "$WORK/${CASE}.ref_sched" "$WORK/${CASE}.sim_sched" | head -10 | sed 's/^/    /'
+                echo "  settled resource diff (reference < > simulator):"
+                diff "$WORK/${CASE}.ref_settled" "$WORK/${CASE}.sim_settled" | head -10 | sed 's/^/    /'
+                ((FAILED++))
+            fi
+        done
+    done
+done
+
+echo ""
+echo "Option surface checks"
+
+# Explicit zero interval: byte-identical output to a run without the option.
+BASE_IN="${TRACE_DIR}/05_multiple_backfills.csv"
+"$SIMULATOR" "$BASE_IN" --total_nodes "$TOTAL_NODES" --trace_format simple \
+    --timestamp_format epoch --run_time_mode limit --backfill_policy hybrid \
+    --reservation_depth 1 \
+    --outfile "$WORK/zero_a.csv" --resource_trace "$WORK/zero_a_res.csv" > /dev/null 2>&1
+"$SIMULATOR" "$BASE_IN" --total_nodes "$TOTAL_NODES" --trace_format simple \
+    --timestamp_format epoch --run_time_mode limit --backfill_policy hybrid \
+    --reservation_depth 1 --backfill_interval 0 \
+    --outfile "$WORK/zero_b.csv" --resource_trace "$WORK/zero_b_res.csv" > /dev/null 2>&1
+if [ -s "$WORK/zero_a.csv" ] && cmp -s "$WORK/zero_a.csv" "$WORK/zero_b.csv" && \
+   cmp -s "$WORK/zero_a_res.csv" "$WORK/zero_b_res.csv"; then
+    echo "✓ zero interval is byte-identical to no option"
+    ((PASSED++))
+else
+    echo "✗ zero interval changed the output"
+    ((FAILED++))
+fi
+
+# Invalid values and the non-circular queue implementations are rejected.
+REJECTED=0
+for BAD in "--backfill_interval -1" "--backfill_interval nope" \
+           "--queue_impl deque --backfill_interval 5"; do
+    # shellcheck disable=SC2086
+    if "$SIMULATOR" "$BASE_IN" --total_nodes "$TOTAL_NODES" --trace_format simple \
+           --timestamp_format epoch --backfill_policy hybrid $BAD \
+           --outfile "$WORK/bad.csv" > /dev/null 2>&1; then
+        echo "✗ accepted invalid option: $BAD"
+    else
+        ((REJECTED++))
+    fi
+done
+if [ "$REJECTED" -eq 3 ]; then
+    echo "✓ invalid values rejected"
+    ((PASSED++))
+else
+    ((FAILED++))
+fi
+
+echo ""
+echo "=========================================="
+echo "Results: $PASSED passed, $FAILED failed"
+echo "=========================================="
+[ "$FAILED" -eq 0 ]
