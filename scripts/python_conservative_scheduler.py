@@ -15,6 +15,11 @@ No dependencies, no fancy features - just correct CONSERVATIVE logic.
 IMPORTANT: This script writes output files to /tmp by default to avoid
 polluting the working directory. Use --outdir to specify a different location.
 
+Limitation: the reference has no capacity schedule. Capacity is constant for
+the whole run, so the simulator's capacity-aware reservations
+(--capacity_schedule) are checked by its native tests, not by comparison with
+this script.
+
 Algorithm:
 1. Jobs arrive and enter wait queue (FCFS order)
 2. ALL jobs in queue get RESERVATIONS (guaranteed start times)

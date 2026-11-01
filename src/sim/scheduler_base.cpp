@@ -21,6 +21,7 @@
 #include "sim/scheduler_sjf.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -88,8 +89,6 @@ sim_time_t SchedulerBase::calculate_fcfs_reservation(
     return current_time; // Can start now
   }
 
-  num_nodes_t nodes_deficit = nodes_needed - free_nodes;
-
   // Collect end times of running jobs with their node counts
   std::vector<std::pair<sim_time_t, num_nodes_t>> end_events;
   end_events.reserve(running_jobs.size());
@@ -106,17 +105,57 @@ sim_time_t SchedulerBase::calculate_fcfs_reservation(
   // Sort by end time
   std::sort(end_events.begin(), end_events.end());
 
-  // Accumulate freed nodes until we have enough
-  num_nodes_t freed_nodes = 0;
-  for (const auto &[end_time, nodes] : end_events) {
-    freed_nodes += nodes;
-    if (freed_nodes >= nodes_deficit) {
-      return end_time;
+  // Signed running balance of free nodes. After a capacity reduction the
+  // system may be overcommitted: free_nodes is then 0 while the true slack is
+  // negative, and releases must first pay that deficit back.
+  std::int64_t balance = static_cast<std::int64_t>(free_nodes);
+  if (free_nodes == 0 && m_outlook_occupied > m_outlook_capacity) {
+    balance = static_cast<std::int64_t>(m_outlook_capacity) -
+              static_cast<std::int64_t>(m_outlook_occupied);
+  }
+  const std::int64_t needed = static_cast<std::int64_t>(nodes_needed);
+
+  // Scheduled changes are absolute capacities; walk them as deltas from the
+  // capacity in effect now. Changes already due are skipped (the simulation
+  // applies them before scheduling) but still move the reference capacity.
+  const Capacity_Change *change = m_outlook_changes_begin;
+  num_nodes_t reference_capacity = m_outlook_capacity;
+  while (change != m_outlook_changes_end && change->time <= current_time) {
+    reference_capacity = change->total_nodes;
+    ++change;
+  }
+
+  // Merge the two sorted timelines, netting everything at one timestamp
+  // before testing the request.
+  auto release = end_events.begin();
+  while (release != end_events.end() || change != m_outlook_changes_end) {
+    sim_time_t time = std::numeric_limits<sim_time_t>::max();
+    if (release != end_events.end()) {
+      time = release->first;
+    }
+    if (change != m_outlook_changes_end) {
+      time = std::min(time, change->time);
+    }
+    while (release != end_events.end() && release->first == time) {
+      balance += static_cast<std::int64_t>(release->second);
+      ++release;
+    }
+    while (change != m_outlook_changes_end && change->time == time) {
+      balance += static_cast<std::int64_t>(change->total_nodes) -
+                 static_cast<std::int64_t>(reference_capacity);
+      reference_capacity = change->total_nodes;
+      ++change;
+    }
+    if (balance >= needed) {
+      return time;
     }
   }
 
-  // Not enough nodes will be freed (shouldn't happen in correct usage)
-  return current_time;
+  // No known release or scheduled change ever satisfies the request (for
+  // example a reduction below the request with no later increase): no
+  // reservation. Without a capacity schedule every request is satisfiable
+  // once all running jobs end, so this is not reached.
+  return std::numeric_limits<sim_time_t>::max();
 }
 
 namespace {

@@ -135,7 +135,7 @@ Their scheduling semantics are documented in
 | `get_available_nodes()` | Return nodes a new job could use now; excludes releasing nodes. |
 | `get_nodes_releasing()` | Return nodes whose job has ended but which are not yet reusable (node release delay). |
 | `get_active_job_count()` | Return waiting jobs. |
-| `get_fcfs_head_shadow_time()` | Return the FCFS-head reservation time, or `-1`. |
+| `get_fcfs_head_shadow_time()` | Return the FCFS-head reservation time, or `-1` when no head waits or no projected release or scheduled capacity change lets it start. |
 | `get_backfill_window()` | Return the current FCFS/EASY reservation snapshot, including all running-job releases. |
 | `get_prediction_horizon(utilization)` | On demand, estimate the supported FCFS/EASY waiting-queue drain time from the shadow time. |
 | `get_statistics()` | Return a `Statistics` snapshot. |

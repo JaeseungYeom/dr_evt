@@ -340,8 +340,9 @@ public:
    * for its whole time limit; that placement is reserved before the next job
    * is placed. A short job behind a blocked head can therefore be projected
    * ahead of the head, as in a backfill scheduler's reservation walk. The
-   * queue head's projection equals get_fcfs_head_shadow_time(). Future
-   * arrivals and capacity-schedule changes are not considered. Scheduled jobs
+   * queue head's projection equals get_fcfs_head_shadow_time(). Scheduled
+   * capacity changes are part of the profile; future arrivals are not
+   * considered. Scheduled jobs
    * return their actual simulated start and end timestamps. Results preserve
    * request order and duplicate IDs. Cost is linear in the number of running
    * plus pending jobs per pending job; nothing is cached.
@@ -509,13 +510,17 @@ public:
   /**
    * @brief Get the estimated start time of the FCFS queue head.
    * Returns the shadow time (earliest time head of queue can start)
-   * @return Estimated start time as sim_time_t, or -1 when the queue is empty.
+   * @return Estimated start time as sim_time_t, or -1 when the queue is empty
+   * or when no running-job release or scheduled capacity change ever lets
+   * the head start (a reduction below its request with no later increase).
    */
   sim_time_t get_fcfs_head_shadow_time() const {
     if (m_scheduler->active_job_count() == 0) {
       return -1.0;
     }
-    return m_scheduler->get_fcfs_reservation_time();
+    const sim_time_t reservation = m_scheduler->get_fcfs_reservation_time();
+    return reservation == std::numeric_limits<sim_time_t>::max() ? -1.0
+                                                                 : reservation;
   }
 
   /**
@@ -527,8 +532,10 @@ public:
    * `releases` then describes every projected capacity increase from the
    * currently running jobs. Release events use the time-limit estimates used
    * by SchedulerBase::calculate_fcfs_reservation, rather than actual runtimes,
-   * so the projection and reservation agree. `shadow_time` is -1 when no
-   * FCFS head is waiting.
+   * so the projection and reservation agree. `releases` lists running-job
+   * releases only; `shadow_time` additionally accounts for scheduled
+   * capacity changes. `shadow_time` is -1 when no FCFS head is waiting or
+   * when the head has no projected start (see get_fcfs_head_shadow_time()).
    */
   struct Backfill_Window {
     /**
@@ -822,6 +829,19 @@ protected:
 
   /** Reset the capacity cursor to the configured maximum. */
   void reset_capacity_schedule();
+
+  /**
+   * Hand the scheduler the capacity in effect, the nodes occupied now, and
+   * the scheduled changes still ahead, so reservations can anticipate them.
+   * Called before every scheduling pass; the range points into
+   * m_capacity_changes, which outlives the scheduler's use of it.
+   */
+  void publish_capacity_outlook() {
+    const Capacity_Change *data = m_capacity_changes.data();
+    m_scheduler->set_capacity_outlook(m_current_capacity, get_nodes_occupied(),
+                                      data + m_next_capacity_change,
+                                      data + m_capacity_changes.size());
+  }
 
   /** Install the configured node release delay in the trace and scheduler. */
   void configure_node_release_delay();

@@ -63,6 +63,10 @@ bool approx_equal(double a, double b, double tol = 1e-6) {
 const char *EMPTY_TRACE_PATH = "/tmp/test_append_job_api_empty.csv";
 const char *CAPACITY_SCHEDULE_PATH =
     "/tmp/test_append_job_api_capacity_schedule.csv";
+const char *CAPACITY_OUTLOOK_INCREASE_PATH =
+    "/tmp/test_append_job_capacity_outlook_increase.csv";
+const char *CAPACITY_OUTLOOK_DROP_PATH =
+    "/tmp/test_append_job_capacity_outlook_drop.csv";
 const char *CAPACITY_RESET_TRACE_PATH =
     "/tmp/test_append_job_api_capacity_reset_resources.csv";
 
@@ -701,6 +705,96 @@ void test_advance_to_idle_gap() {
   assert(sim.get_nodes_in_use() == 0);
   assert(approx_equal(sim.get_current_time(), 550.0));
   std::cout << "  All jobs complete after draining to infinity" << std::endl;
+
+  std::cout << "  PASSED" << std::endl;
+}
+
+// Reservations anticipate scheduled capacity changes. A head that only fits
+// after a scheduled increase is reserved at that increase, so a candidate
+// that ends before it is backfilled now instead of being refused against a
+// reservation the scheduler could never honor; a reduction that leaves the
+// head unsatisfiable yields no reservation at all, so the queue behind it
+// keeps moving.
+void test_reservations_follow_capacity_schedule() {
+  std::cout << "\n=== Reservations follow the capacity schedule ==="
+            << std::endl;
+
+  // 100 nodes; A holds 50 until t=100. Capacity drops to 55 at t=50 and
+  // returns to 100 at t=150. H (60 nodes) therefore fits only at t=150:
+  // t=50 balance 50-45=5, t=100 +50=55 < 60, t=150 +45=100. C (40 nodes,
+  // 120 s) fits now and ends at 120 < 150, so it is backfilled at t=0.
+  {
+    std::ofstream capacity(CAPACITY_OUTLOOK_INCREASE_PATH);
+    capacity << "time,total_nodes\n"
+             << "50,55\n"
+             << "150,100\n";
+  }
+  {
+    Sim_Params params = make_params();
+    params.m_capacity_schedule = CAPACITY_OUTLOOK_INCREASE_PATH;
+    Simulation sim(params);
+    sim.get_trace().load_data(0);
+    const auto a = sim.append_job(0.0, 50, kTestQueueInput, 100.0);
+    const auto head = sim.append_job(0.0, 60, kTestQueueInput, 10.0);
+    const auto candidate = sim.append_job(0.0, 40, kTestQueueInput, 120.0);
+    sim.advance_to(0.0);
+    assert(approx_equal(sim.get_fcfs_head_shadow_time(), 150.0));
+    const auto statuses = sim.get_job_statuses({a, head, candidate});
+    assert(statuses[0].state == Simulation::Job_State::RUNNING);
+    assert(statuses[1].state == Simulation::Job_State::PENDING);
+    assert(statuses[1].expected_start_time.has_value());
+    assert(approx_equal(*statuses[1].expected_start_time, 150.0));
+    assert(statuses[2].state == Simulation::Job_State::RUNNING);
+    assert(approx_equal(*statuses[2].start_time, 0.0));
+
+    // The system is overcommitted between the drop at 50 and A's end at
+    // 100 (90 nodes on 55); H still starts exactly at the increase.
+    sim.advance_to(75.0);
+    assert(sim.get_current_capacity() == 55);
+    assert(sim.get_nodes_in_use() == 90);
+    assert(approx_equal(sim.get_fcfs_head_shadow_time(), 150.0));
+    sim.advance_to(std::numeric_limits<sim_time_t>::max());
+    const auto final_status = sim.get_job_statuses({head}).front();
+    assert(approx_equal(*final_status.start_time, 150.0));
+    assert(sim.get_statistics().jobs_completed == 3);
+  }
+
+  // Capacity drops to 30 at t=10 and never recovers. H (60 nodes) can never
+  // start: t=10 balance 50-70=-20, t=100 +50=30 < 60. The head holds no
+  // reservation, so C (20 nodes, 5 s) is backfilled (at once, or at the
+  // first 7 s tick in periodic mode) rather than refused against a
+  // reservation at "now". Draining with a job that can never start must end
+  // in both modes instead of looping on the max() sentinel.
+  {
+    std::ofstream capacity(CAPACITY_OUTLOOK_DROP_PATH);
+    capacity << "time,total_nodes\n"
+             << "10,30\n";
+  }
+  for (const double interval : {0.0, 7.0}) {
+    Sim_Params params = make_params();
+    params.m_capacity_schedule = CAPACITY_OUTLOOK_DROP_PATH;
+    params.m_backfill_interval = interval;
+    Simulation sim(params);
+    sim.get_trace().load_data(0);
+    (void)sim.append_job(0.0, 50, kTestQueueInput, 100.0);
+    const auto head = sim.append_job(0.0, 60, kTestQueueInput, 10.0);
+    const auto candidate = sim.append_job(0.0, 20, kTestQueueInput, 5.0);
+    sim.advance_to(0.0);
+    assert(approx_equal(sim.get_fcfs_head_shadow_time(), -1.0));
+    assert(sim.get_backfill_window().shadow_time == -1.0);
+    const auto statuses = sim.get_job_statuses({head});
+    assert(statuses[0].state == Simulation::Job_State::PENDING);
+    assert(!statuses[0].expected_start_time.has_value());
+    sim.advance_to(8.0);
+    const auto started = sim.get_job_statuses({candidate}).front();
+    assert(started.start_time.has_value());
+    assert(approx_equal(*started.start_time, interval == 0.0 ? 0.0 : 7.0));
+    sim.advance_to(std::numeric_limits<sim_time_t>::max());
+    assert(sim.get_statistics().jobs_completed == 2);
+    assert(sim.get_active_job_count() == 1); // H still waits
+    assert(sim.get_nodes_in_use() == 0);
+    assert(approx_equal(sim.get_current_time(), 100.0)); // last real event
+  }
 
   std::cout << "  PASSED" << std::endl;
 }
@@ -1450,6 +1544,7 @@ int main() {
     test_no_resource_leaks();
     test_advance_to_idle_gap();
     test_capacity_schedule_across_streaming_advances();
+    test_reservations_follow_capacity_schedule();
     test_submit_job_records_busy_nodes();
     test_append_jobs_memory_pressure();
     test_resource_area_and_time_accounted_utilization();

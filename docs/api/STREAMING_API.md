@@ -336,13 +336,14 @@ struct Simulation::Backfill_Window {
 
     sim_time_t current_time;              // Snapshot time
     num_nodes_t available_nodes;          // Nodes free immediately
-    sim_time_t shadow_time;               // FCFS-head start, or -1 if no head waits
+    sim_time_t shadow_time;               // FCFS-head start, or -1 if none
     std::vector<Resource_Release> releases; // Ordered projected releases
 };
 ```
 
 The snapshot contains `current_time`, immediately `available_nodes`, the
-same FCFS-head `shadow_time` (`-1` if the queue is empty), and chronologically
+same FCFS-head `shadow_time` (`-1` if the queue is empty or the head has no
+projected start), and chronologically
 ordered resource-change events in `releases`. Each event gives the simulation
 `time` at which capacity changes and the summed `nodes_released` then. Events
 use time-limit estimates and include every currently running job, even when no

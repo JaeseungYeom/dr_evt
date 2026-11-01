@@ -2115,27 +2115,45 @@ BasicSimulation<TraceType>::get_job_statuses(
   std::map<job_no_t, sim_time_t> expected_starts;
 
   // Free-node profile: each key starts a segment that keeps its value until
-  // the next key. Seeded from running-job releases at their limit times, the
-  // same estimate the schedulers reserve against. Pending jobs are then
-  // placed in queue order at their earliest fit for their full time limit,
-  // and each placement is carved out of the profile, so a short job behind
-  // a blocked head may be projected ahead of it, as a backfill scheduler's
-  // own reservation walk would do.
+  // the next key. Seeded from running-job releases at their limit times and
+  // the scheduled capacity changes still ahead, the same timeline the
+  // schedulers reserve against. Pending jobs are then placed in queue order
+  // at their earliest fit for their full time limit, and each placement is
+  // carved out of the profile, so a short job behind a blocked head may be
+  // projected ahead of it, as a backfill scheduler's own reservation walk
+  // would do.
   std::map<sim_time_t, num_nodes_t> profile;
   {
-    std::map<sim_time_t, num_nodes_t> releases;
+    // Signed deltas: releases add, capacity reductions subtract. The balance
+    // may be negative while the system is overcommitted after a reduction;
+    // it is clamped only once every delta at a timestamp has been applied.
+    std::map<sim_time_t, std::int64_t> deltas;
     for (const auto &[job_idx, running] : m_running_jobs) {
       (void)job_idx;
       const sim_time_t end = running.start_time + running.run_time;
       if (end > m_current_time) {
-        releases[end] += running.nodes;
+        deltas[end] += static_cast<std::int64_t>(running.nodes);
       }
     }
-    num_nodes_t free_nodes = get_available_nodes();
-    profile[m_current_time] = free_nodes;
-    for (const auto &[time, nodes] : releases) {
-      free_nodes += nodes;
-      profile[time] = free_nodes;
+    num_nodes_t reference_capacity = m_current_capacity;
+    for (size_t i = m_next_capacity_change; i < m_capacity_changes.size();
+         ++i) {
+      const auto &change = m_capacity_changes[i];
+      if (change.time > m_current_time) {
+        deltas[change.time] += static_cast<std::int64_t>(change.total_nodes) -
+                               static_cast<std::int64_t>(reference_capacity);
+      }
+      reference_capacity = change.total_nodes;
+    }
+    std::int64_t balance = static_cast<std::int64_t>(m_current_capacity) -
+                           static_cast<std::int64_t>(get_nodes_occupied());
+    const auto clamp = [](std::int64_t value) {
+      return value > 0 ? static_cast<num_nodes_t>(value) : num_nodes_t{0};
+    };
+    profile[m_current_time] = clamp(balance);
+    for (const auto &[time, delta] : deltas) {
+      balance += delta;
+      profile[time] = clamp(balance);
     }
   }
 
@@ -2485,6 +2503,7 @@ void BasicSimulation<TraceType>::advance_to_impl(
     // Call scheduler to evaluate newly arriving jobs
     while (true) {
       num_nodes_t free_nodes = get_available_nodes();
+      publish_capacity_outlook();
       auto jobs_to_run = periodic_backfill
                              ? periodic_scheduler->schedule_event(
                                    free_nodes, m_running_jobs, m_current_time)
@@ -2545,7 +2564,8 @@ void BasicSimulation<TraceType>::advance_to_impl(
           m_next_backfill_evaluation <= target_time &&
           (!m_trace.pending_events().empty() ||
            next_arrival < std::numeric_limits<sim_time_t>::max() ||
-           next_capacity <= target_time))) {
+           (next_capacity < std::numeric_limits<sim_time_t>::max() &&
+            next_capacity <= target_time)))) {
     if (m_params.m_verbose) {
       std::cout << "Loop iter: active=" << active_count
                 << " events=" << m_trace.pending_events().size()
@@ -2725,11 +2745,16 @@ void BasicSimulation<TraceType>::advance_to_impl(
       if constexpr (PeriodicBackfill) {
         m_periodic_backfill_dirty = true;
       }
-    } else if (next_tick <= target_time &&
+    } else if (next_tick < std::numeric_limits<sim_time_t>::max() &&
+               next_tick <= target_time &&
                (!m_trace.pending_events().empty() ||
                 next_arrival < std::numeric_limits<sim_time_t>::max() ||
-                next_capacity <= target_time)) {
-      // next_tick is finite only in periodic mode with a waiting job.
+                (next_capacity < std::numeric_limits<sim_time_t>::max() &&
+                 next_capacity <= target_time))) {
+      // next_tick is finite only in periodic mode with a waiting job. Every
+      // comparison excludes the max() sentinel explicitly: on a drain to
+      // max(), a job that waits with nothing running, arriving, or scheduled
+      // must end the loop rather than tick forever.
       m_current_time = next_tick;
       advance_capacity_accounting_to(m_current_time);
       if constexpr (AccountResources) {
@@ -2775,6 +2800,7 @@ void BasicSimulation<TraceType>::advance_to_impl(
       // Keep calling scheduler until it can't start any more jobs
       while (true) {
         num_nodes_t free_nodes = get_available_nodes();
+        publish_capacity_outlook();
 
         auto jobs_to_run =
             periodic_backfill && !periodic_evaluation

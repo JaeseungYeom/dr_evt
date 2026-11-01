@@ -179,7 +179,8 @@ threshold. Scheduled values may range from zero through that maximum. A job
 that exceeds only the current scheduled capacity waits for a later increase;
 it is not rejected. Reductions do not preempt running jobs, and a zero value
 pauses all new starts for this workload. A schedule row at time zero replaces
-the initial available capacity immediately.
+the initial available capacity immediately. Reservations and backfill windows
+take the scheduled changes ahead into account.
 
 ### `--sim_start_time TIME`
 
