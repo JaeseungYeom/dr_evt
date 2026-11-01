@@ -21,7 +21,7 @@ Complete reference for all DR_EVT command-line options for the `simulator` binar
 | Scheduling | `--num_max_candidates COUNT` | Cap feasible jobs offered to the experimental custom-EASY selector. |
 | Scheduling | `--backfill_queue_depth N` | Cap jobs inspected by built-in hybrid or conservative backfill. |
 | Scheduling | `--backfill_interval SECONDS` | Run built-in backfill at periodic ticks instead of every event. |
-| Scheduling | `--backfill_time_resolution SECONDS` | Round planning durations up to a grid. |
+| Scheduling | `--planning_time_resolution SECONDS` | Round planning durations up to a grid. |
 | Scheduling | `--reservation_depth N` | Number of reserved waiting jobs under `hybrid` backfilling. |
 | Scheduling | `-p, --priority_policy POLICY` | Select the job-ordering policy. |
 | Scheduling | `-q, --queue_impl IMPLEMENTATION` | Select the FCFS wait-queue implementation. |
@@ -266,10 +266,7 @@ event-driven backfill behavior.
 
 **Default:** `0` (disabled)
 
-### `--backfill_time_resolution SECONDS`
-
-Despite its historical name, this is DR_EVT's planning-time-resolution option
-for every scheduling policy, not only backfill.
+### `--planning_time_resolution SECONDS`
 
 Rounds each job's `time_limit` up to this grid for scheduler planning:
 projected releases, reservations, and backfill feasibility checks. The

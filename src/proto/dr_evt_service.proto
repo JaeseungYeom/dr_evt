@@ -110,7 +110,7 @@ message InitRequest {
     double backfill_interval = 24;
 
     // Planning time-limit grid for backfill reservations; zero is exact.
-    double backfill_time_resolution = 25;
+    double planning_time_resolution = 25;
 
     // Seconds a job's nodes stay unavailable after it ends (default 0).
     // Not applied to replayed history.

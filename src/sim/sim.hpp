@@ -830,7 +830,7 @@ protected:
 
   /** Round a time limit once for scheduling; execution remains exact. */
   tdiff_t planning_time_limit(tdiff_t time_limit) const {
-    const tdiff_t resolution = m_params.m_backfill_time_resolution;
+    const tdiff_t resolution = m_params.m_planning_time_resolution;
     if (resolution == 0.0) {
       return time_limit;
     }

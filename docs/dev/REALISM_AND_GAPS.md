@@ -31,8 +31,8 @@ The statements below describe the code, not an idealization of it.
 - **Time and planning resolution.** The clock and actual job execution use
   floating-point seconds. By default, reservations and backfill completion
   tests use exact planning times.
-  [`--backfill_time_resolution SECONDS`](../user-guide/command-line.md#--backfill_time_resolution-seconds)
-  is a historically named planning-resolution option: it rounds each enqueued
+  [`--planning_time_resolution SECONDS`](../user-guide/command-line.md#--planning_time_resolution-seconds)
+  rounds each enqueued
   job's time limit up to that grid for every scheduling policy. It affects
   projected releases, reservations, and backfill tests, but does not round the
   clock or change actual execution.
@@ -61,6 +61,10 @@ The statements below describe the code, not an idealization of it.
   project reservations arbitrarily far ahead. There is no DR_EVT planning-
   horizon option. This differs from Slurm's `bf_window`; it is independent of
   queue depth and of a candidate's backfill test window.
+  In the Slurm comparison, a job reached by the queue scan but projected beyond
+  `bf_window` still consumes a tested-job (`bf_max_job_test`) slot, but it
+  receives no in-window reservation and does not consume a
+  `bf_job_part_count_reserve` reservation slot.
 - **Run-time knowledge.** The scheduler plans with the requested time limit.
   The observed run time comes from the trace or from a sampled distribution
   and never exceeds the limit, which is equivalent to killing a job at its
@@ -208,14 +212,14 @@ Use `--backfill_interval 0` for DR_EVT's ordinary event-driven backfill. A
 positive interval keeps event-driven FCFS dispatch but runs backfill only at
 periodic ticks.
 
-Use `--backfill_time_resolution SECONDS` to apply the last column without
+Use `--planning_time_resolution SECONDS` to apply the last column without
 changing simulated execution. It rounds each time limit supplied to the
 scheduler once when the job is enqueued; `0` retains exact planning. It is
 applied under every policy, but affects FCFS only where projected releases are
 used—immediate FCFS dispatch remains based on currently free nodes. Thus a
 61-second limit becomes 120 seconds with Slurm's 60-second grid and remains
 61 seconds with Flux's 1-second grid. For a Fluxion comparison, set
-`--backfill_time_resolution 1`; this matches its one-second planning grid but
+`--planning_time_resolution 1`; this matches its one-second planning grid but
 does not quantize DR_EVT's clock or actual job execution.
 
 ### Comparison table and configurable mitigations
@@ -232,7 +236,7 @@ DR_EVT controls relevant to the comparison are:
   and [`--backfill_queue_depth`](../user-guide/command-line.md#--backfill_queue_depth-n)
 - [`--backfill_interval`](../user-guide/command-line.md#--backfill_interval-seconds)
   and
-  [`--backfill_time_resolution`](../user-guide/command-line.md#--backfill_time_resolution-seconds)
+  [`--planning_time_resolution`](../user-guide/command-line.md#--planning_time_resolution-seconds)
 - [`--node_release_delay`](../user-guide/command-line.md#--node_release_delay-seconds)
   and its
   [per-node delay model](../user-guide/command-line.md#--node_release_delay_model-model)
@@ -290,7 +294,7 @@ to the degree that
 Each of the following is a contained change if a study needs it:
 
 - **Reservation horizon.** Planning resolution is already configurable with
-  [`--backfill_time_resolution`](../user-guide/command-line.md#--backfill_time_resolution-seconds);
+  [`--planning_time_resolution`](../user-guide/command-line.md#--planning_time_resolution-seconds);
   a reservation horizon remains unavailable.
 - **Priority hooks.** The experimental external selector already lets a
   caller rank backfill candidates by an arbitrary cost; extending the same

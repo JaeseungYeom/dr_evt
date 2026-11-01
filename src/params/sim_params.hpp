@@ -97,7 +97,7 @@ private:
     visit("reservation_depth", self.m_reservation_depth);
     visit("backfill_queue_depth", self.m_backfill_queue_depth);
     visit("backfill_interval", self.m_backfill_interval);
-    visit("backfill_time_resolution", self.m_backfill_time_resolution);
+    visit("planning_time_resolution", self.m_planning_time_resolution);
     visit("priority_policy", self.m_priority_policy);
     visit("queue_impl", self.m_queue_impl);
     visit("block_size", self.m_block_size);
@@ -213,7 +213,7 @@ public:
   /// periodic evaluation and preserves event-driven scheduling only.
   tdiff_t m_backfill_interval;
   /// Planning time-limit grid for backfill reservations; zero is exact.
-  tdiff_t m_backfill_time_resolution;
+  tdiff_t m_planning_time_resolution;
   /// Job priority/order policy applied by the scheduler.
   PriorityPolicy m_priority_policy;
   /// Wait-queue implementation used by FCFS scheduling.
