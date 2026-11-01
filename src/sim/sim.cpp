@@ -331,6 +331,7 @@ BasicSimulation<TraceType>::BasicSimulation(Sim_Params params)
           m_params.m_backfill_interval)),
       m_custom_scheduler(nullptr), m_current_time(0.0),
       m_next_backfill_evaluation(std::numeric_limits<sim_time_t>::max()),
+      m_periodic_backfill_dirty(true),
       m_job_rejection_capacity(m_params.m_total_nodes),
       m_capacity_changes(load_capacity_schedule(m_params.m_capacity_schedule,
                                                 m_params.m_total_nodes)),
@@ -2288,7 +2289,11 @@ void BasicSimulation<TraceType>::submit_job(job_no_t job_idx,
   job.set_busy_nodes(get_nodes_in_use());
 #endif
 
-  m_scheduler->insert_job(job_idx, submit_time, run_time_estimate, nodes);
+  m_scheduler->insert_job(job_idx, submit_time,
+                          planning_time_limit(run_time_estimate), nodes);
+  if (m_params.m_backfill_interval > 0.0) {
+    m_periodic_backfill_dirty = true;
+  }
   ++m_pending_queue_arrivals[submit_time];
   m_latest_submit_time = std::max(m_latest_submit_time, submit_time);
   // Counted here, after the scheduler accepted it, so rejected jobs above
@@ -2635,10 +2640,15 @@ void BasicSimulation<TraceType>::advance_to_impl(
       // Only call scheduler if we processed END events (resources freed)
       should_schedule = processed_end_event || capacity_changed ||
                         next_arrival == m_current_time;
+      if constexpr (PeriodicBackfill) {
+        m_periodic_backfill_dirty =
+            m_periodic_backfill_dirty || should_schedule;
+      }
 
     } else if (next_arrival < std::numeric_limits<sim_time_t>::max() &&
                next_arrival <= next_capacity &&
-               next_arrival <= m_next_backfill_evaluation &&
+               (next_arrival <= m_next_backfill_evaluation ||
+                (periodic_backfill && active_count == 0)) &&
                next_arrival <= target_time) {
       // Job arrival - advance time FIRST
       // Note: Check next_arrival < infinity to avoid infinite loop
@@ -2666,6 +2676,9 @@ void BasicSimulation<TraceType>::advance_to_impl(
       // TODO: Pass jobs_at_next_arrival to scheduler for efficient evaluation
       // For now, just set flag to schedule
       should_schedule = true;
+      if constexpr (PeriodicBackfill) {
+        m_periodic_backfill_dirty = true;
+      }
     } else if (next_capacity < std::numeric_limits<sim_time_t>::max() &&
                next_capacity <= m_next_backfill_evaluation &&
                next_capacity <= target_time) {
@@ -2681,6 +2694,9 @@ void BasicSimulation<TraceType>::advance_to_impl(
         custom_scheduler->notify_resource_change();
       }
       should_schedule = true;
+      if constexpr (PeriodicBackfill) {
+        m_periodic_backfill_dirty = true;
+      }
     } else if (periodic_backfill && active_count > 0 &&
                m_next_backfill_evaluation <= target_time &&
                (!m_trace.pending_events().empty() ||
@@ -2693,8 +2709,8 @@ void BasicSimulation<TraceType>::advance_to_impl(
       }
       m_scheduler->sync_to(m_current_time);
       record_queue_arrivals(m_current_time);
-      should_schedule = true;
-      periodic_evaluation = true;
+      periodic_evaluation = m_periodic_backfill_dirty;
+      should_schedule = periodic_evaluation;
       m_next_backfill_evaluation += m_params.m_backfill_interval;
     } else {
       // No arrivals and no replay events before target_time
@@ -2705,6 +2721,21 @@ void BasicSimulation<TraceType>::advance_to_impl(
       }
       // No events to process - exit loop
       break;
+    }
+
+    // An ordinary event wins the event-selection tie at an exact periodic
+    // timestamp.  It still needs the periodic backfill pass after its FCFS
+    // dispatch; otherwise that tick is silently skipped and differs from the
+    // Python reference's same-time event ordering.
+    if constexpr (PeriodicBackfill) {
+      if (!periodic_evaluation &&
+          m_next_backfill_evaluation <= m_current_time) {
+        periodic_evaluation = true;
+        m_next_backfill_evaluation += m_params.m_backfill_interval;
+      }
+      if (periodic_evaluation) {
+        m_periodic_backfill_dirty = false;
+      }
     }
 
     // Scheduling loop - let scheduler make decisions after processing END
@@ -2767,9 +2798,15 @@ void BasicSimulation<TraceType>::advance_to_impl(
                         ? m_capacity_changes[m_next_capacity_change].time
                         : std::numeric_limits<sim_time_t>::max();
 
-    if (periodic_backfill && m_next_backfill_evaluation <= m_current_time) {
-      m_next_backfill_evaluation =
-          m_current_time + m_params.m_backfill_interval;
+    if constexpr (PeriodicBackfill) {
+      if (m_next_backfill_evaluation <= m_current_time) {
+        const auto missed_ticks = static_cast<size_t>(
+            std::floor((m_current_time - m_next_backfill_evaluation) /
+                       m_params.m_backfill_interval)) +
+                                 1;
+        m_next_backfill_evaluation +=
+            missed_ticks * m_params.m_backfill_interval;
+      }
     }
 
     // Peak queue length after all events and scheduling at this timestamp.

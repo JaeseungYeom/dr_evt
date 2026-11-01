@@ -118,6 +118,12 @@ set_sim_options(const dr_evt_proto::DR_EVT_Params::Simulation_Params &cfg,
   sp.m_reservation_depth = cfg.reservation_depth();
   sp.m_backfill_queue_depth = cfg.backfill_queue_depth();
   sp.m_backfill_interval = cfg.backfill_interval();
+  if (!std::isfinite(cfg.backfill_time_resolution()) ||
+      cfg.backfill_time_resolution() < 0.0) {
+    throw std::runtime_error(
+        "backfill_time_resolution must be finite and nonnegative");
+  }
+  sp.m_backfill_time_resolution = cfg.backfill_time_resolution();
 
   // Backfill policy (default: EASY)
   if (!cfg.backfill_policy().empty()) {

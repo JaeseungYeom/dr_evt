@@ -73,6 +73,8 @@ protected:
   sim_time_t m_current_time;
   /// Next periodic backfill evaluation; infinity when periodic mode is idle.
   sim_time_t m_next_backfill_evaluation;
+  /// True when an event since the last periodic pass can change backfill.
+  bool m_periodic_backfill_dirty;
 
   /// Fixed physical limit used only to reject jobs that can never fit.
   num_nodes_t m_job_rejection_capacity;
@@ -822,8 +824,17 @@ protected:
    */
   tdiff_t planning_run_time(tdiff_t run_time_estimate,
                             num_nodes_t nodes) const {
-    return run_time_estimate +
+    return planning_time_limit(run_time_estimate) +
            m_trace.node_release_delay().planning_delay(nodes);
+  }
+
+  /** Round a time limit once for scheduling; execution remains exact. */
+  tdiff_t planning_time_limit(tdiff_t time_limit) const {
+    const tdiff_t resolution = m_params.m_backfill_time_resolution;
+    if (resolution == 0.0) {
+      return time_limit;
+    }
+    return std::ceil(time_limit / resolution) * resolution;
   }
 
   /**

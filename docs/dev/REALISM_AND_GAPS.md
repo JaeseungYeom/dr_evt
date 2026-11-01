@@ -94,16 +94,22 @@ These settings reproduce trigger and reservation behavior within DR_EVT's
 single-pool FCFS model; they do not add Slurm partitions or Flux's resource
 graph.
 
-| Target | Backfill policy | Interval | Reservation depth | Queue depth |
-|---|---|---:|---:|---:|
-| Slurm, reserve all tested jobs | `conservative` | `bf_interval` (30 s default) | N/A | `bf_max_job_test` (500 default) |
-| Slurm, reserve a fixed prefix | `hybrid` | `bf_interval` | `bf_job_part_count_reserve` | `bf_max_job_test` |
-| Slurm EASY-like head reservation | `hybrid` | `bf_interval` | `1` | `bf_max_job_test` |
-| Fluxion hybrid | `hybrid` | `0` (event-driven) | Flux `reservation-depth` | Flux `queue-depth` (32 default) |
+| Target | Backfill policy | Interval | Reservation depth | Queue depth | Planning resolution |
+|---|---|---:|---:|---:|---:|
+| Slurm, reserve all tested jobs | `conservative` | `bf_interval` (30 s default) | N/A | `bf_max_job_test` (500 default) | 60 s (`bf_resolution`) |
+| Slurm, reserve a fixed prefix | `hybrid` | `bf_interval` | `bf_job_part_count_reserve` | `bf_max_job_test` | 60 s |
+| Slurm EASY-like head reservation | `hybrid` | `bf_interval` | `1` | `bf_max_job_test` | 60 s |
+| Fluxion hybrid | `hybrid` | `0` (event-driven) | Flux `reservation-depth` | Flux `queue-depth` (32 default) | 1 s |
 
 Use `--backfill_interval 0` for DR_EVT's ordinary event-driven backfill. A
 positive interval keeps event-driven FCFS dispatch but runs backfill only at
 periodic ticks.
+
+Use `--backfill_time_resolution SECONDS` to apply the last column without
+changing simulated execution. It rounds each time limit used for scheduling up
+once when the job is enqueued; `0` retains exact planning. Thus a 61-second
+limit becomes 120 seconds with Slurm's 60-second grid and remains 61 seconds
+with Flux's 1-second grid.
 
 ### Flux (Fluxion)
 

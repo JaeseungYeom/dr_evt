@@ -1190,6 +1190,24 @@ void test_periodic_hybrid_backfill() {
     assert(approx_equal(*status.start_time, 10.0));
   }
 
+  // An arrival exactly at a periodic timestamp receives its ordinary FCFS
+  // dispatch first, then the tick's backfill pass at the same timestamp.
+  auto aligned_params = make_params();
+  aligned_params.m_backfill_policy = BackfillPolicy::HYBRID;
+  aligned_params.m_reservation_depth = 1;
+  aligned_params.m_backfill_interval = 10.0;
+  Simulation aligned_sim(aligned_params);
+  aligned_sim.get_trace().load_data(0);
+  (void)aligned_sim.append_job(0.0, 90, kTestQueueInput, 100.0);
+  (void)aligned_sim.append_job(0.0, 100, kTestQueueInput, 1.0);
+  const auto aligned_candidate =
+      aligned_sim.append_job(10.0, 10, kTestQueueInput, 1.0);
+  aligned_sim.advance_to(10.0);
+  const auto aligned_status =
+      aligned_sim.get_job_statuses({aligned_candidate}).front();
+  assert(aligned_status.start_time.has_value());
+  assert(approx_equal(*aligned_status.start_time, 10.0));
+
   sim.advance_to(10.0);
   const auto status = sim.get_job_statuses({blocked});
   assert(status.size() == 1);
