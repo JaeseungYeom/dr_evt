@@ -107,11 +107,22 @@ tests/benchmark_wait_queues.sh --backfill-policy hybrid \
   --backfill-queue-depth 32 \
   tests/test_traces/scale/huge_2000jobs.csv
 
-# Periodic hybrid backfill: circular C++ scheduler and Python oracle
+# Periodic hybrid backfill. This measures the circular C++ scheduler; the
+# Python oracle is skipped by default because it is impractically slow on
+# long periodic traces.
 tests/benchmark_wait_queues.sh --backfill-policy hybrid \
   --backfill-interval 30 \
   --reservation-depth 32 \
   --backfill-queue-depth 32 \
+  tests/test_traces/scale/huge_10000jobs.csv
+
+# Optional periodic Python differential check on a smaller trace. It can
+# still take substantially longer than the C++ run.
+tests/benchmark_wait_queues.sh --backfill-policy hybrid \
+  --backfill-interval 30 \
+  --reservation-depth 32 \
+  --backfill-queue-depth 32 \
+  --with-python-reference \
   tests/test_traces/scale/huge_2000jobs.csv
 
 # Slurm-default-style periodic backfill: 30 s, reserve all tested jobs,
@@ -120,6 +131,11 @@ tests/benchmark_wait_queues.sh --backfill-policy conservative \
   --backfill-interval 30 \
   --backfill-queue-depth 500
 ```
+
+For every positive `--backfill-interval`, the benchmark skips the Python
+reference unless `--with-python-reference` is supplied. This keeps the normal
+10,000-job periodic benchmark practical; use the opt-in check only with a
+small trace.
 
 Run the same benchmark with:
 

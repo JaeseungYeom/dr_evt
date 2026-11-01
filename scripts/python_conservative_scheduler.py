@@ -161,8 +161,22 @@ class ConservativeBackfillingScheduler:
         # Should never reach here if system is not oversubscribed
         return self.current_time
 
-    def calculate_conservative_window_with_running(self, backfill_pos: int, free_nodes: int,
-                                                     effective_running: dict, exclude_jobs: set) -> Optional[float]:
+    def build_resource_timeline_from_running(self, running: dict) -> list:
+        """Return projected free capacity after each estimated release."""
+        current_free = self.total_nodes - sum(
+            nodes for _, _, _, nodes in running.values())
+        releases = sorted((pessimistic_end, nodes)
+                          for _, _, pessimistic_end, nodes in running.values())
+        timeline = [(self.current_time, current_free)]
+        for release_time, released_nodes in releases:
+            current_free += released_nodes
+            timeline.append((release_time, current_free))
+        return timeline
+
+    def calculate_conservative_window_with_running(self, backfill_pos: int,
+                                                     effective_running: dict,
+                                                     exclude_jobs: set,
+                                                     timeline: list) -> Optional[float]:
         """
         Calculate the conservative backfill window considering effective running jobs
 
@@ -191,7 +205,7 @@ class ConservativeBackfillingScheduler:
             reserved += 1
 
             # Calculate reservation using effective running jobs
-            reservation = self.calculate_job_reservation_time_with_running(job, effective_running)
+            reservation = self.calculate_job_reservation_time_from_timeline(job, timeline)
             earliest_reservation = min(earliest_reservation, reservation)
 
         return earliest_reservation if earliest_reservation < float('inf') else None
@@ -254,6 +268,12 @@ class ConservativeBackfillingScheduler:
 
         remaining = []
         backfilled_jobs = {}  # Track backfilled jobs as {job_id: (start_time, pessimistic_end)}
+        # The C++ scheduler updates its effective-running view only when it
+        # actually starts a backfill job.  Keep the same view here, and build
+        # its release timeline once per such change rather than once for every
+        # candidate/reservation pair.
+        effective_running = self.running.copy()
+        effective_timeline = None
 
         examined = 0
         for pos, job in enumerate(self.wait_queue):
@@ -267,14 +287,15 @@ class ConservativeBackfillingScheduler:
                 remaining.append(job)
                 continue
 
-            # Calculate conservative window: earliest reservation among jobs ahead
-            # Include both truly running jobs and already-backfilled jobs from this cycle
-            effective_running = self.running.copy()
-            for jid, (start_time, pess_end, nodes) in backfilled_jobs.items():
-                # Add backfilled job as if it's running
-                effective_running[jid] = (start_time, pess_end, pess_end, nodes)
-
-            conservative_window = self.calculate_conservative_window_with_running(pos, free_nodes, effective_running, set(backfilled_jobs.keys()))
+            # Calculate the earliest reservation among jobs ahead.  Include
+            # jobs already backfilled during this pass in the same projected
+            # resource view used by the C++ implementation.
+            if effective_timeline is None:
+                effective_timeline = self.build_resource_timeline_from_running(
+                    effective_running)
+            conservative_window = self.calculate_conservative_window_with_running(
+                pos, effective_running, set(backfilled_jobs.keys()),
+                effective_timeline)
 
             if conservative_window is None:
                 # No jobs ahead - shouldn't happen, but safe to backfill
@@ -295,6 +316,9 @@ class ConservativeBackfillingScheduler:
                 # Track this backfilled job so next jobs see it as running
                 pessimistic_end = self.current_time + job.duration
                 backfilled_jobs[job.idx] = (self.current_time, pessimistic_end, job.nodes)
+                effective_running[job.idx] = (self.current_time, pessimistic_end,
+                                              pessimistic_end, job.nodes)
+                effective_timeline = None
                 continue
             else:
                 self.log(f"Blocking job {job.idx} (would end {job_end} >= earliest reservation {conservative_window})")

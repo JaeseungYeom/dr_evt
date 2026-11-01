@@ -34,6 +34,7 @@ BENCHMARK_MODE="all"
 HYBRID_RESERVATION_DEPTH=32
 HYBRID_QUEUE_DEPTH=32
 HYBRID_BACKFILL_INTERVAL=0
+WITH_PYTHON_REFERENCE=0
 
 print_usage() {
     echo "Usage: $0 [OPTIONS] [TRACE_FILE]"
@@ -53,6 +54,8 @@ print_usage() {
     echo "                Eligible jobs considered per hybrid pass (default: 32)."
     echo "  --backfill-interval SECONDS"
     echo "                Periodic backfill cadence; 0 keeps event-driven backfill."
+    echo "  --with-python-reference"
+    echo "                Include the slow Python oracle in a periodic run."
     echo "  TRACE_FILE    Path to test trace (default: tests/test_traces/scale/huge_10000jobs.csv)"
     echo ""
     echo "EXAMPLES:"
@@ -97,6 +100,10 @@ while [[ $# -gt 0 ]]; do
             fi
             HYBRID_BACKFILL_INTERVAL="$2"
             shift 2
+            ;;
+        --with-python-reference)
+            WITH_PYTHON_REFERENCE=1
+            shift
             ;;
         -h|--help)
             print_usage
@@ -148,9 +155,14 @@ run_periodic_backfill_benchmark() {
     local deque_time circular_time python_time python_status circular_status
     local cpp_start cpp_end python_start python_end
 
-    if ! select_python_interpreter 3 7; then
-        echo "Error: Python 3.7+ is required for the hybrid reference"
-        return 1
+    # A periodic benchmark measures the C++ implementation by default.  The
+    # Python oracle is deliberately opt-in because repeated reference passes
+    # over a long trace can take impractically long.
+    if [[ "$HYBRID_BACKFILL_INTERVAL" == "0" || "$WITH_PYTHON_REFERENCE" == "1" ]]; then
+        if ! select_python_interpreter 3 7; then
+            echo "Error: Python 3.7+ is required for the requested reference run"
+            return 1
+        fi
     fi
     if ! outdir=$(mktemp -d "${TMPDIR:-/tmp}/dr-evt-hybrid-benchmark.XXXXXXXX" 2>/dev/null); then
         outdir=$(mktemp -d "/tmp/dr-evt-hybrid-benchmark.XXXXXXXX")
@@ -228,34 +240,40 @@ run_periodic_backfill_benchmark() {
         circular_status="PASS"
     fi
 
-    echo -n "Running Python hybrid reference... "
-    python_start=$(date +%s%N)
-    python_policy_args=()
-    if [[ "$BENCHMARK_MODE" == "hybrid" ]]; then
-        python_policy_args=(--reservation-depth "$HYBRID_RESERVATION_DEPTH")
-    fi
-    if "$PYTHON_BIN" scripts/python_conservative_scheduler.py "$TRACE_FILE" \
-        --nodes "$TOTAL_NODES" --outdir "$python_out_dir" \
-        "${python_policy_args[@]}" \
-        --backfill-queue-depth "$HYBRID_QUEUE_DEPTH" \
-        --backfill-interval "$HYBRID_BACKFILL_INTERVAL" \
-        >"$outdir/python.log" 2>&1; then
-        python_end=$(date +%s%N)
-        python_time=$(elapsed_seconds "$python_start" "$python_end")
-        if [[ -f "$python_out_dir/${trace_name}_conservative_reference.csv" ]] && \
-            "$PYTHON_BIN" tests/compare_scheduler_outputs.py \
-                "$python_out_dir/${trace_name}_conservative_reference.csv" \
-                "$deque_out" --tolerance 0.001 >"$outdir/python_compare.log" 2>&1; then
-            python_status="PASS"
-            echo "done (${python_time}s)"
+    if [[ "$HYBRID_BACKFILL_INTERVAL" != "0" && "$WITH_PYTHON_REFERENCE" != "1" ]]; then
+        python_time="N/A"
+        python_status="SKIP"
+        echo "Skipping Python reference for periodic backfill (use --with-python-reference on a small trace)."
+    else
+        echo -n "Running Python reference... "
+        python_start=$(date +%s%N)
+        python_policy_args=()
+        if [[ "$BENCHMARK_MODE" == "hybrid" ]]; then
+            python_policy_args=(--reservation-depth "$HYBRID_RESERVATION_DEPTH")
+        fi
+        if "$PYTHON_BIN" scripts/python_conservative_scheduler.py "$TRACE_FILE" \
+            --nodes "$TOTAL_NODES" --outdir "$python_out_dir" \
+            "${python_policy_args[@]}" \
+            --backfill-queue-depth "$HYBRID_QUEUE_DEPTH" \
+            --backfill-interval "$HYBRID_BACKFILL_INTERVAL" \
+            >"$outdir/python.log" 2>&1; then
+            python_end=$(date +%s%N)
+            python_time=$(elapsed_seconds "$python_start" "$python_end")
+            if [[ -f "$python_out_dir/${trace_name}_conservative_reference.csv" ]] && \
+                "$PYTHON_BIN" tests/compare_scheduler_outputs.py \
+                    "$python_out_dir/${trace_name}_conservative_reference.csv" \
+                    "$deque_out" --tolerance 0.001 >"$outdir/python_compare.log" 2>&1; then
+                python_status="PASS"
+                echo "done (${python_time}s)"
+            else
+                python_status="FAIL"
+                echo "FAIL (see $outdir/python_compare.log)"
+            fi
         else
             python_status="FAIL"
-            echo "FAIL (see $outdir/python_compare.log)"
+            python_time="N/A"
+            echo "FAIL (see $outdir/python.log)"
         fi
-    else
-        python_time="N/A"
-        python_status="FAIL"
-        echo "FAIL (see $outdir/python.log)"
     fi
 
     echo ""
@@ -275,7 +293,7 @@ run_periodic_backfill_benchmark() {
             "Python ref." "$python_time" "$(echo "scale=2; $python_time / $deque_time" | bc)x" "$python_status"
     fi
 
-    if [[ "$circular_status" != "PASS" || "$python_status" != "PASS" ]]; then
+    if [[ "$circular_status" != "PASS" || ( "$python_status" != "PASS" && "$python_status" != "SKIP" ) ]]; then
         echo "Backfill benchmark correctness comparison failed. Outputs: $outdir"
         return 1
     fi
