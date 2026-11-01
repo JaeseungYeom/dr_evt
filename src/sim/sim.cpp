@@ -367,6 +367,7 @@ BasicSimulation<TraceType>::BasicSimulation(Sim_Params params,
       m_custom_scheduler(static_cast<CustomFCFSScheduler *>(m_scheduler.get())),
       m_current_time(0.0),
       m_next_backfill_evaluation(std::numeric_limits<sim_time_t>::max()),
+      m_periodic_backfill_dirty(true),
       m_job_rejection_capacity(m_params.m_total_nodes),
       m_capacity_changes(load_capacity_schedule(m_params.m_capacity_schedule,
                                                 m_params.m_total_nodes)),
@@ -397,6 +398,7 @@ BasicSimulation<TraceType>::BasicSimulation(
       m_custom_scheduler(static_cast<CustomFCFSScheduler *>(m_scheduler.get())),
       m_current_time(0.0),
       m_next_backfill_evaluation(std::numeric_limits<sim_time_t>::max()),
+      m_periodic_backfill_dirty(true),
       m_job_rejection_capacity(m_params.m_total_nodes),
       m_capacity_changes(load_capacity_schedule(m_params.m_capacity_schedule,
                                                 m_params.m_total_nodes)),
@@ -676,6 +678,8 @@ num_jobs_t BasicSimulation<TraceType>::initialize_trace(num_jobs_t max_jobs) {
   m_warm_resource_area = 0.0;
   m_warm_resource_end = 0.0;
   m_jobs_releasing = 0;
+  m_next_backfill_evaluation = std::numeric_limits<sim_time_t>::max();
+  m_periodic_backfill_dirty = true;
   m_first_appended_job_idx = std::numeric_limits<job_no_t>::max();
   m_appended_job_query_records.clear();
   if (m_custom_scheduler != nullptr) {
@@ -887,6 +891,8 @@ void BasicSimulation<TraceType>::run_progressive() {
     m_warm_resource_area = 0.0;
     m_warm_resource_end = 0.0;
     m_jobs_releasing = 0;
+    m_next_backfill_evaluation = std::numeric_limits<sim_time_t>::max();
+    m_periodic_backfill_dirty = true;
     if (m_custom_scheduler != nullptr) {
       m_custom_scheduler->reset_resource_accounting();
     }
@@ -2503,6 +2509,15 @@ void BasicSimulation<TraceType>::advance_to_impl(
     if (m_next_backfill_evaluation == std::numeric_limits<sim_time_t>::max()) {
       m_next_backfill_evaluation =
           m_current_time + m_params.m_backfill_interval;
+    } else if (m_next_backfill_evaluation < m_current_time) {
+      // Ticks are not consumed while nothing waits, and the clock may have
+      // moved past one at the end of the previous call. Keep the cadence but
+      // never let a tick in the past gate the events below or pull the clock
+      // backward.
+      const auto missed_ticks =
+          std::ceil((m_current_time - m_next_backfill_evaluation) /
+                    m_params.m_backfill_interval);
+      m_next_backfill_evaluation += missed_ticks * m_params.m_backfill_interval;
     }
   }
 
@@ -2543,10 +2558,16 @@ void BasicSimulation<TraceType>::advance_to_impl(
     // Decide which event to process
     bool should_schedule = false;
     bool periodic_evaluation = false;
+    // A periodic tick orders events only while a job is waiting for a
+    // backfill decision; otherwise it must not hold back completions,
+    // arrivals, or capacity changes (an unconsumed tick would otherwise block
+    // every later event and strand running jobs).
+    const sim_time_t next_tick = (periodic_backfill && active_count > 0)
+                                     ? m_next_backfill_evaluation
+                                     : std::numeric_limits<sim_time_t>::max();
 
     if (has_replay_event && next_replay_time <= next_arrival &&
-        next_replay_time <= next_capacity &&
-        next_replay_time <= m_next_backfill_evaluation &&
+        next_replay_time <= next_capacity && next_replay_time <= next_tick &&
         next_replay_time <= target_time) {
       // Process replay events at this time
       // Advance time FIRST
@@ -2647,9 +2668,7 @@ void BasicSimulation<TraceType>::advance_to_impl(
       }
 
     } else if (next_arrival < std::numeric_limits<sim_time_t>::max() &&
-               next_arrival <= next_capacity &&
-               (next_arrival <= m_next_backfill_evaluation ||
-                (periodic_backfill && active_count == 0)) &&
+               next_arrival <= next_capacity && next_arrival <= next_tick &&
                next_arrival <= target_time) {
       // Job arrival - advance time FIRST
       // Note: Check next_arrival < infinity to avoid infinite loop
@@ -2681,8 +2700,7 @@ void BasicSimulation<TraceType>::advance_to_impl(
         m_periodic_backfill_dirty = true;
       }
     } else if (next_capacity < std::numeric_limits<sim_time_t>::max() &&
-               next_capacity <= m_next_backfill_evaluation &&
-               next_capacity <= target_time) {
+               next_capacity <= next_tick && next_capacity <= target_time) {
       m_current_time = next_capacity;
       advance_capacity_accounting_to(m_current_time);
       if constexpr (AccountResources) {
@@ -2698,12 +2716,12 @@ void BasicSimulation<TraceType>::advance_to_impl(
       if constexpr (PeriodicBackfill) {
         m_periodic_backfill_dirty = true;
       }
-    } else if (periodic_backfill && active_count > 0 &&
-               m_next_backfill_evaluation <= target_time &&
+    } else if (next_tick <= target_time &&
                (!m_trace.pending_events().empty() ||
                 next_arrival < std::numeric_limits<sim_time_t>::max() ||
                 next_capacity <= target_time)) {
-      m_current_time = m_next_backfill_evaluation;
+      // next_tick is finite only in periodic mode with a waiting job.
+      m_current_time = next_tick;
       advance_capacity_accounting_to(m_current_time);
       if constexpr (AccountResources) {
         custom_scheduler->advance_resource_accounting_to(m_current_time);
@@ -2727,10 +2745,13 @@ void BasicSimulation<TraceType>::advance_to_impl(
     // An ordinary event wins the event-selection tie at an exact periodic
     // timestamp.  It still needs the periodic backfill pass after its FCFS
     // dispatch; otherwise that tick is silently skipped and differs from the
-    // Python reference's same-time event ordering.
+    // Python reference's same-time event ordering.  Only an exact match
+    // counts: a tick that passed unconsumed while nothing was waiting must
+    // not turn the next ordinary event into a backfill pass; the catch-up at
+    // the end of the iteration moves it to the next tick instead.
     if constexpr (PeriodicBackfill) {
       if (!periodic_evaluation &&
-          m_next_backfill_evaluation <= m_current_time) {
+          m_next_backfill_evaluation == m_current_time) {
         periodic_evaluation = true;
         m_next_backfill_evaluation += m_params.m_backfill_interval;
       }
