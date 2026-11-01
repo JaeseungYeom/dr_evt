@@ -8,7 +8,10 @@ backfilling studies: when scheduling decisions are evaluated, how the
 backfill test window is formed, how many jobs hold reservations, and what the
 scheduler knows about run times. The policies themselves are defined in
 [Scheduling Policies](../BACKFILLING_ALGORITHMS.md); the execution pipeline in
-[Simulation Pipeline and Job Lifecycle](JOB_LIFECYCLE.md).
+[Simulation Pipeline and Job Lifecycle](JOB_LIFECYCLE.md). For the complete
+option reference, see [Command-Line Options](../user-guide/command-line.md),
+especially its [Scheduling Policies](../user-guide/command-line.md#scheduling-policies)
+and [Simulation Mode Options](../user-guide/command-line.md#simulation-mode-options).
 
 The node release delay (nodes staying unavailable after a job ends) closes
 one of these gaps; it is off by default and documented under
@@ -29,8 +32,10 @@ The statements below describe the code, not an idealization of it.
   floating-point seconds. By default, reservations and backfill completion
   tests use exact planning times.
   [`--backfill_time_resolution SECONDS`](../user-guide/command-line.md#--backfill_time_resolution-seconds)
-  rounds each enqueued job's time limit up to that grid for scheduling and
-  reservations only; it does not round the clock or change actual execution.
+  is a historically named planning-resolution option: it rounds each enqueued
+  job's time limit up to that grid for every scheduling policy. It affects
+  projected releases, reservations, and backfill tests, but does not round the
+  clock or change actual execution.
 - **Queue depth.** Built-in hybrid and conservative backfill scan every
   eligible waiting job by default;
   [`--backfill_queue_depth`](../user-guide/command-line.md#--backfill_queue_depth-n)
@@ -204,10 +209,12 @@ positive interval keeps event-driven FCFS dispatch but runs backfill only at
 periodic ticks.
 
 Use `--backfill_time_resolution SECONDS` to apply the last column without
-changing simulated execution. It rounds each time limit used for scheduling up
-once when the job is enqueued; `0` retains exact planning. Thus a 61-second
-limit becomes 120 seconds with Slurm's 60-second grid and remains 61 seconds
-with Flux's 1-second grid. For a Fluxion comparison, set
+changing simulated execution. It rounds each time limit supplied to the
+scheduler once when the job is enqueued; `0` retains exact planning. It is
+applied under every policy, but affects FCFS only where projected releases are
+used—immediate FCFS dispatch remains based on currently free nodes. Thus a
+61-second limit becomes 120 seconds with Slurm's 60-second grid and remains
+61 seconds with Flux's 1-second grid. For a Fluxion comparison, set
 `--backfill_time_resolution 1`; this matches its one-second planning grid but
 does not quantize DR_EVT's clock or actual job execution.
 
@@ -223,6 +230,12 @@ DR_EVT controls relevant to the comparison are:
 - [Backfill policy](../user-guide/command-line.md#-b---backfill_policy-policy),
   [`--reservation_depth`](../user-guide/command-line.md#--reservation_depth-n),
   and [`--backfill_queue_depth`](../user-guide/command-line.md#--backfill_queue_depth-n)
+- [`--backfill_interval`](../user-guide/command-line.md#--backfill_interval-seconds)
+  and
+  [`--backfill_time_resolution`](../user-guide/command-line.md#--backfill_time_resolution-seconds)
+- [`--node_release_delay`](../user-guide/command-line.md#--node_release_delay-seconds)
+  and its
+  [per-node delay model](../user-guide/command-line.md#--node_release_delay_model-model)
 - [Run-time mode and related options](../user-guide/command-line.md#simulation-mode-options),
   plus [trace time fields](../user-guide/trace-formats.md#simple-format-columns)
 - [`--total_nodes`](../user-guide/command-line.md#-n---total_nodes-count),
@@ -277,16 +290,19 @@ to the degree that
 Each of the following is a contained change if a study needs it:
 
 - **Reservation horizon.** Planning resolution is already configurable with
-  `--backfill_time_resolution`; a reservation horizon remains unavailable.
+  [`--backfill_time_resolution`](../user-guide/command-line.md#--backfill_time_resolution-seconds);
+  a reservation horizon remains unavailable.
 - **Priority hooks.** The experimental external selector already lets a
   caller rank backfill candidates by an arbitrary cost; extending the same
   callback to queue ordering would allow multifactor priority experiments
   without changing the built-in policies.
-- **Node release delay.** Available: `--node_release_delay` with the
-  `constant`, `exponential`, and `uniform` per-node models. Calibration needs
-  a measurement of the real cleanup time; Flux records it per job as
-  `t_inactive - t_cleanup`, and a replay trace bounds it from above by the gap
-  before free nodes are next needed.
+- **Node release delay.** Available:
+  [`--node_release_delay`](../user-guide/command-line.md#--node_release_delay-seconds)
+  with [the `constant`, `exponential`, and `uniform` per-node
+  models](../user-guide/command-line.md#--node_release_delay_model-model).
+  Calibration needs a measurement of the real cleanup time; Flux records it
+  per job as `t_inactive - t_cleanup`, and a replay trace bounds it from above
+  by the gap before free nodes are next needed.
 
 ## Sources
 
