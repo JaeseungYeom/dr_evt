@@ -277,13 +277,15 @@ run_periodic_backfill_benchmark() {
     fi
 
     echo ""
-    echo "Implementation | Time (s) | vs deque | Correctness"
-    echo "---------------|----------|----------|------------"
     if [[ "$HYBRID_BACKFILL_INTERVAL" == "0" ]]; then
+        echo "Implementation | Time (s) | vs deque | Correctness"
+        echo "---------------|----------|----------|------------"
         printf "%-14s | %-8s | %-8s | %-11s\n" "deque" "$deque_time" "1.00x" "baseline"
         printf "%-14s | %-8s | %-8s | %-11s\n" \
             "circular" "$circular_time" "$(echo "scale=2; $circular_time / $deque_time" | bc)x" "$circular_status"
     else
+        echo "Implementation | Time (s) | vs circular | Correctness"
+        echo "---------------|----------|-------------|------------"
         printf "%-14s | %-8s | %-8s | %-11s\n" "circular" "$circular_time" "1.00x" "baseline"
     fi
     if [[ "$python_time" == "N/A" ]]; then

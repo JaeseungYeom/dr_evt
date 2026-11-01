@@ -91,6 +91,22 @@ standard deviation.
 | **`circular`** | **0.1821 ± 0.0005** | **0.97×** | **−3%** | **PASS** |
 | Python reference | 6.0346 ± 0.0155 | 32.08× | +3,108% | PASS |
 
+### Periodic hybrid backfill result
+
+Ten end-to-end runs of `huge_10000jobs.csv` with 500 nodes,
+`run_time_mode=limit`, a 30-second backfill interval, reservation depth 32,
+and queue depth 500 measured the periodic circular scheduler at **0.0111 ±
+0.0019 s** (range 0.010–0.016 s).
+
+This is a circular-only measurement: periodic scheduling has no deque variant,
+and the Python oracle was skipped. It is therefore not a queue-to-queue speedup
+or an additional differential-correctness result.
+
+| Implementation | Time (s) | vs circular | Correctness |
+| --- | ---: | ---: | --- |
+| `circular` | 0.0111 ± 0.0019 | 1.00× | periodic scheduler only |
+| Python reference | N/A | N/A | skipped |
+
 Reproduce the current benchmark modes with:
 
 ```bash
@@ -113,7 +129,7 @@ tests/benchmark_wait_queues.sh --backfill-policy hybrid \
 tests/benchmark_wait_queues.sh --backfill-policy hybrid \
   --backfill-interval 30 \
   --reservation-depth 32 \
-  --backfill-queue-depth 32 \
+  --backfill-queue-depth 500 \
   tests/test_traces/scale/huge_10000jobs.csv
 
 # Optional periodic Python differential check on a smaller trace. It can
