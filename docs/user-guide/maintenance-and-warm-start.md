@@ -37,6 +37,14 @@ simulator warm_start.csv \
   --capacity_schedule capacity.csv
 ```
 
+Reservations anticipate the schedule. A projected release timeline merges
+running-job releases with the scheduled changes still ahead, so a waiting job
+that fits only after an increase is reserved at that increase, a reduction
+before a projected release pushes the reservation later, and a backfill
+candidate is tested against that reservation. A waiting job that no release
+or scheduled change can ever satisfy holds no reservation and does not block
+backfill behind it. The reported FCFS-head shadow time is `-1` in that case.
+
 Capacity reductions are non-preemptive. Existing jobs retain their nodes and
 finish normally; no new job starts until it fits within current capacity. The
 resource trace reports zero free nodes while a reduction leaves the system

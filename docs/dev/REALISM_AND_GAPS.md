@@ -70,7 +70,9 @@ Each item describes the code on this branch.
   One pool of identical nodes
   ([`--total_nodes`](../user-guide/command-line.md#-n---total_nodes-count)),
   optionally varied over time with
-  [`--capacity_schedule`](../user-guide/command-line.md#--capacity_schedule-filename).
+  [`--capacity_schedule`](../user-guide/command-line.md#--capacity_schedule-filename);
+  reservations merge the scheduled changes ahead with running-job releases,
+  so a maintenance reduction is visible to backfill as it is in production.
   The experimental [multi-system scheduler](../user-guide/multi-cluster-backfill.md)
   shares one FCFS queue across several homogeneous systems.
 
@@ -150,7 +152,6 @@ the target system's cleanup time where node reuse matters.
 | Planning grid and horizon | Exact and unlimited by default | Slurm grids planned times and bounds the window; Fluxion plans in whole seconds. Both options reproduce them; event-driven mode has no horizon. |
 | Scan and reservation depth | Unlimited scan by default | Slurm and Fluxion cap both. Matching depths removes the difference. |
 | Node reuse | Immediate by default | Production nodes return after cleanup. `--node_release_delay` removes the optimism only to the degree it is calibrated. |
-| Scheduled capacity changes | Applied when they occur | Reservations are projected from running jobs only and do not anticipate a scheduled capacity drop, so backfill near a drop can be optimistic. Production maintenance reservations are visible to backfill. |
 | Eligible time | Submission time | Held or dependent jobs in a real trace become eligible later than they were submitted. Their simulated wait is counted from submission, which overstates it relative to the production record. |
 | Warm start | Empty wait queue at the boundary | Jobs waiting before `--sim_start_time` are excluded, so decisions right after the boundary are optimistic until arrivals rebuild the queue. |
 | Resources and priority | One homogeneous pool, FCFS/SJF/LJF | Partitions, topology, and priority plugins are out of scope. |
@@ -158,7 +159,7 @@ the target system's cleanup time where node reuse matters.
 With default settings the first four rows compound in one direction: DR_EVT's
 backfilling is an upper bound on what a production scheduler can extract from
 the same workload. Matching interval, grid, horizon, and depths narrows the
-gap to the last four rows.
+gap to the last three rows.
 
 ## Validation evidence
 

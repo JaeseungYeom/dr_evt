@@ -101,7 +101,7 @@ server; no pre-existing Redis service is used.
 | Job store | 6 | `run_job_store_tests.sh` | Capacity, growth/abort, reclamation, and statistics |
 | Redis output | 1 integration runner | `run_redis_tests.sh` | Isolated server startup, CSV/hash output, time/resource indexes, namespace replacement, finalized-versus-unfinished visibility, pipelined bulk lookup, and byte-identical job and resource outputs for Redis/file runs of 200 jobs. Redis coverage runs with and without Ser20; the checkpoint portion runs only in the Ser20-enabled configuration. |
 | Redis gRPC example | 1 integration runner | `run_redis_grpc_client_test.sh` | Batch append, advance, pipelined finalized-job lookup, one server fallback query, and original-order merged reporting |
-| Append-job | 27 | `run_append_job_tests.sh` | 23 in-process C++ checks plus 4 optional gRPC checks, including integral streaming-limit validation, known actual runtimes, capacity-aware instantaneous/aggregate utilization, warm start, and validation |
+| Append-job | 32 | `run_append_job_tests.sh` | 28 in-process C++ checks plus 4 optional gRPC checks, including integral streaming-limit validation, known actual runtimes, capacity-aware instantaneous/aggregate utilization and reservations, periodic backfill, warm start, and validation |
 | Checkpoint/restart | 7 groups | CTest (`test_checkpoint_restart`) and `run_redis_tests.sh` | Exact scheduler continuation plus byte-identical file, progressive-loading, and Redis job/resource output after archive-and-stitch recovery. |
 | Progressive loading | 18 | `run_progressive_load_tests.sh` | 12 C++ checks plus 6 CLI checks for multi-file loading, bounded storage, block-queue integration, periodic backfill across file boundaries, and memory checks |
 | Protobuf configuration | 14 | `run_configs_tests.sh` | Configuration/CLI parity, capacity/simulation-start-time validation, and documented examples |
@@ -119,6 +119,11 @@ server; no pre-existing Redis service is used.
 | Periodic backfill | 34 × 2 policies × 2 intervals differential + 2 option checks | CTest (`test_periodic_backfill_reference`) | The 34 scheduler-correctness workloads under hybrid (depth 1) and conservative backfill with 7 s and 30 s ticks against the Python conservative reference, comparing schedules and settled resource traces; plus zero-interval identity and rejected values |
 | SWF input | 8 CLI cases | `run_swf_tests.sh` (CTest `test_swf`) | Standard Workload Format parsing: equivalence with simple-format CSV, header-derived and overridden cores-per-node, MaxNodes as the default machine size, skipped records, malformed lines, and option consistency |
 | Native CTest | 21 native, 2 Python, plus 2 with MPI | CTest | RNG and binary serialization, exact checkpoint/restart, trace policies, replay reclamation, custom scheduling, append/streaming APIs, maximum-time and warm-start coverage, node release delay, capacity parsing, queue implementations, CLI dispatch, command-line input selection, and SWF input; CTest also registers the Python trace-tools and multi-cluster dispatch tests, and the MPI streaming and MPI dispatch tests when MPI is available |
+
+The Python reference schedulers have no capacity schedule, so the
+capacity-aware reservations behind `--capacity_schedule` are covered by the
+native append-job, warm-start, and feature tests rather than by a differential
+comparison.
 
 The gRPC portion of the append-job runner is skipped when gRPC support was not
 built. The backfill-window runner executes the same four-check gRPC test binary

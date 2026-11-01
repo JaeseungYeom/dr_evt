@@ -10,12 +10,13 @@
 
 #include "common.hpp"
 #include "params/sim_params.hpp"
+#include "sim/capacity_schedule.hpp"
 #include "sim/scheduler_policies.hpp"
 #include "trace/job_record.hpp"
 #include "trace/trace.hpp"
+#include <limits>
 #include <map>
 #include <memory>
-#include <limits>
 #include <optional>
 #include <vector>
 
@@ -57,6 +58,15 @@ protected:
   sim_time_t m_fcfs_reservation_time;
   /// Grid used to round projected release timestamps; zero is exact.
   tdiff_t m_planning_time_resolution = 0.0;
+  /// Scheduled capacity the projections start from (see set_capacity_outlook).
+  num_nodes_t m_outlook_capacity = 0;
+  /// Nodes allocated or releasing when the outlook was published; above
+  /// m_outlook_capacity the system is overcommitted after a reduction.
+  num_nodes_t m_outlook_occupied = 0;
+  /// First scheduled capacity change not yet applied, or null when none.
+  const Capacity_Change *m_outlook_changes_begin = nullptr;
+  /// One past the last scheduled capacity change.
+  const Capacity_Change *m_outlook_changes_end = nullptr;
 
 public:
   /**
@@ -258,18 +268,49 @@ protected:
   }
 
   /**
+   * @brief Publish the scheduled capacity outlook used by reservations.
+   * @details
+   * The simulation calls this before every scheduling pass. Projections
+   * start from the current scheduled capacity and the nodes occupied now,
+   * and apply the scheduled changes in [begin, end) in time order as signed
+   * deltas alongside running-job releases. The range must stay valid until
+   * the next call; it is not copied.
+   * @param[in] current_capacity Scheduled capacity in effect now.
+   * @param[in] occupied_nodes Nodes allocated or releasing now.
+   * @param[in] begin First scheduled change not yet applied.
+   * @param[in] end One past the last scheduled change.
+   */
+  void set_capacity_outlook(num_nodes_t current_capacity,
+                            num_nodes_t occupied_nodes,
+                            const Capacity_Change *begin,
+                            const Capacity_Change *end) {
+    m_outlook_capacity = current_capacity;
+    m_outlook_occupied = occupied_nodes;
+    m_outlook_changes_begin = begin;
+    m_outlook_changes_end = end;
+  }
+
+  /**
    * @brief Project when the first FCFS job can obtain its requested nodes.
    * @details
-   * Starts with currently free nodes and applies estimated release times
-   * for running jobs until the FCFS head's request can be satisfied. The
-   * result is used both for the head reservation and to decide whether a
-   * backfill candidate can run without delaying that reservation.
+   * Starts with currently free nodes and walks a timeline of projected
+   * running-job releases merged with the scheduled capacity changes
+   * published by set_capacity_outlook(): a release adds its nodes, a
+   * capacity reduction subtracts, an increase adds. Events sharing a
+   * timestamp are netted before the request is tested, as the simulation
+   * applies them before scheduling at that time. While the system is
+   * overcommitted after a reduction, the walk starts from the negative
+   * slack rather than from zero free nodes. The result is used both for the
+   * head reservation and to decide whether a backfill candidate can run
+   * without delaying that reservation.
    * @param[in] nodes_needed Nodes requested by that job.
    * @param[in] free_nodes Nodes available at current_time.
    * @param[in] running_jobs Active jobs with the metadata needed to project
    * release times.
    * @param[in] current_time Time from which to project releases.
-   * @return Earliest projected start time for the FCFS head, in sim_time_t.
+   * @return Earliest projected start time for the FCFS head, in sim_time_t,
+   * or the maximum sim_time_t when no release or scheduled change known to
+   * the outlook ever satisfies the request.
    */
   sim_time_t calculate_fcfs_reservation(num_nodes_t nodes_needed,
                                         num_nodes_t free_nodes,
