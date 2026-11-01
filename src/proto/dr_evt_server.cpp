@@ -204,6 +204,18 @@ public:
                 "sim_start_time must be finite and nonnegative");
           }
           sp.m_sim_start_time = r.sim_start_time();
+          if (r.warm_start_wait_queue().empty() ||
+              r.warm_start_wait_queue() == "inherit") {
+            sp.m_warm_start_wait_queue =
+                dr_evt::WarmStartWaitQueuePolicy::INHERIT;
+          } else if (r.warm_start_wait_queue() == "drop") {
+            sp.m_warm_start_wait_queue =
+                dr_evt::WarmStartWaitQueuePolicy::DROP;
+          } else {
+            throw std::runtime_error(
+                "Unknown warm_start_wait_queue: " +
+                r.warm_start_wait_queue());
+          }
           sp.m_redis_uri = r.redis_uri();
           sp.m_redis_key_prefix = r.redis_key_prefix();
           sp.m_job_flush_interval = r.job_flush_interval();

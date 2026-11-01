@@ -183,7 +183,7 @@ modeling Fluxion's external resource-status notification path.
 | Scan and reservation depth | Unlimited scan by default | Slurm and Fluxion cap both. Matching depths removes the difference. |
 | Node reuse | Immediate by default | Production nodes return after cleanup. `--node_release_delay` removes the optimism only to the degree it is calibrated. |
 | Eligible time | Submission time | Held or dependent jobs in a real trace become eligible later than they were submitted. Their simulated wait is counted from submission, which overstates it relative to the production record. |
-| Warm start | Empty wait queue at the boundary | Jobs waiting before `--sim_start_time` are excluded, so decisions right after the boundary are optimistic until arrivals rebuild the queue. |
+| Warm start | Inherited waiting queue | Jobs waiting before `--sim_start_time` are reconstructed by default; historical reservation state is not, so the first conservative or hybrid backfill decision can differ. `--warm_start_wait_queue drop` retains the legacy omission behavior. |
 | Resources and priority | One homogeneous pool, FCFS/SJF/LJF | Partitions, topology, and priority plugins are out of scope. |
 
 With default settings several rows can make DR_EVT backfilling more optimistic

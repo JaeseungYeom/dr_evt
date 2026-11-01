@@ -106,6 +106,10 @@ message DR_EVT_Params {
         // warm start; replay jobs already running at the boundary seed resources.
         double sim_start_time = 31;
 
+        // "inherit" (default) reconstructs jobs waiting at a replay warm
+        // boundary; "drop" preserves the legacy omission behavior.
+        string warm_start_wait_queue = 45;
+
         // When both are nonempty, write simulated-job and resource-history
         // output to Redis instead of outfile/resource_trace. Requires
         // DR_EVT_WITH_REDIS=ON.

@@ -44,6 +44,7 @@ static constexpr int OPT_BACKFILL_QUEUE_DEPTH = 1014;
 static constexpr int OPT_BACKFILL_INTERVAL = 1015;
 static constexpr int OPT_PLANNING_TIME_RESOLUTION = 1016;
 static constexpr int OPT_PLANNING_HORIZON = 1017;
+static constexpr int OPT_WARM_START_WAIT_QUEUE = 1018;
 static constexpr int OPT_NODE_RELEASE_DELAY = 1011;
 static constexpr int OPT_NODE_RELEASE_DELAY_MODEL = 1012;
 static constexpr int OPT_NODE_RELEASE_DELAY_SPREAD = 1013;
@@ -59,6 +60,8 @@ static const struct option sim_longopts[] = {
     {"total_nodes", required_argument, 0, 'n'},
     {"capacity_schedule", required_argument, 0, OPT_CAPACITY_SCHEDULE},
     {"sim_start_time", required_argument, 0, OPT_SIM_START_TIME},
+    {"warm_start_wait_queue", required_argument, 0,
+     OPT_WARM_START_WAIT_QUEUE},
     {"outfile", required_argument, 0, 'o'},
     {"seed", required_argument, 0, 's'},
     {"max_time", required_argument, 0, 't'},
@@ -114,6 +117,7 @@ Sim_Params::Sim_Params()
       m_backfill_queue_depth(0), m_backfill_interval(0.0),
       m_planning_time_resolution(0.0),
       m_planning_horizon(std::numeric_limits<tdiff_t>::max()),
+      m_warm_start_wait_queue(WarmStartWaitQueuePolicy::INHERIT),
       m_priority_policy(PriorityPolicy::FCFS),
       m_queue_impl(QueueImplementation::CIRCULAR), m_block_size(128),
       m_wait_queue_capacity(0), // 0 = size of job trace (never overflows)
@@ -241,6 +245,17 @@ void Sim_Params::getopt(int &argc, char **&argv) {
     case OPT_SIM_START_TIME: /* --sim_start_time */
       // Parse after all options so --timezone is order-independent.
       sim_start_time_arg = optarg;
+      break;
+    case OPT_WARM_START_WAIT_QUEUE: /* --warm_start_wait_queue */
+      if (std::string(optarg) == "inherit") {
+        m_warm_start_wait_queue = WarmStartWaitQueuePolicy::INHERIT;
+      } else if (std::string(optarg) == "drop") {
+        m_warm_start_wait_queue = WarmStartWaitQueuePolicy::DROP;
+      } else {
+        std::cerr << "Unknown warm_start_wait_queue policy: " << optarg
+                  << " (expected inherit or drop)" << std::endl;
+        print_usage(argv[0], 1);
+      }
       break;
     case 'o': /* --outfile */
       m_outfile = std::string(optarg);
@@ -802,6 +817,11 @@ void Sim_Params::print_usage(const std::string exec, int code) {
          "        without entering output or job statistics. Their remaining\n"
          "        departures still release resources normally.\n"
          "\n"
+         "    --warm_start_wait_queue {inherit|drop}\n"
+         "        For replay warm starts, inherit (default) reconstructs jobs\n"
+         "        waiting at TIME with their original submit times; drop keeps\n"
+         "        the legacy behavior of omitting them.\n"
+         "\n"
          "    -o, --outfile\n"
          "        Specify the output file name for simulation.\n"
          "\n"
@@ -1103,6 +1123,11 @@ void Sim_Params::print() const {
   msg += " - max_jobs: " + to_string(m_max_jobs) + "\n";
   msg += " - max_time: " + to_string(m_max_time) + "\n";
   msg += " - sim_start_time: " + to_string(m_sim_start_time) + "\n";
+  msg += " - warm_start_wait_queue: " +
+         std::string(m_warm_start_wait_queue == WarmStartWaitQueuePolicy::INHERIT
+                         ? "inherit"
+                         : "drop") +
+         "\n";
   msg += " - infile: " + m_infile + "\n";
   msg += " - outfile: " + m_outfile + "\n";
   msg += " - redis_uri: " + m_redis_uri + "\n";

@@ -124,7 +124,10 @@ run_trace(const std::string &trace, double sim_start_time, unsigned total_nodes,
           RunTimeMode run_time_mode = RunTimeMode::ACTUAL,
           DistributionType run_time_distribution = DistributionType::NORMAL,
           double run_time_scale = 1.0, double run_time_stddev = 0.0,
-          double max_time = -1.0, double backfill_interval = 0.0) {
+          double max_time = -1.0, double backfill_interval = 0.0,
+          WarmStartWaitQueuePolicy warm_start_wait_queue =
+              WarmStartWaitQueuePolicy::DROP,
+          size_t reservation_depth = 0) {
   const std::string stem = "run_" + std::to_string(run_number++);
   const auto trace_path = work_dir / (stem + ".csv");
   const auto job_path = work_dir / (stem + ".jobs.csv");
@@ -149,6 +152,8 @@ run_trace(const std::string &trace, double sim_start_time, unsigned total_nodes,
   params.m_backfill_policy = backfill;
   params.m_queue_impl = queue;
   params.m_backfill_interval = backfill_interval;
+  params.m_warm_start_wait_queue = warm_start_wait_queue;
+  params.m_reservation_depth = reservation_depth;
   params.m_block_size = 4;
   params.m_job_flush_interval = 100000;
   params.m_resource_history_capacity = 100000;
@@ -184,35 +189,45 @@ void test_boundary_classification_and_statistics() {
       "1,2,10,3,0,8\n"    // departure exactly at t
       "2,4,15,2,0,11\n"   // active seed, simultaneous departure
       "3,5,15,3,0,10\n"   // active seed, simultaneous departure
-      "4,12,14,1,0,2\n"   // inherited waiter: excluded
-      "9,10,11,1,0,1\n"   // inherited waiter beginning at t: excluded
+      "4,12,14,1,0,2\n"   // inherited waiter
+      "9,10,11,1,0,1\n"   // inherited waiter beginning at t
       "10,10,14,4,0,4\n"  // boundary arrival: admitted
       "11,12,14,5,0,2\n"; // future arrival: rescheduled
 
-  const auto result = run_trace(trace, 10.0, 10);
-  assert(result.jobs.size() == 2);
-  expect_job(result.jobs[0], 10.0, 10.0, 14.0, 4);
-  expect_job(result.jobs[1], 11.0, 14.0, 16.0, 5);
+  // Legacy compatibility leaves the two inherited rows out of the queue.
+  const auto dropped = run_trace(trace, 10.0, 10);
+  assert(dropped.jobs.size() == 2);
+
+  const auto result = run_trace(
+      trace, 10.0, 10, PriorityPolicy::FCFS, BackfillPolicy::EASY,
+      QueueImplementation::CIRCULAR, {}, RunTimeMode::ACTUAL,
+      DistributionType::NORMAL, 1.0, 0.0, -1.0, 0.0,
+      WarmStartWaitQueuePolicy::INHERIT);
+  assert(result.jobs.size() == 4);
+  expect_job(result.jobs[0], 4.0, 10.0, 12.0, 1);
+  expect_job(result.jobs[1], 9.0, 10.0, 11.0, 1);
+  expect_job(result.jobs[2], 10.0, 11.0, 15.0, 4);
+  expect_job(result.jobs[3], 11.0, 15.0, 17.0, 5);
 
   const auto &stats = result.stats;
-  assert(stats.jobs_submitted == 2);
-  assert(stats.jobs_completed == 2);
+  assert(stats.jobs_submitted == 4);
+  assert(stats.jobs_completed == 4);
   assert(stats.jobs_running == 0);
   assert(stats.jobs_waiting == 0);
-  expect_close(stats.current_time, 16.0);
+  expect_close(stats.current_time, 17.0);
   assert(stats.total_nodes == 10);
   assert(stats.nodes_in_use == 0);
   assert(stats.nodes_available == 10);
-  expect_close(stats.resource_area, 51.0);
-  expect_close(stats.utilization, 0.85);
-  expect_close(stats.avg_wait_time, 1.5);
-  expect_close(stats.avg_run_time, 3.0);
-  expect_close(stats.avg_turnaround_time, 4.5);
+  expect_close(stats.resource_area, 54.0);
+  expect_close(stats.utilization, 54.0 / 70.0);
+  expect_close(stats.avg_wait_time, 3.0);
+  expect_close(stats.avg_run_time, 2.25);
+  expect_close(stats.avg_turnaround_time, 5.25);
   expect_close(stats.avg_bounded_slowdown, 1.0);
-  expect_close(stats.makespan, 16.0);
+  expect_close(stats.makespan, 17.0);
 
   const std::map<double, unsigned> expected = {
-      {10.0, 9}, {14.0, 10}, {15.0, 5}, {16.0, 0}};
+      {10.0, 7}, {11.0, 10}, {12.0, 9}, {15.0, 5}, {17.0, 0}};
   assert(result.settled_resources.size() == expected.size());
   for (const auto &[time, allocated] : expected) {
     assert(result.settled_resources.at(time).allocated == allocated);
@@ -661,6 +676,68 @@ void test_seeded_random_differential() {
   }
 }
 
+/**
+ * A simulation's own output is sufficient to reconstruct the deterministic
+ * scheduler-visible state at a boundary: active jobs become replay seeds and
+ * jobs that have not yet started become inherited waiters. This is deliberately
+ * a no-checkpoint test: it proves the replay warm-start path, not checkpoint
+ * restoration. Random runtime/release models and a non-aligned periodic tick
+ * are intentionally outside this equivalence contract.
+ */
+void test_self_consistent_replay_warm_start() {
+  constexpr double boundary = 10.0;
+  const std::string input =
+      "job_submit_time,num_nodes,time_limit,actual_run_time\n"
+      "0,4,30,30\n"  // seed still running at the boundary
+      "1,4,6,6\n"   // inherited FCFS head
+      "2,1,3,3\n"   // inherited candidate
+      "3,2,5,5\n";  // inherited candidate
+  const std::vector<unsigned> time_limits = {30, 6, 3, 5};
+
+  const auto check = [&](PriorityPolicy priority, BackfillPolicy backfill,
+                         size_t reservation_depth = 0) {
+    const auto cold = run_trace(input, 0.0, 4, priority, backfill,
+                                QueueImplementation::CIRCULAR, {},
+                                RunTimeMode::ACTUAL, DistributionType::NORMAL,
+                                1.0, 0.0, -1.0, 0.0,
+                                WarmStartWaitQueuePolicy::INHERIT,
+                                reservation_depth);
+    assert(cold.jobs.size() == time_limits.size());
+
+    std::ostringstream replay;
+    replay << "job_submit_time,begin_time,end_time,num_nodes,exit_status,"
+              "time_limit\n";
+    for (size_t i = 0; i < cold.jobs.size(); ++i) {
+      const auto &job = cold.jobs[i];
+      replay << job.submit << ',' << job.begin << ',' << job.end << ','
+             << job.nodes << ",0," << time_limits[i] << '\n';
+    }
+
+    const auto warm = run_trace(replay.str(), boundary, 4, priority, backfill,
+                                QueueImplementation::CIRCULAR, {},
+                                RunTimeMode::ACTUAL, DistributionType::NORMAL,
+                                1.0, 0.0, -1.0, 0.0,
+                                WarmStartWaitQueuePolicy::INHERIT,
+                                reservation_depth);
+    std::vector<JobRow> expected;
+    for (const auto &job : cold.jobs) {
+      if (job.begin + kTolerance >= boundary) {
+        expected.push_back(job);
+      }
+    }
+    assert(warm.jobs.size() == expected.size());
+    for (size_t i = 0; i < expected.size(); ++i) {
+      expect_job(warm.jobs[i], expected[i].submit, expected[i].begin,
+                 expected[i].end, expected[i].nodes);
+    }
+  };
+
+  check(PriorityPolicy::FCFS, BackfillPolicy::EASY);
+  check(PriorityPolicy::FCFS_CONSERVATIVE, BackfillPolicy::CONSERVATIVE);
+  check(PriorityPolicy::FCFS_CONSERVATIVE, BackfillPolicy::HYBRID, 3);
+  check(PriorityPolicy::SJF, BackfillPolicy::EASY);
+}
+
 void test_rejected_modes() {
   const auto simulation_path = work_dir / "non_replay.csv";
   write_file(simulation_path, "job_submit_time,num_nodes,time_limit\n0,1,1\n");
@@ -721,6 +798,7 @@ int main() {
     test_every_policy_and_queue();
     test_periodic_backfill();
     test_seeded_random_differential();
+    test_self_consistent_replay_warm_start();
     test_rejected_modes();
   } catch (...) {
     std::filesystem::remove_all(work_dir);

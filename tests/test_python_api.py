@@ -768,21 +768,20 @@ def test_warm_start_batch_mode(result):
         sim.run()
         stats = sim.get_statistics()
 
-        # Only the boundary/future workload is counted. Completed history,
-        # the exact-boundary departure, active seeds, and inherited waiting
-        # work are all absent from job accounting.
-        assert stats.jobs_submitted == 2
-        assert stats.jobs_completed == 2
+        # Completed history, the exact-boundary departure, and active seeds
+        # stay outside job accounting. The pre-boundary waiter is inherited.
+        assert stats.jobs_submitted == 3
+        assert stats.jobs_completed == 3
         assert stats.jobs_running == 0
         assert stats.jobs_waiting == 0
         assert stats.total_nodes == 10
         assert stats.nodes_in_use == 0
         assert stats.nodes_available == 10
-        assert abs(stats.resource_area - 51.0) < 1e-12
-        assert abs(stats.utilization - 0.85) < 1e-12
-        assert abs(stats.avg_wait_time - 1.5) < 1e-12
-        assert abs(stats.avg_run_time - 3.0) < 1e-12
-        assert abs(stats.avg_turnaround_time - 4.5) < 1e-12
+        assert abs(stats.resource_area - 53.0) < 1e-12
+        assert abs(stats.utilization - 53.0 / 60.0) < 1e-12
+        assert abs(stats.avg_wait_time - 3.0) < 1e-12
+        assert abs(stats.avg_run_time - 8.0 / 3.0) < 1e-12
+        assert abs(stats.avg_turnaround_time - 17.0 / 3.0) < 1e-12
         assert abs(stats.avg_bounded_slowdown - 1.0) < 1e-12
         assert abs(stats.makespan - 16.0) < 1e-12
         result.record_pass("Native replay warm start")

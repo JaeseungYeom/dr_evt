@@ -46,6 +46,12 @@ enum class CircularOverflowPolicy {
   GROW   ///< Reallocate a larger queue and retain existing entries.
 };
 
+/** How replay-based warm start handles jobs already waiting at the boundary. */
+enum class WarmStartWaitQueuePolicy {
+  INHERIT, ///< Reconstruct the waiting queue at the boundary (default).
+  DROP     ///< Omit pre-boundary waiting jobs (legacy behavior).
+};
+
 /**
  * @brief Job-trace data model selection.
  */
@@ -86,6 +92,7 @@ private:
     visit("max_jobs", self.m_max_jobs);
     visit("max_time", self.m_max_time);
     visit("sim_start_time", self.m_sim_start_time);
+    visit("warm_start_wait_queue", self.m_warm_start_wait_queue);
     visit("infile", self.m_infile);
     visit("infile_list", self.m_infile_list);
     visit("infile_list_parsed", self.m_infile_list_parsed);
@@ -218,6 +225,8 @@ public:
   /// Reservation look-ahead for backfill planning (Slurm bf_window); the
   /// max value means unlimited.
   tdiff_t m_planning_horizon;
+  /// Whether a replay warm start reconstructs the pre-boundary wait queue.
+  WarmStartWaitQueuePolicy m_warm_start_wait_queue;
   /// Job priority/order policy applied by the scheduler.
   PriorityPolicy m_priority_policy;
   /// Wait-queue implementation used by FCFS scheduling.
