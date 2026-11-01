@@ -3,9 +3,13 @@
 [![Documentation Status](https://readthedocs.org/projects/dr-evt/badge/?version=latest)](https://dr-evt.readthedocs.io/en/latest/?badge=latest)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/LLNL/dr_evt/blob/main/LICENSE)
 
-DR_EVT is a high-performance HPC job scheduler simulator supporting EASY and
-CONSERVATIVE backfilling algorithms. **Uniquely supports online simulation via
-gRPC**, enabling [coordinated multi-cluster simulations](https://dr-evt.readthedocs.io/en/latest/user-guide/client-server-use-cases.html)
+DR_EVT is a high-performance HPC job scheduler simulator supporting EASY,
+hybrid, and conservative backfilling algorithms. Its trigger, queue-depth,
+reservation-depth, and planning-resolution settings can be configured to
+approximate selected production-scheduler behavior; see [Realism and Known
+Gaps](https://dr-evt.readthedocs.io/en/latest/dev/REALISM_AND_GAPS.html) for
+the supported mappings and remaining differences. **Uniquely supports online
+simulation via gRPC**, enabling [coordinated multi-cluster simulations](https://dr-evt.readthedocs.io/en/latest/user-guide/client-server-use-cases.html)
 where distributed schedulers interact in real-time.
 Another use case is the [Fugaku Power-Usage Simulation Experiment](https://dr-evt.readthedocs.io/en/latest/user-guide/fugaku-power-experiment.html).
 
@@ -15,7 +19,7 @@ Another use case is the [Fugaku Power-Usage Simulation Experiment](https://dr-ev
 
 ### Scheduling and traces
 
-- **Scheduling:** FCFS, SJF, and LJF priority policies with EASY,
+- **Scheduling:** FCFS, SJF, and LJF priority policies with EASY, hybrid,
   conservative, or no backfilling.
 - **Execution modes:** scheduler-driven simulation and replay of historical or
   previously generated schedules.

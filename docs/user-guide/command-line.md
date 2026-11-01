@@ -55,6 +55,11 @@ Complete reference for all DR_EVT command-line options for the `simulator` binar
 
 The sections below define accepted values, defaults, and interactions.
 
+For how the scheduling controls (`--backfill_policy`, queue and reservation
+depths, interval, planning resolution, priority, and node-release delay) map
+to production-scheduler behavior, see [Realism and Known
+Gaps](../dev/REALISM_AND_GAPS.md).
+
 ## Basic Usage
 
 ```bash
@@ -263,9 +268,14 @@ event-driven backfill behavior.
 
 ### `--backfill_time_resolution SECONDS`
 
-Rounds each job's `time_limit` up to this grid for backfill planning,
-reservations, and backfill feasibility checks. The simulation clock and the
-job's actual execution duration are unchanged. Set this to match a target
+Despite its historical name, this is DR_EVT's planning-time-resolution option
+for every scheduling policy, not only backfill.
+
+Rounds each job's `time_limit` up to this grid for scheduler planning:
+projected releases, reservations, and backfill feasibility checks. The
+simulation clock and the job's actual execution duration are unchanged. The
+estimate is supplied to every scheduler, but pure FCFS dispatch does not use
+it to decide whether a job can start immediately. Set this to match a target
 scheduler's planning grid—for example, `60` for Slurm's typical
 `bf_resolution`—or leave it at `0` for exact floating-point planning.
 
@@ -792,6 +802,7 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator --help
 - [Protobuf Configuration](protobuf-config.md) - Full `.textproto` schema and worked examples
 - [Streaming API](../api/STREAMING_API.md) - Programmatic C++ API for online simulation
 - [Backfilling Algorithms](../BACKFILLING_ALGORITHMS.md) - EASY and CONSERVATIVE algorithm details
+- [Realism and Known Gaps](../dev/REALISM_AND_GAPS.md) - production-scheduler mappings and remaining differences
 - [Quick Start](../getting-started/quickstart.md) - Quick reference
 - [Testing Guide](../TESTING_GUIDE.md) - Running tests and validation
 - [Test Suite](https://github.com/LLNL/dr_evt/blob/main/tests/README.md#build-and-run) - example usage in test scripts
