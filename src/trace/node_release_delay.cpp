@@ -70,8 +70,7 @@ Node_Release_Delay::Node_Release_Delay()
       m_active(false), m_rng(0u) {}
 
 Node_Release_Delay::Node_Release_Delay(double delay, ReleaseDelayModel model,
-                                       double spread, unsigned seed,
-                                       num_nodes_t max_nodes)
+                                       double spread, unsigned seed)
     : m_delay(delay), m_spread(spread), m_model(model),
       m_active(node_release_delay_requested(delay, model, spread)),
       m_rng(seed) {
@@ -80,44 +79,6 @@ Node_Release_Delay::Node_Release_Delay(double delay, ReleaseDelayModel model,
   // with the bare seed: same seed, same job durations, with or without a
   // release delay. The second word is an arbitrary fixed salt.
   m_rng.use_seed_seq(seed_seq_param_t{seed, 0x6e72646cu});
-  if (m_active && m_model == ReleaseDelayModel::EXPONENTIAL) {
-    // H(0) = 0, H(n) = H(n-1) + 1/n, summed in index order so a reference
-    // implementation accumulating the same way reproduces every value.
-    m_harmonic.resize(static_cast<size_t>(max_nodes) + 1, 0.0);
-    for (size_t n = 1; n < m_harmonic.size(); ++n) {
-      m_harmonic[n] = m_harmonic[n - 1] + 1.0 / static_cast<double>(n);
-    }
-  }
-}
-
-double Node_Release_Delay::harmonic(num_nodes_t n) const {
-  if (n < m_harmonic.size()) {
-    return m_harmonic[n];
-  }
-  double h = m_harmonic.empty() ? 0.0 : m_harmonic.back();
-  for (size_t k = std::max<size_t>(m_harmonic.size(), 1); k <= n; ++k) {
-    h += 1.0 / static_cast<double>(k);
-  }
-  return h;
-}
-
-tdiff_t Node_Release_Delay::planning_delay(num_nodes_t nodes) const {
-  if (!m_active) {
-    return 0.0;
-  }
-  switch (m_model) {
-  case ReleaseDelayModel::EXPONENTIAL:
-    return m_delay * harmonic(nodes);
-  case ReleaseDelayModel::UNIFORM: {
-    const double lo = std::max(0.0, m_delay - m_spread);
-    const double hi = m_delay + m_spread;
-    const double n = static_cast<double>(std::max<num_nodes_t>(nodes, 1u));
-    return lo + (hi - lo) * n / (n + 1.0);
-  }
-  case ReleaseDelayModel::CONSTANT:
-  default:
-    return m_delay;
-  }
 }
 
 tdiff_t Node_Release_Delay::sample(num_nodes_t nodes) {

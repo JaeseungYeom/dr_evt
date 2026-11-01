@@ -517,6 +517,9 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator traces/CTC-SP2-1996-3.1-cln.swf \
     --trace_type swf --cores_per_node 1 --total_nodes 338
 ```
 
+The example file is the CTC SP2 log from the
+[Parallel Workloads Archive](https://www.cs.huji.ac.il/labs/parallel/workload/l_ctc_sp2/); it is not shipped with the repository.
+
 ### `-f, --trace_format FORMAT`
 Input trace format.
 
@@ -660,9 +663,14 @@ ${CMAKE_INSTALL_PREFIX}/bin/simulator traces/jobs.csv \
 Keep a job's nodes unavailable for a while after it ends, modeling cleanup,
 reboot, or health checks, before another job can start on them. All of a
 job's nodes return together once its slowest node is done (block release).
-The scheduler plans with this delay: a running job's projected release is its
-time limit plus the expected delay, and a backfill candidate must release its
-nodes, not merely finish, before the FCFS head's reservation.
+
+The scheduler does not plan with the delay. As in Slurm, Flux, and LSF, a
+running job's projected release is its start time plus its time limit, and a
+backfill candidate is tested on its own projected end; none of those systems
+adds cleanup time to planned releases. A reservation made against a job's
+limit is therefore optimistic by the cleanup time, and the head starts when
+the nodes actually return. Once a job has ended, its nodes are observably in
+cleanup and their projected release is the actual sampled release time.
 
 Releasing nodes are neither free nor allocated. With a delay, the resource
 trace adds a `releasing_nodes` column (see
@@ -693,9 +701,9 @@ How the delay of one job is determined from `--node_release_delay`:
 Under the sampled models the job's delay is the maximum of its nodes' cleanup
 times, so it grows with job size. One draw per job end suffices (the maximum
 of independent exponential or uniform variables has a closed-form inverse
-distribution function). The scheduler plans with the expected maximum for the
-job's node count: `SECONDS * H(nodes)` (the harmonic number) for
-`exponential`, and `lo + (hi - lo) * nodes / (nodes + 1)` for `uniform`.
+distribution function). Its expectation is `SECONDS * H(nodes)` (the harmonic
+number) for `exponential` and `lo + (hi - lo) * nodes / (nodes + 1)` for
+`uniform`; the scheduler does not use it, since planning ignores the delay.
 Samples come from a stream seeded from `--seed` independently of run-time
 sampling, so enabling the delay does not change sampled job durations.
 

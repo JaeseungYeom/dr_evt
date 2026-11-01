@@ -28,8 +28,11 @@ reservation from running jobs sorted by time_limit (raps/schedulers/default.py,
 find_backfill_job), whereas EASY, and dr_evt, use the projected end time
 start + time_limit. When a long-limit job started early and a short-limit job
 started late, RAPS's shadow time is later than the true one and it backfills
-jobs that delay the head. On the CTC SP2 trace this appears from roughly the
-200th job on. A job that dr_evt starts *later* than RAPS is therefore usually
+jobs that delay the head. RAPS also admits a backfill candidate whose limit
+equals the window (<=) where dr_evt requires strictly less. On the CTC SP2
+trace of the Parallel Workloads Archive (https://www.cs.huji.ac.il/labs/parallel/workload/l_ctc_sp2/; not shipped here) this
+appeared from roughly the 200th job on in a manual run at RAPS commit
+3f21cd3. A job that dr_evt starts *later* than RAPS is therefore usually
 RAPS backfilling against its later shadow; check the first such job by hand
 (the report lists them) before treating it as a dr_evt defect. The
 independent EASY oracle in this repository is scripts/python_reference_scheduler.py.

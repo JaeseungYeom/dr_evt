@@ -723,9 +723,7 @@ void BasicSimulation<TraceType>::run_warm_start() {
         // Its departure is fixed historical state, so reservations should
         // use that known end rather than a possibly stale original limit.
         m_running_jobs[job_no] = {
-            begin,
-            planning_run_time(begin, job.get_actual_run_time(),
-                              job.get_num_nodes()),
+            begin, planning_run_time(begin, job.get_actual_run_time()),
             job.get_num_nodes()};
         m_warm_resource_area +=
             static_cast<tdiff_t>(job.get_num_nodes()) * (end - sim_start_time);
@@ -1831,9 +1829,6 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
           m_params.m_wait_queue_capacity, m_params.m_wait_queue_overflow,
           m_params.m_reservation_depth, m_params.m_backfill_queue_depth,
           m_params.m_backfill_interval, m_params.m_planning_horizon);
-      if (m_trace.node_release_delay_active()) {
-        m_scheduler->set_node_release_delay(&m_trace.node_release_delay());
-      }
       m_scheduler->set_planning_time_resolution(
           m_params.m_planning_time_resolution);
       for (const auto job_id : pending_job_ids) {
@@ -2344,9 +2339,7 @@ void BasicSimulation<TraceType>::configure_node_release_delay() {
   }
   m_trace.set_node_release_delay(Node_Release_Delay(
       m_params.m_node_release_delay, m_params.m_node_release_delay_model,
-      m_params.m_node_release_delay_spread, m_params.m_seed,
-      m_params.m_total_nodes));
-  m_scheduler->set_node_release_delay(&m_trace.node_release_delay());
+      m_params.m_node_release_delay_spread, m_params.m_seed));
 }
 
 template <typename TraceType>
@@ -2484,8 +2477,7 @@ void BasicSimulation<TraceType>::advance_to_impl(
         m_running_jobs[job] = {
             m_current_time,
             planning_run_time(m_current_time,
-                              static_cast<tdiff_t>(record.get_limit_time()),
-                              record.get_num_nodes()),
+                              static_cast<tdiff_t>(record.get_limit_time())),
             record.get_num_nodes()};
         m_jobs_started++;
 
@@ -2774,8 +2766,7 @@ void BasicSimulation<TraceType>::advance_to_impl(
           m_running_jobs[job] = {
               m_current_time,
               planning_run_time(m_current_time,
-                                static_cast<tdiff_t>(record.get_limit_time()),
-                                record.get_num_nodes()),
+                                static_cast<tdiff_t>(record.get_limit_time())),
               record.get_num_nodes()};
           m_jobs_started++;
 

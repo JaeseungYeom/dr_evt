@@ -6,8 +6,9 @@
  ******************************************************************************/
 
 /** @file test_node_release_delay.cpp
- * @brief Node release delay: planning values, sampling, streaming behavior,
- * replay and warm-start boundaries, checkpoint continuation, and rejection.
+ * @brief Node release delay: sampling, limit-based planning, streaming
+ * behavior, replay and warm-start boundaries, checkpoint continuation, and
+ * rejection.
  */
 
 #define DR_EVT_HAS_CONFIG 1
@@ -122,49 +123,39 @@ std::filesystem::path header_only_trace() {
 
 // ---------------------------------------------------------------------------
 
-void test_model_planning_and_sampling() {
+void test_model_sampling() {
   // Inactive by default and at a zero constant delay.
   Node_Release_Delay none;
   assert(!none.active());
-  expect_close(none.planning_delay(64), 0.0);
   expect_close(none.sample(64), 0.0);
-  Node_Release_Delay zero(0.0, ReleaseDelayModel::EXPONENTIAL, 0.0, 1, 100);
+  Node_Release_Delay zero(0.0, ReleaseDelayModel::EXPONENTIAL, 0.0, 1);
   assert(!zero.active());
 
-  // Constant: planning and samples equal the delay for every size.
-  Node_Release_Delay constant(30.0, ReleaseDelayModel::CONSTANT, 0.0, 1, 100);
+  // Constant: every sample equals the delay for every size.
+  Node_Release_Delay constant(30.0, ReleaseDelayModel::CONSTANT, 0.0, 1);
   assert(constant.active());
-  expect_close(constant.planning_delay(1), 30.0);
-  expect_close(constant.planning_delay(100), 30.0);
-  expect_close(constant.sample(7), 30.0);
+  expect_close(constant.sample(1), 30.0);
+  expect_close(constant.sample(100), 30.0);
 
-  // Exponential: planning is delay * H(n), accumulated in index order.
-  Node_Release_Delay expo(30.0, ReleaseDelayModel::EXPONENTIAL, 0.0, 1, 100);
-  double harmonic = 0.0;
-  for (unsigned n = 1; n <= 100; ++n) {
-    harmonic += 1.0 / n;
-    expect_close(expo.planning_delay(n), 30.0 * harmonic, 1e-9);
+  // Expected maxima used below: 30 * H(n) for exponential per-node times,
+  // lo + (hi - lo) * n / (n + 1) for uniform ones.
+  double harmonic8 = 0.0;
+  for (unsigned n = 1; n <= 8; ++n) {
+    harmonic8 += 1.0 / n;
   }
-  // Sizes beyond the table fall back to the running sum.
-  for (unsigned n = 101; n <= 120; ++n) {
-    harmonic += 1.0 / n;
-  }
-  expect_close(expo.planning_delay(120), 30.0 * harmonic, 1e-9);
+  const double expected_expo_8 = 30.0 * harmonic8;
+  const double expected_uni_4 = 0.0 + 70.0 * 4.0 / 5.0;
 
-  // Uniform: lo + (hi - lo) * n / (n + 1), floored at zero.
-  Node_Release_Delay uni(30.0, ReleaseDelayModel::UNIFORM, 40.0, 1, 100);
-  expect_close(uni.planning_delay(1), 0.0 + 70.0 * 0.5);
-  expect_close(uni.planning_delay(9), 70.0 * 0.9);
+  Node_Release_Delay uni(30.0, ReleaseDelayModel::UNIFORM, 40.0, 1);
   // A zero center with a positive spread still delays.
-  assert(
-      Node_Release_Delay(0.0, ReleaseDelayModel::UNIFORM, 5.0, 1, 10).active());
+  assert(Node_Release_Delay(0.0, ReleaseDelayModel::UNIFORM, 5.0, 1).active());
 
   // Samples: nonnegative, within the uniform bounds, deterministic per seed,
-  // independent of seed-equal streams only through the seed, and with a mean
-  // close to the planning value (max of n draws).
-  Node_Release_Delay a(30.0, ReleaseDelayModel::EXPONENTIAL, 0.0, 42, 100);
-  Node_Release_Delay b(30.0, ReleaseDelayModel::EXPONENTIAL, 0.0, 42, 100);
-  Node_Release_Delay c(30.0, ReleaseDelayModel::EXPONENTIAL, 0.0, 43, 100);
+  // different across seeds, and with a mean close to the expected maximum of
+  // n draws.
+  Node_Release_Delay a(30.0, ReleaseDelayModel::EXPONENTIAL, 0.0, 42);
+  Node_Release_Delay b(30.0, ReleaseDelayModel::EXPONENTIAL, 0.0, 42);
+  Node_Release_Delay c(30.0, ReleaseDelayModel::EXPONENTIAL, 0.0, 43);
   double sum_a = 0.0;
   bool differs_from_c = false;
   constexpr int draws = 40000;
@@ -180,7 +171,7 @@ void test_model_planning_and_sampling() {
   assert(differs_from_c);
   // E[max of 8 Exp(30)] = 30 * H(8) ~ 81.5; the sample mean's standard
   // error is about 0.2 at this draw count.
-  expect_close(sum_a / draws, expo.planning_delay(8), 1.5);
+  expect_close(sum_a / draws, expected_expo_8, 1.5);
 
   double sum_u = 0.0;
   for (int i = 0; i < draws; ++i) {
@@ -188,23 +179,25 @@ void test_model_planning_and_sampling() {
     assert(s >= 0.0 && s <= 70.0);
     sum_u += s;
   }
-  expect_close(sum_u / draws, uni.planning_delay(4), 1.0);
+  expect_close(sum_u / draws, expected_uni_4, 1.0);
 
   // Validation.
   bool rejected = false;
   try {
-    Node_Release_Delay bad(-1.0, ReleaseDelayModel::CONSTANT, 0.0, 1, 10);
+    Node_Release_Delay bad(-1.0, ReleaseDelayModel::CONSTANT, 0.0, 1);
   } catch (const std::invalid_argument &) {
     rejected = true;
   }
   assert(rejected);
-  std::cout << "  model planning and sampling: ok\n";
+  std::cout << "  model sampling: ok\n";
 }
 
 void test_streaming_constant_delay() {
   // 100 nodes, 30 s delay. A: 70 nodes for 200 s at t=0. B: 45 nodes at
-  // t=10 cannot fit; its reservation is A's release at 230, not A's end at
-  // 200. C: 20 nodes for 50 s at t=20 backfills (releases at 100 < 230).
+  // t=10 cannot fit. The scheduler plans at the time limit, as production
+  // does, so B's reservation is A's limit, 200, although A's nodes will
+  // only return at 230. C: 20 nodes for 50 s at t=20 backfills (ends at
+  // 70 < 200; its nodes release at 100).
   auto params = make_params(header_only_trace().string(), 30.0);
   Simulation sim(params);
   sim.append_job(0.0, 70, test_queue, 200.0);
@@ -216,7 +209,18 @@ void test_streaming_constant_delay() {
   assert(sim.get_nodes_releasing() == 20);
   assert(sim.get_available_nodes() == 10);
   assert(sim.get_statistics().jobs_running == 1);
-  expect_close(sim.get_fcfs_head_shadow_time(), 230.0);
+  expect_close(sim.get_fcfs_head_shadow_time(), 200.0);
+  {
+    // C has ended and its nodes are observably releasing until 100; A is
+    // still running and its projected release is its limit, 200, not its
+    // limit plus the delay.
+    const auto window = sim.get_backfill_window();
+    assert(window.releases.size() == 2);
+    expect_close(window.releases[0].time, 100.0);
+    assert(window.releases[0].nodes_released == 20);
+    expect_close(window.releases[1].time, 200.0);
+    assert(window.releases[1].nodes_released == 70);
+  }
 
   sim.advance_to(100.0);
   assert(sim.get_nodes_releasing() == 0);
@@ -226,11 +230,15 @@ void test_streaming_constant_delay() {
   assert(sim.get_nodes_in_use() == 0);
   assert(sim.get_nodes_releasing() == 70);
   assert(sim.get_statistics().jobs_running == 0);
-  // The backfill window reports the projected release of the ended job.
+  // Once the job has ended, its nodes are observably in cleanup and the
+  // backfill window reports their actual release.
   const auto window = sim.get_backfill_window();
   assert(window.releases.size() == 1);
   expect_close(window.releases.front().time, 230.0);
   assert(window.releases.front().nodes_released == 70);
+  // The cached head reservation is recomputed only by a scheduling pass, and
+  // an end that frees no nodes triggers none; the on-demand window above is
+  // the projection to consult while nodes are releasing.
 
   sim.advance_to(std::numeric_limits<sim_time_t>::max());
   const auto statuses = sim.get_job_statuses({0, 1, 2});
@@ -250,22 +258,47 @@ void test_streaming_constant_delay() {
   std::cout << "  streaming constant delay: ok\n";
 }
 
+void test_backfill_admitted_up_to_the_shadow() {
+  // Planning ignores the delay, so a candidate is admitted on its projected
+  // end alone. A: 70 nodes for 200 s at t=0; B: 45 nodes at t=10 waits with
+  // its reservation at A's limit, 200. D: 20 nodes for 150 s at t=20 ends at
+  // 170 (< 200) and is admitted although its nodes release only at 200, the
+  // shadow itself. The head then slips to 230, when A's nodes return.
+  auto params = make_params(header_only_trace().string(), 30.0);
+  Simulation sim(params);
+  sim.append_job(0.0, 70, test_queue, 200.0);
+  sim.append_job(10.0, 45, test_queue, 300.0);
+  sim.advance_to(10.0);
+  expect_close(sim.get_fcfs_head_shadow_time(), 200.0);
+  sim.append_job(20.0, 20, test_queue, 150.0);
+  sim.advance_to(20.0);
+  const auto d_status = sim.get_job_statuses({2}).front();
+  assert(d_status.start_time.has_value());
+  expect_close(*d_status.start_time, 20.0);
+
+  sim.advance_to(200.0);
+  // A ended at 200 and D's nodes release at 200; all 90 nodes are still
+  // unavailable to B at this instant.
+  assert(sim.get_nodes_in_use() == 0);
+  assert(sim.get_nodes_releasing() == 70);
+  assert(sim.get_available_nodes() == 30);
+  sim.advance_to(std::numeric_limits<sim_time_t>::max());
+  const auto b_status = sim.get_job_statuses({1}).front();
+  expect_close(*b_status.start_time, 230.0);
+  std::cout << "  backfill admitted up to the shadow: ok\n";
+}
+
 void test_exponential_delay_grows_with_size() {
   // Same workload under the exponential model: the schedule stays feasible,
-  // every release follows its job's end by a positive delay, and the
-  // release of the 70-node job is projected with H(70) at planning time.
+  // every release follows its job's end by a positive delay, and planning
+  // still projects the 70-node job's release at its limit.
   auto params = make_params(header_only_trace().string(), 30.0,
                             ReleaseDelayModel::EXPONENTIAL);
   Simulation sim(params);
   sim.append_job(0.0, 70, test_queue, 200.0);
   sim.append_job(10.0, 45, test_queue, 300.0);
   sim.advance_to(10.0);
-  double harmonic70 = 0.0;
-  for (unsigned n = 1; n <= 70; ++n) {
-    harmonic70 += 1.0 / n;
-  }
-  expect_close(sim.get_fcfs_head_shadow_time(), 200.0 + 30.0 * harmonic70,
-               1e-6);
+  expect_close(sim.get_fcfs_head_shadow_time(), 200.0);
   sim.advance_to(200.0);
   assert(sim.get_nodes_releasing() == 70);
   assert(sim.get_nodes_in_use() == 0);
@@ -438,8 +471,9 @@ int main() {
   std::filesystem::create_directories(work_dir);
   (void)run_number;
   std::cout << "Node release delay tests\n";
-  test_model_planning_and_sampling();
+  test_model_sampling();
   test_streaming_constant_delay();
+  test_backfill_admitted_up_to_the_shadow();
   test_exponential_delay_grows_with_size();
   test_replay_is_not_delayed();
   test_warm_start_applies_from_boundary();

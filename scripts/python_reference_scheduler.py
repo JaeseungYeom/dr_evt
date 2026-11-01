@@ -83,6 +83,11 @@ class EasyBackfillingScheduler:
         # Node release delay (constant model, block release): after a job
         # ends, all of its nodes stay unavailable for this long before
         # another job can start on them. 0 releases nodes at the job's end.
+        # The scheduler does not plan with it: as in Slurm, Flux, and LSF, a
+        # running job's projected release is its pessimistic end, and the
+        # cleanup time shows up when the nodes fail to come back. Once a job
+        # has ended, its nodes are observably releasing and their actual
+        # release time is used.
         self.release_delay = release_delay
 
         # State
@@ -142,12 +147,12 @@ class EasyBackfillingScheduler:
             return self.current_time
 
         # Find earliest time when enough nodes will be free
-        # Look at running jobs and their pessimistic end times (plus the
-        # release delay before their nodes are reusable), and at ended jobs
-        # whose nodes are still releasing.
+        # Look at running jobs and their pessimistic end times (the delay is
+        # not planned for), and at ended jobs whose nodes are still releasing
+        # (their actual release time is known).
         events = []
         for job_idx, (start_time, actual_end, pessimistic_end, nodes) in self.running.items():
-            events.append((pessimistic_end + self.release_delay, +nodes, job_idx))
+            events.append((pessimistic_end, +nodes, job_idx))
         for job_idx, (release_time, nodes) in self.releasing.items():
             events.append((release_time, +nodes, job_idx))
 
@@ -211,18 +216,18 @@ class EasyBackfillingScheduler:
             if i == 0:
                 continue  # head - already handled above, skip
             if job.nodes <= free_nodes:
-                # Its nodes must be reusable (ended and released) before the
-                # reservation, so the delay counts against the window too.
-                job_end = self.current_time + job.duration + self.release_delay
+                # Tested on its projected end; the release delay is not
+                # planned for, the same as for the reservation above.
+                job_end = self.current_time + job.duration
                 if reservation_time is not None and job_end < reservation_time:
                     # Backfiller - only if it completes before reservation
-                    self.log(f"Backfilling job {job.idx} (releases at {job_end} < reservation {reservation_time})")
+                    self.log(f"Backfilling job {job.idx} (ends at {job_end} < reservation {reservation_time})")
                     self.start_job(job)
                     free_nodes -= job.nodes
                     continue  # started - don't keep it in the queue
                 else:
                     # Would interfere with FCFS head reservation
-                    self.log(f"Blocking job {job.idx} (would release at {job_end} >= reservation {reservation_time})")
+                    self.log(f"Blocking job {job.idx} (would end at {job_end} >= reservation {reservation_time})")
             remaining.append(job)
 
         self.wait_queue = remaining

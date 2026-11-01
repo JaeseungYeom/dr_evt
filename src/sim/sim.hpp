@@ -820,14 +820,14 @@ protected:
 
   /**
    * Return the planned node-release offset after quantizing the projected
-   * release timestamp. Execution itself remains exact.
+   * release timestamp. Execution itself remains exact. A node release delay
+   * is not planned for: the projection is start + estimate, as in production
+   * schedulers; once the job ends, the entry is updated to its actual release.
    */
-  tdiff_t planning_run_time(sim_time_t start_time, tdiff_t run_time_estimate,
-                            num_nodes_t nodes) const {
+  tdiff_t planning_run_time(sim_time_t start_time,
+                            tdiff_t run_time_estimate) const {
     const tdiff_t resolution = m_params.m_planning_time_resolution;
-    sim_time_t release_time =
-        start_time + run_time_estimate +
-        m_trace.node_release_delay().planning_delay(nodes);
+    sim_time_t release_time = start_time + run_time_estimate;
     if (resolution != 0.0) {
       release_time = std::ceil(release_time / resolution) * resolution;
     }

@@ -262,7 +262,7 @@ DR_EVT controls relevant to the comparison are:
 | Time resolution | Exact planning by default; optional projected-timestamp grid | Slurm `bf_resolution` grids planned begin/end timestamps; Fluxion plans in integer seconds. |
 | Horizon | `--planning_horizon` for periodic reservations | Slurm `bf_window`; Fluxion unlimited; LSF reservation-bounded. |
 | Queue and reservation depth | Unlimited scan by default; EASY 1, hybrid N, conservative all | Slurm and Fluxion cap queue/reservation scope; matching depths improves comparability. |
-| Completion and node reuse | Strict completion test; immediate reuse by default | Production systems use their own resolution and cleanup behavior. Calibrate the release delay to reduce optimism. |
+| Completion and node reuse | Strict completion test; immediate reuse by default. With `--node_release_delay`, nodes are held for the sampled cleanup time while planning still projects releases at the time limit, as production does | Production systems use their own resolution and cleanup behavior and plan releases at the time limit. Calibrate the release delay to reduce optimism. |
 | Priority and resources | FCFS/SJF/LJF; stock homogeneous pool | Production systems add policy plugins, partitions, and resource topology. The experimental scheduler adds homogeneous multi-system placement. |
 | Run-time knowledge | Requested limit; observed time does not exceed it | Same high-level limit model. |
 
@@ -286,18 +286,34 @@ to the degree that
   conservative rules are implemented as specified; this is a consistency
   check between two implementations of the same idealized model, not a
   comparison with a production scheduler.
-- The [RAPS comparison helper, lines 21–35](../../scripts/compare_with_raps.py#L21-L35)
-  reproduces two effects in miniature: RAPS advances on a one-second tick and
-  frees nodes on the tick after completion, which adds a one-second lag per
-  completion a job waits behind. In RAPS's
-  [`find_backfill_job` (RAPS permalink, lines 167–188)](https://github.com/ExaDigiT/RAPS/blob/3f21cd35b7bf6a8f5decc41050c8d871809608ad/raps/schedulers/default.py#L167-L188),
-  running jobs are sorted by `time_limit` (line 167), then the shadow time is
-  assigned from the selected job's `start_time + time_limit` (lines 172–179),
-  rather than choosing the earliest projected end. This can select backfill
-  jobs that delay the blocked head. Therefore, the RAPS comparison
-  demonstrates behavioral differences; it is not a correctness oracle for
-  DR_EVT's reservation-preserving backfill policy. Both differences are
-  visible on the CTC SP2 archive trace from roughly the 200th job on.
+- The [RAPS comparison helper](../../scripts/compare_with_raps.py) runs the
+  same job list through RAPS and DR_EVT and joins start times. It is a manual
+  tool, not part of CI, and RAPS is not a correctness oracle for DR_EVT's
+  reservation-preserving backfill: at RAPS commit
+  [3f21cd3](https://github.com/ExaDigiT/RAPS/tree/3f21cd35b7bf6a8f5decc41050c8d871809608ad)
+  three differences separate the two, all verified in the RAPS source.
+  1. **Late release with compounding lag.** RAPS advances one simulated
+     second per loop iteration and recomputes a job's run time at the end of
+     the iteration, so a completion is detected, and its nodes freed, on the
+     iteration after the true end (`engine.py`, `prepare_timestep` and
+     `complete_timestep`). A job waiting on that release starts one second
+     late, ends one second late, and passes the lag to whatever waits on it.
+     RAPS's recorded end times carry the same one-second shift.
+  2. **Shadow time from limit-sorted running jobs.** In
+     [`find_backfill_job`](https://github.com/ExaDigiT/RAPS/blob/3f21cd35b7bf6a8f5decc41050c8d871809608ad/raps/schedulers/default.py#L150-L198)
+     running jobs are sorted by `time_limit` (line 167) and the shadow is the
+     `start_time + time_limit` of the last job needed (lines 172–177), not
+     the earliest projected end. The error is two-sided: when a long-limit
+     job started early and a short-limit job started late, the shadow is
+     later than the true one and backfill jobs may delay the head; in the
+     opposite case it is earlier and RAPS is more conservative.
+  3. **Inclusive window test.** RAPS admits a candidate when its
+     `time_limit <= shadow - now` (line 202); DR_EVT and the Python
+     reference require the projected end to be strictly before the shadow.
+
+  On the CTC SP2 archive trace, the first two effects became visible from
+  roughly the 200th job on in a manual run against that RAPS commit; the
+  figure is an observation from that run, not a tested invariant.
 
 ## Remaining extensions and calibration
 
@@ -338,6 +354,12 @@ Each of the following is a contained change if a study needs it:
   version before being relied on.
 - RAPS: [ExaDigiT/RAPS at commit
   `3f21cd35`](https://github.com/ExaDigiT/RAPS/tree/3f21cd35b7bf6a8f5decc41050c8d871809608ad),
-  `raps/schedulers/default.py`, `find_backfill_job`, lines 167–188.
+  `raps/schedulers/default.py` (`find_backfill_job`, lines 150–198,
+  `return_first_fit`, line 202) and `raps/engine.py` (`prepare_timestep`,
+  `complete_timestep`, `run_simulation`).
+- CTC SP2 trace: the [CTC SP2 log](https://www.cs.huji.ac.il/labs/parallel/workload/l_ctc_sp2/) of the Parallel Workloads Archive
+  (D. G. Feitelson, D. Tsafrir, and D. Krakov, "Experience with using the
+  Parallel Workloads Archive," Journal of Parallel and Distributed Computing
+  74(10), 2014). The trace is not shipped with this repository.
 - DR_EVT: `src/sim/sim.cpp` (`advance_to_impl`), `src/sim/scheduler_*.cpp`,
   and `src/sim/scheduler_base.cpp` on this branch.

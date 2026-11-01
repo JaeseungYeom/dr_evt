@@ -114,9 +114,7 @@ FCFSConservativeScheduler::schedule(num_nodes_t free_nodes,
       jobs_to_run.push_back(job.job_id);
       available_nodes -= job.nodes_requested;
       effective_running_jobs[job.job_id] = {
-          current_time,
-          release_estimate(current_time, job.run_time_estimate,
-                           job.nodes_requested),
+          current_time, release_estimate(current_time, job.run_time_estimate),
           job.nodes_requested};
     } else {
       --m_removed_count;
@@ -160,9 +158,7 @@ FCFSConservativeScheduler::schedule(num_nodes_t free_nodes,
         continue;
 
       // Check if job completes before head's reservation
-      if (current_time +
-              release_estimate(current_time, job.run_time_estimate,
-                               job.nodes_requested) <
+      if (current_time + release_estimate(current_time, job.run_time_estimate) <
           m_fcfs_reservation_time) {
         jobs_to_run.push_back(job.job_id);
         available_nodes -= job.nodes_requested;
@@ -201,9 +197,7 @@ FCFSConservativeScheduler::schedule(num_nodes_t free_nodes,
           i, available_nodes, effective_running_jobs, current_time);
 
       // Job can backfill if it completes before ANY job ahead needs to start
-      if (current_time +
-              release_estimate(current_time, job.run_time_estimate,
-                               job.nodes_requested) <
+      if (current_time + release_estimate(current_time, job.run_time_estimate) <
           conservative_window) {
         jobs_to_run.push_back(job.job_id);
         available_nodes -= job.nodes_requested;
@@ -212,9 +206,7 @@ FCFSConservativeScheduler::schedule(num_nodes_t free_nodes,
 
         // Update effective running jobs for next iteration
         effective_running_jobs[job.job_id] = {
-            current_time,
-            release_estimate(current_time, job.run_time_estimate,
-                             job.nodes_requested),
+            current_time, release_estimate(current_time, job.run_time_estimate),
             job.nodes_requested};
 
         if (available_nodes == 0)

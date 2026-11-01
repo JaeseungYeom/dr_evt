@@ -295,9 +295,7 @@ backfill_candidates_t CustomFCFSScheduler::find_backfill_candidates_from(
     if (job.removed || job.nodes_requested > available_nodes) {
       continue;
     }
-    if (current_time +
-            release_estimate(current_time, job.run_time_estimate,
-                             job.nodes_requested) >=
+    if (current_time + release_estimate(current_time, job.run_time_estimate) >=
         reservation_time) {
       continue;
     }
@@ -339,9 +337,7 @@ CustomFCFSScheduler::schedule(num_nodes_t free_nodes,
       jobs_to_run.push_back(job.job_id);
       available_nodes -= job.nodes_requested;
       effective_running_jobs[job.job_id] = {
-          current_time,
-          release_estimate(current_time, job.run_time_estimate,
-                           job.nodes_requested),
+          current_time, release_estimate(current_time, job.run_time_estimate),
           job.nodes_requested};
     } else {
       --m_removed_count;
