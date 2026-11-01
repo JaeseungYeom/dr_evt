@@ -22,27 +22,40 @@ The statements below describe the code, not an idealization of it.
   state change: each batch of job completions, each batch of arrivals, and
   each capacity change. All events sharing a timestamp are applied first,
   then the pass repeats until no further job can start. With
-  `--backfill_interval SECONDS`, FCFS dispatch remains event-driven while
-  backfill evaluations run only at periodic ticks; `0` selects the default
-  fully event-driven behavior.
+  [`--backfill_interval SECONDS`](../user-guide/command-line.md#--backfill_interval-seconds),
+  FCFS dispatch remains event-driven while backfill evaluations run only at
+  periodic ticks; `0` selects the default fully event-driven behavior.
 - **Time and planning resolution.** The clock and actual job execution use
   floating-point seconds. By default, reservations and backfill completion
-  tests use exact planning times. `--backfill_time_resolution SECONDS` rounds
-  each enqueued job's time limit up to that grid for scheduling and
+  tests use exact planning times.
+  [`--backfill_time_resolution SECONDS`](../user-guide/command-line.md#--backfill_time_resolution-seconds)
+  rounds each enqueued job's time limit up to that grid for scheduling and
   reservations only; it does not round the clock or change actual execution.
-- **Configurable queue depth; unlimited horizon.** Built-in hybrid and
-  conservative backfill scan every eligible waiting job by default; set
-  `--backfill_queue_depth` to cap that prefix. Reservations may lie
-  arbitrarily far in the future. `num_max_candidates` instead limits feasible
-  jobs offered to the experimental external EASY selector.
+- **Queue depth.** Built-in hybrid and conservative backfill scan every
+  eligible waiting job by default;
+  [`--backfill_queue_depth`](../user-guide/command-line.md#--backfill_queue_depth-n)
+  caps how many queue entries are inspected in one pass. It is a job-count
+  limit, not a time limit.
+  [`--num_max_candidates`](../user-guide/command-line.md#--num_max_candidates-count)
+  instead limits feasible jobs offered to the experimental external EASY
+  selector.
 - **Backfill test window.** Under EASY the head's reservation is the earliest
   time enough nodes become free, projected from running jobs' time limits.
   A candidate starts only if it fits the free nodes now and its projected
   completion (start plus time limit) is strictly earlier than that
-  reservation. Conservative uses the earliest reservation among all earlier
-  waiting jobs; hybrid uses the earliest among the first `reservation_depth`
-  of them. Jobs started earlier in the same pass are included when later
-  candidates are tested.
+  reservation. [`--backfill_policy`](../user-guide/command-line.md#-b---backfill_policy-policy)
+  selects EASY, conservative, or hybrid behavior; conservative protects all
+  relevant earlier jobs, while hybrid uses the earliest reservation among the
+  first
+  [`--reservation_depth`](../user-guide/command-line.md#--reservation_depth-n)
+  waiting jobs. This is a per-candidate deadline that protects an existing
+  reservation, not a bound on how far ahead the scheduler plans. Jobs started
+  earlier in the same pass are included when later candidates are tested.
+- **Planning horizon.** A planning horizon is the furthest future timestamp
+  considered while building reservations. DR_EVT has no cutoff: it can
+  project reservations arbitrarily far ahead. There is no DR_EVT planning-
+  horizon option. This differs from Slurm's `bf_window`; it is independent of
+  queue depth and of a candidate's backfill test window.
 - **Run-time knowledge.** The scheduler plans with the requested time limit.
   The observed run time comes from the trace or from a sampled distribution
   and never exceeds the limit, which is equivalent to killing a job at its
@@ -56,8 +69,11 @@ The statements below describe the code, not an idealization of it.
   QOS, or partition priority), preemption, job dependencies or arrays, or
   per-user and per-account limits. Whether a production deployment enables
   or relies on those policies is an institutional configuration decision.
-- **Resources.** The stock simulator uses one pool of identical nodes,
-  optionally varied over time by a capacity schedule. The experimental
+- **Resources.** The stock simulator uses one pool of identical nodes, set
+  with [`--total_nodes`](../user-guide/command-line.md#-n---total_nodes-count)
+  and optionally varied with
+  [`--capacity_schedule`](../user-guide/command-line.md#--capacity_schedule-filename).
+  The experimental
   [`multi_system_backfill_sim`](../user-guide/multi-cluster-backfill.md)
   instead has one shared FCFS queue across multiple homogeneous systems (or
   resource partitions) of unequal capacity. Neither model represents node
