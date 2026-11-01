@@ -63,9 +63,9 @@ timeout_t checked_streaming_limit(tdiff_t limit_time) {
 constexpr std::array<char, 8> checkpoint_magic{'D', 'R', 'E', 'V',
                                                'T', 'C', 'K', 'P'};
 constexpr std::uint32_t checkpoint_version =
-    15; // 11: reservation_depth; 12: node release delay; 13: scalar event
+    16; // 11: reservation_depth; 12: node release delay; 13: scalar event
         // and resource-sample times; 14: backfill_queue_depth; 15: periodic
-        // backfill deadline
+        // backfill deadline; 16: periodic backfill dirty flag
 
 /// Trace policy identifier stored in a checkpoint so a file written by one
 /// trace type is not restored into another.
@@ -1179,6 +1179,7 @@ void BasicSimulation<TraceType>::save_checkpoint(std::ostream &output) {
 
     writer.value(m_current_time);
     writer.value(m_next_backfill_evaluation);
+    writer.value(m_periodic_backfill_dirty);
     writer.value(m_job_rejection_capacity);
     writer.value(m_next_capacity_change);
     writer.value(m_current_capacity);
@@ -1512,6 +1513,7 @@ void BasicSimulation<TraceType>::load_checkpoint(std::istream &input) {
 
     m_current_time = reader.value<sim_time_t>();
     m_next_backfill_evaluation = reader.value<sim_time_t>();
+    m_periodic_backfill_dirty = reader.value<bool>();
     m_job_rejection_capacity = reader.value<num_nodes_t>();
     m_next_capacity_change = reader.value<size_t>();
     m_current_capacity = reader.value<num_nodes_t>();
