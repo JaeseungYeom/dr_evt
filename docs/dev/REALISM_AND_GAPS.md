@@ -4,8 +4,8 @@ This page records how closely DR_EVT's scheduling model follows production
 batch schedulers, where it deliberately departs from them, and which way each
 departure biases results. It compares the simulator with Slurm, Flux
 (Fluxion), and IBM Spectrum LSF on the points that matter most for
-backfilling studies: when scheduling decisions are evaluated, how the
-backfill test window is formed, how many jobs hold reservations, and what the
+backfilling studies: when scheduling decisions are evaluated, how each
+reservation protection check is formed, how many jobs hold reservations, and what the
 scheduler knows about run times. The policies themselves are defined in
 [Scheduling Policies](../BACKFILLING_ALGORITHMS.md); the execution pipeline in
 [Simulation Pipeline and Job Lifecycle](JOB_LIFECYCLE.md). For the complete
@@ -43,7 +43,7 @@ The statements below describe the code, not an idealization of it.
   [`--num_max_candidates`](../user-guide/command-line.md#--num_max_candidates-count)
   instead limits feasible jobs offered to the experimental external EASY
   selector.
-- **Backfill test window.** Under EASY the head's reservation is the earliest
+- **Reservation protection check.** Under EASY the head's reservation is the earliest
   time enough nodes become free, projected from running jobs' time limits.
   A candidate starts only if it fits the free nodes now and its projected
   completion (start plus time limit) is strictly earlier than that
@@ -55,6 +55,9 @@ The statements below describe the code, not an idealization of it.
   waiting jobs. This is a per-candidate deadline that protects an existing
   reservation, not a bound on how far ahead the scheduler plans. Jobs started
   earlier in the same pass are included when later candidates are tested.
+  [`--backfill_queue_depth`](../user-guide/command-line.md#--backfill_queue_depth-n)
+  is separate: it limits how many eligible jobs are examined in that pass,
+  not the reservation deadline applied to an examined candidate.
 - **Planning horizon.** A planning horizon is the furthest future timestamp
   considered while building reservations. During periodic scheduling,
   [`--planning_horizon SECONDS`](../user-guide/command-line.md#--planning_horizon-seconds)
@@ -62,7 +65,7 @@ The statements below describe the code, not an idealization of it.
   as an unlimited sentinel. Event-driven schedulers do not apply a horizon;
   an event-driven planning horizon remains future work.
   This corresponds to Slurm's `bf_window` and is independent of queue depth
-  and of a candidate's backfill test window. A job reached by DR_EVT's
+  and of a candidate's reservation protection check. A job reached by DR_EVT's
   hybrid/conservative queue scan still consumes its
   [`--backfill_queue_depth`](../user-guide/command-line.md#--backfill_queue_depth-n)
   slot when its reservation is outside the horizon, but it receives no
