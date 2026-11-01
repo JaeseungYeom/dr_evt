@@ -67,7 +67,21 @@ TRACE_DIR="$REPO_ROOT/tests/test_traces/grpc"
 # starting points can be overridden with DR_EVT_GRPC_TEST_PORT and
 # DR_EVT_GRPC_TEST_BASE_PORT.
 port_in_use() {
-    (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
+    local port=$1
+
+    # A listener bound to a non-loopback local address does not accept a
+    # connection to 127.0.0.1, but it still prevents dr_evt_server (which
+    # binds 0.0.0.0) from using this port.  Inspect listening TCP sockets
+    # when lsof (or ss) is available so the preflight check matches the
+    # server's wildcard bind.  Retain the connection probe for minimal
+    # environments without either utility.
+    if command -v lsof > /dev/null 2>&1; then
+        lsof -nP -iTCP:"$port" -sTCP:LISTEN > /dev/null 2>&1
+    elif command -v ss > /dev/null 2>&1; then
+        ss -H -ltn "sport = :$port" 2>/dev/null | grep -q .
+    else
+        (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null
+    fi
 }
 # pick_free_ports START COUNT: print the first port of COUNT consecutive
 # free ports at or after START, searching 200 ports.
