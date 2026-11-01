@@ -188,11 +188,22 @@ FCFSConservativeScheduler::schedule(num_nodes_t free_nodes,
     // CONSERVATIVE backfilling: Must not delay ANY waiting job.
     // HYBRID: must not delay the first m_reservation_depth waiting jobs.
 
-    // Try backfilling with jobs that won't delay anyone ahead of them.
-    size_t examined = 1; // The blocked FCFS head is the first examined job.
+    // Jobs with no reservation in the planning horizon stay in queue but do
+    // not consume a scan slot. Their projection is recomputed on every pass,
+    // which captures ordinary resource releases and capacity changes without
+    // modeling an external blocked-list notification.
+    size_t examined = reservation_within_horizon(m_fcfs_reservation_time,
+                                                  current_time)
+                          ? 1
+                          : 0;
     for (size_t i = 1; i < m_eligible_end_idx; ++i) {
       const auto &job = m_wait_queue[i];
       if (job.removed)
+        continue;
+      const sim_time_t job_reservation = calculate_fcfs_reservation(
+          job.nodes_requested, available_nodes, effective_running_jobs,
+          current_time);
+      if (!reservation_within_horizon(job_reservation, current_time))
         continue;
       if (m_backfill_queue_depth != 0 && examined >= m_backfill_queue_depth)
         break;
@@ -202,7 +213,7 @@ FCFSConservativeScheduler::schedule(num_nodes_t free_nodes,
       if (job.nodes_requested > available_nodes)
         continue;
 
-      // Calculate conservative window: earliest reservation of all jobs ahead
+      // Calculate conservative window: earliest in-horizon reservation ahead.
       sim_time_t conservative_window = calculate_conservative_window(
           i, available_nodes, effective_running_jobs, current_time);
 

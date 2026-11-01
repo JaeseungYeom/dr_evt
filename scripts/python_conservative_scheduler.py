@@ -301,6 +301,18 @@ class ConservativeBackfillingScheduler:
 
         examined = 0
         for pos, job in enumerate(self.wait_queue):
+            if effective_timeline is None:
+                effective_timeline = self.build_resource_timeline_from_running(
+                    effective_running)
+            reservation = self.calculate_job_reservation_time_from_timeline(
+                job, effective_timeline)
+            # Keep an out-of-horizon job in queue, but do not charge it to
+            # queue depth. Its reservation is recomputed on the next pass,
+            # reflecting ordinary releases and capacity changes without a
+            # persistent blocked-list state.
+            if reservation - self.current_time > self.planning_horizon:
+                remaining.append(job)
+                continue
             if (self.backfill_queue_depth and
                     examined >= self.backfill_queue_depth):
                 remaining.extend(self.wait_queue[pos:])
@@ -314,9 +326,6 @@ class ConservativeBackfillingScheduler:
             # Calculate the earliest reservation among jobs ahead.  Include
             # jobs already backfilled during this pass in the same projected
             # resource view used by the C++ implementation.
-            if effective_timeline is None:
-                effective_timeline = self.build_resource_timeline_from_running(
-                    effective_running)
             conservative_window = self.calculate_conservative_window_with_running(
                 pos, effective_running, set(backfilled_jobs.keys()),
                 effective_timeline)

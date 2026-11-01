@@ -290,10 +290,11 @@ it at `0` for exact floating-point planning.
 Limits how far ahead the scheduler creates or protects reservations.
 A projected reservation whose start is more than `SECONDS` after the current
 planning time is treated as out of horizon: it does not block a backfill job
-and does not consume a hybrid reservation-depth slot. It still consumes a
-`--backfill_queue_depth` scan slot, keeps its queue position, and is
-re-evaluated on the next scheduling pass. This applies to both event-driven
-and periodic scheduling and corresponds most closely to Slurm `bf_window`.
+and consumes neither a hybrid reservation-depth nor a
+`--backfill_queue_depth` scan slot. It keeps its queue position and is
+re-evaluated on the next scheduling pass, so newly released resources or a
+scheduled capacity change can bring its reservation into the horizon. This
+applies to both event-driven and periodic scheduling.
 
 **Default:** unlimited (the largest `tdiff_t` value)
 

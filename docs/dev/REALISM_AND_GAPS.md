@@ -32,24 +32,27 @@ Each item describes the code on this branch.
   the warm-start boundary) and keep their cadence; a tick that passes while
   nothing is waiting does nothing.
 - **Reservations.** Under EASY the head's reservation is the earliest time
-  enough nodes become free, projected from the running jobs' time limits; a
-  candidate starts only if it fits now and its projected completion is
-  strictly before that reservation. Conservative protects every earlier
-  waiting job, hybrid the first
+  enough nodes become free, projected from running-job time limits and future
+  scheduled-capacity changes; a candidate starts only if it fits now and its
+  projected completion is strictly before that reservation. Conservative
+  protects every earlier waiting job, hybrid the first
   [`--reservation_depth`](../user-guide/command-line.md#--reservation_depth-n)
   of them, selected with
   [`--backfill_policy`](../user-guide/command-line.md#-b---backfill_policy-policy).
-  Reservations are recomputed from the running jobs on every pass rather than
-  carried over, as Slurm does; jobs started earlier in the same pass are
-  included when later candidates are tested.
+  Reservations are recomputed on every pass rather than carried over, as Slurm
+  does; jobs started earlier in the same pass are included when later
+  candidates are tested. FCFS implementations use the strict boundary above;
+  SJF and LJF retain their historical inclusive boundary at an exactly equal
+  projected completion time.
 - **Scan and planning bounds.**
   [`--backfill_queue_depth`](../user-guide/command-line.md#--backfill_queue_depth-n)
   caps how many waiting jobs one pass inspects (default unlimited).
   [`--planning_horizon`](../user-guide/command-line.md#--planning_horizon-seconds)
   drops reservations that would start beyond the horizon in event-driven and
-  periodic mode;
-  such a job still consumes a queue-depth slot but no reservation slot, as in
-  Slurm, and is reconsidered on the next pass.
+  periodic mode. Such a job consumes neither a queue-depth nor a reservation
+  slot, remains queued, and is reconsidered on the next pass. This is a
+  practical approximation of external resource-status notifications that
+  DR_EVT does not simulate.
   [`--planning_time_resolution`](../user-guide/command-line.md#--planning_time_resolution-seconds)
   rounds each projected release up to a grid once its start is known; the
   clock and actual execution stay exact.
@@ -79,8 +82,8 @@ Each item describes the code on this branch.
 
 ## Production schedulers
 
-All four systems discussed here run at LLNL: Flux on El Capitan and Tuolumne,
-LSF on Sierra and Lassen, and Slurm on most other LC clusters.
+The four named LLNL clusters are El Capitan and Tuolumne (Flux), and Sierra
+and Lassen (LSF); Slurm runs on most other LC clusters.
 
 ### Slurm
 
@@ -116,16 +119,16 @@ fresh reservation plan
 It examines at most `queue-depth` jobs per cycle and yields after six jobs,
 plans in integer seconds, and places jobs on a resource graph.
 
-Fluxion keeps a blocked list for jobs that cannot be allocated or reserved
-within the planner's span, including requests affected by down resources. At
-the cited revision the planner's duration is effectively `INT64_MAX`, so this
-list is a satisfiability filter rather than a finite-window mechanism: the
+Fluxion keeps a blocked list for jobs whose allocation-or-reservation attempt
+fails, including requests affected by down resources. The
 [`MATCH_ALLOCATE_ORELSE_RESERVE`](https://github.com/flux-framework/flux-sched/blob/3b49d1998ed53836618e54188f45b52bc1aac811/resource/traversers/dfu.cpp#L106-L139)
 path searches the planner first and then makes a satisfiability check. On
 [`EBUSY`](https://github.com/flux-framework/flux-sched/blob/3b49d1998ed53836618e54188f45b52bc1aac811/qmanager/policies/queue_policy_bf_base_impl.hpp#L120-L141),
 the backfill policy moves a reservation candidate to `m_blocked` and removes
 it from `m_scheduled_cnt`; [`reconsider_blocked_jobs()`](https://github.com/flux-framework/flux-sched/blob/3b49d1998ed53836618e54188f45b52bc1aac811/qmanager/policies/base/queue_policy_base.hpp#L188-L194)
-returns it when resource status changes.
+marks it for reconsideration. The base policy also requests that
+reconsideration after completion and reprioritization events, so this is not
+limited to a DR_EVT-style planning horizon.
 
 | Setting | Default or policy-fixed behavior | Meaning |
 |---|---|---|
@@ -152,7 +155,7 @@ should be checked against the installed version.
 | Slurm, reserve all tested jobs | `conservative` | `bf_interval` (30) | N/A | `bf_max_job_test` (500) | `bf_resolution` (60) | `bf_window` (86400) |
 | Slurm, reserve a fixed prefix | `hybrid` | `bf_interval` | `bf_job_part_count_reserve` | `bf_max_job_test` | `bf_resolution` | `bf_window` |
 | Slurm, head reservation only | `hybrid` | `bf_interval` | `1` | `bf_max_job_test` | `bf_resolution` | `bf_window` |
-| Fluxion hybrid | `hybrid` | `0` | `reservation-depth` | `queue-depth` (32) | `1` | unlimited |
+| Fluxion hybrid | `hybrid` | `0` | `reservation-depth` | `queue-depth` (32) | `1` | N/A; DR_EVT retests rather than receiving blocked-list notifications |
 
 `--backfill_policy easy` equals `hybrid` with depth 1. These settings
 reproduce trigger and reservation behavior in the single-pool FCFS model;
@@ -161,31 +164,32 @@ the target system's cleanup time where node reuse matters.
 
 ### Out-of-horizon accounting
 
-| Planner | Out-of-horizon or unplannable job | Reservation slot | Re-examination |
+| Planner | Job outside its current planning/allocatable scope | Reservation slot | Re-examination |
 |---|---|---|---|
 | Slurm `bf_window` | Counts toward `bf_max_job_test` | No reservation slot | Retested every pass |
-| Fluxion blocked list | Not counted (`--m_scheduled_cnt`) | No reservation slot | Returned only on resource status change |
-| DR_EVT `--planning_horizon` | Counts toward `--backfill_queue_depth` | No reservation slot | Retested every pass |
+| Fluxion blocked list | Not counted (`--m_scheduled_cnt`) | No reservation slot | Reconsidered on Fluxion status, completion, or priority triggers |
+| DR_EVT `--planning_horizon` | Does not count toward `--backfill_queue_depth` | No reservation slot | Retested every pass |
 
-DR_EVT follows Slurm's accounting. A follow-on option will add Fluxion-style
-blocked handling without changing this default.
+DR_EVT leaves the job in its normal queue and recomputes its reservation each
+pass. This captures observable releases and scheduled capacity changes without
+modeling Fluxion's external resource-status notification path.
 
 ## Remaining differences
 
 | Aspect | DR_EVT | Difference and bias |
 |---|---|---|
 | Evaluation trigger | Event-driven by default | Slurm and LSF backfill periodically. Default DR_EVT backfill reacts sooner, so waits of backfillable jobs are optimistic. `--backfill_interval` removes this. |
-| Planning grid and horizon | Exact and unlimited by default | Slurm grids planned times and bounds the window; Fluxion plans in whole seconds. Both options reproduce them in event-driven and periodic mode. |
+| Planning grid and horizon | Exact and unlimited by default | Slurm grids planned times and bounds the window; Fluxion plans in whole seconds and uses blocked-list notifications. DR_EVT can match the grid and bound the planning window, but retests out-of-horizon jobs rather than modeling those notifications. |
 | Scan and reservation depth | Unlimited scan by default | Slurm and Fluxion cap both. Matching depths removes the difference. |
 | Node reuse | Immediate by default | Production nodes return after cleanup. `--node_release_delay` removes the optimism only to the degree it is calibrated. |
 | Eligible time | Submission time | Held or dependent jobs in a real trace become eligible later than they were submitted. Their simulated wait is counted from submission, which overstates it relative to the production record. |
 | Warm start | Empty wait queue at the boundary | Jobs waiting before `--sim_start_time` are excluded, so decisions right after the boundary are optimistic until arrivals rebuild the queue. |
 | Resources and priority | One homogeneous pool, FCFS/SJF/LJF | Partitions, topology, and priority plugins are out of scope. |
 
-With default settings the first four rows compound in one direction: DR_EVT's
-backfilling is an upper bound on what a production scheduler can extract from
-the same workload. Matching interval, grid, horizon, and depths narrows the
-gap to the last three rows.
+With default settings several rows can make DR_EVT backfilling more optimistic
+than a production scheduler. Matching interval, grid, horizon, and depths
+narrows those differences; the horizon re-examination approximation remains a
+separate behavioral distinction.
 
 ## Validation evidence
 
@@ -200,6 +204,11 @@ gap to the last three rows.
   (`tests/run_periodic_backfill_tests.sh`), and warm start under periodic
   backfill matches a cold run seeded with the boundary state
   (`tests/test_warm_start.cpp`).
+- **Planning horizon.** EASY, hybrid, conservative, and SJF event-driven
+  cases are checked against the Python references, including a depth-one case
+  where an out-of-horizon head does not consume the candidate scan slot;
+  explicit unlimited horizon remains byte-identical on all 34 correctness
+  workloads (`tests/run_planning_horizon_tests.sh`).
 - **Node release delay.** The 34 workloads with a constant delay match the
   Python reference (`tests/run_node_release_delay_tests.sh`).
 - **RAPS.** The [comparison helper](../../scripts/compare_with_raps.py) joins
@@ -226,10 +235,8 @@ gap to the last three rows.
 - **Node release delay.** Calibration needs a measurement of the real cleanup
   time. Flux records it per job as `t_inactive - t_cleanup`; a replay trace
   bounds it from above by the gap before the freed nodes are next needed.
-- **Planning horizon.** Set it to the target's configured window (Slurm
-  `bf_window`). A follow-on `--planning_horizon_mode=block` option is planned
-  to model Fluxion-style blocked-list handling; the current mode retests on
-  every pass.
+- **Planning horizon.** Set it to the target's configured window (for example,
+  Slurm `bf_window`); its re-examination semantics are described above.
 - **Priority hooks.** The experimental external selector ranks backfill
   candidates by a caller-supplied cost; extending the same callback to queue
   ordering would allow priority experiments without changing the built-in

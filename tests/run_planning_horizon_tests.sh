@@ -4,9 +4,9 @@
 # 1. Differential: tests/test_traces/feature/planning_horizon.csv on 10 nodes
 #    under easy, hybrid (depth 1), conservative, and sjf, with a 10 s horizon
 #    and without one, against the Python references (EASY reference for easy
-#    and sjf, conservative reference for hybrid and conservative). The head's
-#    reservation lies at t=100; with the horizon it is not planned and the
-#    99 s candidate backfills at its arrival instead of waiting.
+#    and sjf, conservative reference for hybrid and conservative). Hybrid and
+#    conservative use a one-job scan depth: the out-of-horizon head must not
+#    consume it, so the 99 s candidate backfills at its arrival.
 # 2. An explicit unlimited horizon must leave the output of the 34
 #    scheduler-correctness workloads byte-identical to the default.
 # 3. Invalid values are rejected.
@@ -75,7 +75,8 @@ for BOUND in unbounded bounded; do
     for DEPTH in 1 0; do
         mkdir -p "$WORK/$BOUND/depth$DEPTH"
         "$PYTHON_BIN" "$CONSERVATIVE_REFERENCE" "$FIXTURE" --nodes "$FIXTURE_NODES" \
-            --reservation-depth "$DEPTH" --outdir "$WORK/$BOUND/depth$DEPTH" "${HOPT[@]}" \
+            --reservation-depth "$DEPTH" --backfill-queue-depth 1 \
+            --outdir "$WORK/$BOUND/depth$DEPTH" "${HOPT[@]}" \
             > "$WORK/$BOUND.depth$DEPTH.log" 2>&1 || {
             echo "✗ conservative reference failed ($BOUND, depth $DEPTH)"; sed 's/^/    /' "$WORK/$BOUND.depth$DEPTH.log"; ((FAILED++)); }
         ref_schedule "$WORK/$BOUND/depth$DEPTH/planning_horizon_conservative_reference.csv" \
@@ -103,8 +104,8 @@ fi
 # Simulator policies: name, extra options, reference file per bound.
 POLICIES=(
     "easy|--backfill_policy easy|easy_ref"
-    "hybrid|--backfill_policy hybrid --reservation_depth 1|depth1.ref"
-    "conservative|--backfill_policy conservative|depth0.ref"
+    "hybrid|--backfill_policy hybrid --reservation_depth 1 --backfill_queue_depth 1|depth1.ref"
+    "conservative|--backfill_policy conservative --backfill_queue_depth 1|depth0.ref"
     "sjf|--backfill_policy easy --priority_policy sjf|easy_ref"
 )
 for BOUND in unbounded bounded; do

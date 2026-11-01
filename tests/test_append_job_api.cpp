@@ -809,14 +809,18 @@ void test_planning_horizon_event_driven() {
   struct Case {
     BackfillPolicy policy;
     size_t depth;
+    size_t queue_depth;
     PriorityPolicy priority;
     const char *name;
   };
   const Case cases[] = {
-      {BackfillPolicy::EASY, 0, PriorityPolicy::FCFS, "easy"},
-      {BackfillPolicy::HYBRID, 1, PriorityPolicy::FCFS, "hybrid"},
-      {BackfillPolicy::CONSERVATIVE, 0, PriorityPolicy::FCFS, "conservative"},
-      {BackfillPolicy::EASY, 0, PriorityPolicy::SJF, "sjf"},
+      {BackfillPolicy::EASY, 0, 0, PriorityPolicy::FCFS, "easy"},
+      // A one-job scan depth proves that the out-of-horizon head does not
+      // consume the only slot needed by C.
+      {BackfillPolicy::HYBRID, 1, 1, PriorityPolicy::FCFS, "hybrid"},
+      {BackfillPolicy::CONSERVATIVE, 0, 1, PriorityPolicy::FCFS,
+       "conservative"},
+      {BackfillPolicy::EASY, 0, 0, PriorityPolicy::SJF, "sjf"},
   };
   for (const auto &c : cases) {
     for (const double horizon :
@@ -824,6 +828,7 @@ void test_planning_horizon_event_driven() {
       Sim_Params params = make_params();
       params.m_backfill_policy = c.policy;
       params.m_reservation_depth = c.depth;
+      params.m_backfill_queue_depth = c.queue_depth;
       params.m_priority_policy = c.priority;
       params.m_planning_horizon = horizon;
       Simulation sim(params);
