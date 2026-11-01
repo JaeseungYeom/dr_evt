@@ -73,6 +73,8 @@ protected:
   sim_time_t m_current_time;
   /// Next periodic backfill evaluation; infinity when periodic mode is idle.
   sim_time_t m_next_backfill_evaluation;
+  /// True when an event since the last periodic pass can change backfill.
+  bool m_periodic_backfill_dirty;
 
   /// Fixed physical limit used only to reject jobs that can never fit.
   num_nodes_t m_job_rejection_capacity;
