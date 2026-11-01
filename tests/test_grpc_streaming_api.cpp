@@ -458,17 +458,17 @@ bool test_warm_start(const std::string &server_address,
     const auto stats_response = client.call(stats_request);
     const auto &stats = stats_response.get_statistics();
     const bool correct =
-        stats.jobs_submitted() == 3 && stats.jobs_completed() == 3 &&
+        stats.jobs_submitted() == 4 && stats.jobs_completed() == 4 &&
         stats.jobs_running() == 0 && stats.jobs_waiting() == 0 &&
         stats.total_nodes() == 10 && stats.nodes_in_use() == 0 &&
         stats.nodes_available() == 10 &&
-        std::fabs(stats.resource_area() - 53.0) < 1e-12 &&
-        std::fabs(stats.utilization() - 53.0 / 60.0) < 1e-12 &&
+        std::fabs(stats.resource_area() - 54.0) < 1e-12 &&
+        std::fabs(stats.utilization() - 54.0 / 70.0) < 1e-12 &&
         std::fabs(stats.avg_wait_time() - 3.0) < 1e-12 &&
-        std::fabs(stats.avg_run_time() - 8.0 / 3.0) < 1e-12 &&
-        std::fabs(stats.avg_turnaround_time() - 17.0 / 3.0) < 1e-12 &&
+        std::fabs(stats.avg_run_time() - 2.25) < 1e-12 &&
+        std::fabs(stats.avg_turnaround_time() - 5.25) < 1e-12 &&
         std::fabs(stats.avg_bounded_slowdown() - 1.0) < 1e-12 &&
-        std::fabs(stats.makespan() - 16.0) < 1e-12;
+        std::fabs(stats.makespan() - 17.0) < 1e-12;
     if (!correct) {
       std::cerr << "  FAIL: warm-start statistics did not match native run\n";
       client.finish();
@@ -478,8 +478,8 @@ bool test_warm_start(const std::string &server_address,
     ClientMessage finish_request;
     finish_request.mutable_finish_simulation();
     const auto finish = client.call(finish_request).finish_simulation();
-    if (finish.statistics().jobs_submitted() != 3 ||
-        finish.statistics().jobs_completed() != 3) {
+    if (finish.statistics().jobs_submitted() != 4 ||
+        finish.statistics().jobs_completed() != 4) {
       std::cerr << "  FAIL: warm-start finish statistics changed\n";
       client.finish();
       return false;
