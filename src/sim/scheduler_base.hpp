@@ -15,6 +15,7 @@
 #include "trace/trace.hpp"
 #include <map>
 #include <memory>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -57,6 +58,8 @@ protected:
   /// Active node release delay the simulation planned releases with, or null
   /// when nodes are reusable at a job's end. Non-owning; the Trace owns it.
   const Node_Release_Delay *m_release_delay = nullptr;
+  /// Grid used to round projected release timestamps; zero is exact.
+  tdiff_t m_planning_time_resolution = 0.0;
 
 public:
   /**
@@ -80,6 +83,15 @@ public:
    */
   void set_node_release_delay(const Node_Release_Delay *model) {
     m_release_delay = model;
+  }
+
+  /**
+   * @brief Set the grid used for projected reservation timestamps.
+   * @param[in] resolution Seconds between planning timestamps; zero retains
+   * exact projected release times.
+   */
+  void set_planning_time_resolution(tdiff_t resolution) {
+    m_planning_time_resolution = resolution;
   }
 
   /**
@@ -240,16 +252,25 @@ protected:
 
   /**
    * @brief Time from a job's start until its nodes are reusable, as planned.
-   * @details The run-time estimate plus the expected node release delay for
-   * the job's size; just the estimate when no delay is configured.
+   * @details Rounds the projected release timestamp after the start time is
+   * known. Actual execution is not rounded.
+   * @param[in] start_time Planned job-start timestamp.
    * @param[in] run_time_estimate Time-limit estimate of the job.
    * @param[in] nodes Node count of the job.
    * @return Planned release offset in seconds.
    */
-  tdiff_t release_estimate(tdiff_t run_time_estimate, num_nodes_t nodes) const {
-    return m_release_delay == nullptr
-               ? run_time_estimate
-               : run_time_estimate + m_release_delay->planning_delay(nodes);
+  tdiff_t release_estimate(sim_time_t start_time, tdiff_t run_time_estimate,
+                           num_nodes_t nodes) const {
+    const tdiff_t release_offset =
+        m_release_delay == nullptr
+            ? run_time_estimate
+            : run_time_estimate + m_release_delay->planning_delay(nodes);
+    sim_time_t release_time = start_time + release_offset;
+    if (m_planning_time_resolution != 0.0) {
+      release_time = std::ceil(release_time / m_planning_time_resolution) *
+                     m_planning_time_resolution;
+    }
+    return release_time - start_time;
   }
 
   /**
@@ -296,6 +317,8 @@ protected:
  * or conservative backfill pass; zero is unlimited.
  * @param[in] backfill_interval Seconds between additional hybrid evaluations;
  * zero retains event-driven evaluation only.
+ * @param[in] planning_horizon Maximum periodic reservation look-ahead;
+ * numeric_limits<tdiff_t>::max() leaves it unlimited.
  * @return Owning pointer to a SchedulerBase implementation.
  * @throws std::invalid_argument if HYBRID is requested with a zero depth or
  * with a non-FCFS priority policy.
@@ -307,7 +330,8 @@ std::unique_ptr<SchedulerBase> create_scheduler(
     size_t block_size = 128, size_t wait_queue_capacity = 0,
     CircularOverflowPolicy wait_queue_overflow = CircularOverflowPolicy::GROW,
     size_t reservation_depth = 0, size_t backfill_queue_depth = 0,
-    tdiff_t backfill_interval = 0.0);
+    tdiff_t backfill_interval = 0.0,
+    tdiff_t planning_horizon = std::numeric_limits<tdiff_t>::max());
 
 /**@}*/
 

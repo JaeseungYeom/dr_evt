@@ -31,11 +31,10 @@ The statements below describe the code, not an idealization of it.
 - **Time and planning resolution.** The clock and actual job execution use
   floating-point seconds. By default, reservations and backfill completion
   tests use exact planning times.
-  [`--backfill_time_resolution SECONDS`](../user-guide/command-line.md#--backfill_time_resolution-seconds)
-  is a historically named planning-resolution option: it rounds each enqueued
-  job's time limit up to that grid for every scheduling policy. It affects
-  projected releases, reservations, and backfill tests, but does not round the
-  clock or change actual execution.
+  [`--planning_time_resolution SECONDS`](../user-guide/command-line.md#--planning_time_resolution-seconds)
+  rounds each projected release timestamp up to that grid after a job has a
+  known or proposed start time. It affects projected releases, reservations,
+  and backfill tests, but does not round the clock or change actual execution.
 - **Queue depth.** Built-in hybrid and conservative backfill scan every
   eligible waiting job by default;
   [`--backfill_queue_depth`](../user-guide/command-line.md#--backfill_queue_depth-n)
@@ -57,10 +56,18 @@ The statements below describe the code, not an idealization of it.
   reservation, not a bound on how far ahead the scheduler plans. Jobs started
   earlier in the same pass are included when later candidates are tested.
 - **Planning horizon.** A planning horizon is the furthest future timestamp
-  considered while building reservations. DR_EVT has no cutoff: it can
-  project reservations arbitrarily far ahead. There is no DR_EVT planning-
-  horizon option. This differs from Slurm's `bf_window`; it is independent of
-  queue depth and of a candidate's backfill test window.
+  considered while building reservations. During periodic scheduling,
+  [`--planning_horizon SECONDS`](../user-guide/command-line.md#--planning_horizon-seconds)
+  applies that cutoff; when omitted, DR_EVT uses the largest `tdiff_t` value
+  as an unlimited sentinel. Event-driven schedulers do not apply a horizon;
+  an event-driven planning horizon remains future work.
+  This corresponds to Slurm's `bf_window` and is independent of queue depth
+  and of a candidate's backfill test window. A job reached by DR_EVT's
+  hybrid/conservative queue scan still consumes its
+  [`--backfill_queue_depth`](../user-guide/command-line.md#--backfill_queue_depth-n)
+  slot when its reservation is outside the horizon, but it receives no
+  reservation and does not consume a `--reservation_depth` slot. This mirrors
+  Slurm's `bf_max_job_test` / `bf_job_part_count_reserve` distinction.
 - **Run-time knowledge.** The scheduler plans with the requested time limit.
   The observed run time comes from the trace or from a sampled distribution
   and never exceeds the limit, which is equivalent to killing a job at its
@@ -118,12 +125,20 @@ will be scheduled". It does not backfill. The backfill scheduler
 | `default_queue_depth` | 100 | "The default number of jobs to attempt scheduling when a running job completes or other routine actions occur." |
 | `sched_interval` | 60 s | "How frequently, in seconds, the main scheduling loop will execute and test all pending jobs." |
 
-Thus Slurm's backfill pass is periodic and bounded by its queue, horizon, and
-time settings; between passes, its main scheduler does not backfill.
+Thus Slurm's backfill pass is periodic and independently bounded by its queue
+scan, reservation horizon, and time-resolution settings; between passes, its
+main scheduler does not backfill.
 
 DR_EVT offers `--backfill_interval` for circular EASY, conservative, or hybrid
 backfill. Events still dispatch FCFS heads, while periodic ticks run the
-configured backfill pass.
+configured backfill pass. For the periodic model, map Slurm controls
+independently: `bf_interval` to `--backfill_interval`, `bf_window` to
+`--planning_horizon`, and `bf_resolution` approximately to
+`--planning_time_resolution`,
+`bf_max_job_test` to `--backfill_queue_depth`, and
+`bf_job_part_count_reserve` to `--reservation_depth`. The planning horizon
+does not change the planning-time grid; it only decides whether a projected
+reservation is retained.
 
 ### Flux (Fluxion)
 
@@ -208,15 +223,13 @@ Use `--backfill_interval 0` for DR_EVT's ordinary event-driven backfill. A
 positive interval keeps event-driven FCFS dispatch but runs backfill only at
 periodic ticks.
 
-Use `--backfill_time_resolution SECONDS` to apply the last column without
-changing simulated execution. It rounds each time limit supplied to the
-scheduler once when the job is enqueued; `0` retains exact planning. It is
+Use `--planning_time_resolution SECONDS` to apply the last column without
+changing simulated execution. It rounds a projected release timestamp after
+its start time is known; `0` retains exact planning. It is
 applied under every policy, but affects FCFS only where projected releases are
-used—immediate FCFS dispatch remains based on currently free nodes. Thus a
-61-second limit becomes 120 seconds with Slurm's 60-second grid and remains
-61 seconds with Flux's 1-second grid. For a Fluxion comparison, set
-`--backfill_time_resolution 1`; this matches its one-second planning grid but
-does not quantize DR_EVT's clock or actual job execution.
+used—immediate FCFS dispatch remains based on currently free nodes. Slurm's
+`bf_resolution` likewise grids maintained planned begin/end timestamps.
+DR_EVT does not quantize its clock or actual job execution.
 
 ### Comparison table and configurable mitigations
 
@@ -232,7 +245,7 @@ DR_EVT controls relevant to the comparison are:
   and [`--backfill_queue_depth`](../user-guide/command-line.md#--backfill_queue_depth-n)
 - [`--backfill_interval`](../user-guide/command-line.md#--backfill_interval-seconds)
   and
-  [`--backfill_time_resolution`](../user-guide/command-line.md#--backfill_time_resolution-seconds)
+  [`--planning_time_resolution`](../user-guide/command-line.md#--planning_time_resolution-seconds)
 - [`--node_release_delay`](../user-guide/command-line.md#--node_release_delay-seconds)
   and its
   [per-node delay model](../user-guide/command-line.md#--node_release_delay_model-model)
@@ -245,8 +258,8 @@ DR_EVT controls relevant to the comparison are:
 | Aspect | DR_EVT | Production-scheduler comparison |
 |---|---|---|
 | Evaluation trigger | Event-driven by default; periodic backfill is optional | Slurm and LSF run periodic backfill; Fluxion is event-driven. Default DR_EVT backfill reacts sooner than Slurm or LSF. |
-| Time resolution | Exact planning by default; optional grid | Slurm uses a 60-second grid; Fluxion uses one second. Matching the grid narrows boundary differences. |
-| Planning horizon | Unlimited | Slurm uses `bf_window`; Fluxion is unlimited; LSF is bounded by reservation settings. |
+| Time resolution | Exact planning by default; optional projected-timestamp grid | Slurm `bf_resolution` grids planned begin/end timestamps; Fluxion plans in integer seconds. |
+| Planning horizon | Unlimited by default; `--planning_horizon` bounds periodic reservations | Slurm uses `bf_window`; Fluxion is unlimited; LSF is bounded by reservation settings. |
 | Queue and reservation depth | Unlimited scan by default; EASY 1, hybrid N, conservative all | Slurm and Fluxion cap queue/reservation scope; matching depths improves comparability. |
 | Completion and node reuse | Strict completion test; immediate reuse by default | Production systems use their own resolution and cleanup behavior. Calibrate the release delay to reduce optimism. |
 | Priority and resources | FCFS/SJF/LJF; stock homogeneous pool | Production systems add policy plugins, partitions, and resource topology. The experimental scheduler adds homogeneous multi-system placement. |
@@ -256,9 +269,9 @@ With DR_EVT's default settings, the first four rows compound in the same
 direction: its backfilling is an upper bound on what a production scheduler
 can extract from the same workload. Measured against Slurm and LSF, whose
 backfill decisions wait for the next periodic pass, simulated wait times for
-backfillable jobs are optimistic. Matching interval, planning resolution, and
-queue depth narrows those differences but does not add Slurm's partition-level
-policy behavior, priority behavior, or planning horizons. The experimental
+backfillable jobs are optimistic. Matching interval, planning horizon,
+planning resolution, and queue depth narrows those differences but does not
+add Slurm's partition-level policy or priority behavior. The experimental
 multi-system scheduler represents homogeneous partitions but not those Slurm
 semantics. With matching queue depth, the remaining Flux gaps are its resource
 graph and scheduling-cycle behavior. The node-reuse difference is removed only
@@ -289,9 +302,11 @@ to the degree that
 
 Each of the following is a contained change if a study needs it:
 
-- **Reservation horizon.** Planning resolution is already configurable with
-  [`--backfill_time_resolution`](../user-guide/command-line.md#--backfill_time_resolution-seconds);
-  a reservation horizon remains unavailable.
+- **Reservation-horizon calibration.**
+  [`--planning_horizon`](../user-guide/command-line.md#--planning_horizon-seconds)
+  supplies a periodic reservation cutoff. Calibrate it against the target
+  scheduler's configured planning window (for example Slurm `bf_window`). An
+  equivalent event-driven cutoff remains future work.
 - **Priority hooks.** The experimental external selector already lets a
   caller rank backfill candidates by an arbitrary cost; extending the same
   callback to queue ordering would allow multifactor priority experiments

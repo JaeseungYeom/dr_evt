@@ -21,7 +21,8 @@ Complete reference for all DR_EVT command-line options for the `simulator` binar
 | Scheduling | `--num_max_candidates COUNT` | Cap feasible jobs offered to the experimental custom-EASY selector. |
 | Scheduling | `--backfill_queue_depth N` | Cap jobs inspected by built-in hybrid or conservative backfill. |
 | Scheduling | `--backfill_interval SECONDS` | Run built-in backfill at periodic ticks instead of every event. |
-| Scheduling | `--backfill_time_resolution SECONDS` | Round planning durations up to a grid. |
+| Scheduling | `--planning_time_resolution SECONDS` | Round planning durations up to a grid. |
+| Scheduling | `--planning_horizon SECONDS` | Limit reservations during periodic backfill. |
 | Scheduling | `--reservation_depth N` | Number of reserved waiting jobs under `hybrid` backfilling. |
 | Scheduling | `-p, --priority_policy POLICY` | Select the job-ordering policy. |
 | Scheduling | `-q, --queue_impl IMPLEMENTATION` | Select the FCFS wait-queue implementation. |
@@ -266,20 +267,31 @@ event-driven backfill behavior.
 
 **Default:** `0` (disabled)
 
-### `--backfill_time_resolution SECONDS`
+### `--planning_time_resolution SECONDS`
 
-Despite its historical name, this is DR_EVT's planning-time-resolution option
-for every scheduling policy, not only backfill.
-
-Rounds each job's `time_limit` up to this grid for scheduler planning:
-projected releases, reservations, and backfill feasibility checks. The
+Rounds projected scheduler release timestamps up to this grid after their
+start time is known. It affects projected releases, reservations, and backfill
+feasibility checks. The
 simulation clock and the job's actual execution duration are unchanged. The
 estimate is supplied to every scheduler, but pure FCFS dispatch does not use
-it to decide whether a job can start immediately. Set this to match a target
-scheduler's planning grid—for example, `60` for Slurm's typical
-`bf_resolution`—or leave it at `0` for exact floating-point planning.
+it to decide whether a job can start immediately. For example, `60` models
+Slurm's typical `bf_resolution` grid for planned begin/end timestamps. Leave
+it at `0` for exact floating-point planning.
 
 **Default:** `0` (exact planning)
+
+### `--planning_horizon SECONDS`
+
+Limits how far ahead the periodic scheduler creates or protects reservations.
+A projected reservation whose start is more than `SECONDS` after the current
+planning time is treated as out of horizon: it does not block a backfill job
+and does not consume a hybrid reservation-depth slot. It still consumes a
+`--backfill_queue_depth` scan slot. This option only affects periodic
+scheduling selected by `--backfill_interval`; event-driven schedulers retain
+unlimited planning. An event-driven planning horizon remains future work. It
+corresponds most closely to Slurm `bf_window`.
+
+**Default:** unlimited (the largest `tdiff_t` value)
 
 ### `--reservation_depth N`
 

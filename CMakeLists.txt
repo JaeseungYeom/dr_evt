@@ -914,6 +914,13 @@ if(DR_EVT_WITH_UNIT_TESTING)
       LABELS "unit;scripts"
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(
+      NAME test_python_conservative_options
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_python_conservative_options.py)
+    set_tests_properties(test_python_conservative_options PROPERTIES
+      LABELS "unit;scripts"
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(
       NAME test_python_performance_dispatch
       COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
         ${Python3_EXECUTABLE}

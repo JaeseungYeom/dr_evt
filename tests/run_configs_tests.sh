@@ -85,6 +85,8 @@ $SIMULATOR "$TEST_TRACE" \
     --backfill_policy easy \
     --priority_policy fcfs \
     --num_max_candidates 8 \
+    --planning_time_resolution 10 \
+    --planning_horizon 10 \
     --outfile "$TEST_WORK_DIR/cli_full.csv"
 
 $SIMULATOR "$TEST_TRACE" \
@@ -96,6 +98,95 @@ if diff -q "$TEST_WORK_DIR/cli_full.csv" "$TEST_WORK_DIR/pb_full.csv" > /dev/nul
     PASS=$((PASS + 1))
 else
     echo "  ✗ Full config differs from CLI"
+    FAIL=$((FAIL + 1))
+fi
+
+# Test 2b: planning-time resolution changes the reservation/backfill decision
+# but not the actual duration. Job 0 starts off-grid at t=1. Its projected
+# release is t=120 on a 60-second timestamp grid, while job 2's proposed
+# release is also t=120; strict backfill safety therefore rejects job 2. This
+# distinguishes timestamp quantization from rounding each duration.
+echo "Test 2b: planning time resolution affects planning, not execution"
+RESOLUTION_TRACE="tests/test_traces/feature/planning_time_resolution.csv"
+$SIMULATOR "$RESOLUTION_TRACE" \
+    --total_nodes 10 \
+    --trace_format simple \
+    --timestamp_format epoch \
+    --run_time_mode limit \
+    --backfill_policy easy \
+    --outfile "$TEST_WORK_DIR/exact_planning.csv"
+
+$SIMULATOR "$RESOLUTION_TRACE" \
+    --total_nodes 10 \
+    --trace_format simple \
+    --timestamp_format epoch \
+    --run_time_mode limit \
+    --backfill_policy easy \
+    --planning_time_resolution 60 \
+    --outfile "$TEST_WORK_DIR/grid_planning.csv"
+
+if diff -u \
+    <(awk -F, 'NR == 1 { print "job_id,start_time,end_time"; next } { print NR - 2 "," $2 "," $3 }' "$TEST_WORK_DIR/exact_planning.csv") \
+    <(printf 'job_id,start_time,end_time\n0,1,120\n1,120,130\n2,2,61\n') > /dev/null && \
+   diff -u \
+    <(awk -F, 'NR == 1 { print "job_id,start_time,end_time"; next } { print NR - 2 "," $2 "," $3 }' "$TEST_WORK_DIR/grid_planning.csv") \
+    <(printf 'job_id,start_time,end_time\n0,1,120\n1,120,130\n2,130,189\n') > /dev/null; then
+    echo "  ✓ Planning grid quantizes projected timestamps only"
+    PASS=$((PASS + 1))
+else
+    echo "  ✗ Planning-time resolution schedule differs from expected"
+    FAIL=$((FAIL + 1))
+fi
+
+# Test 2c: an out-of-horizon EASY reservation must not prevent a periodic
+# backfill. Job 1 needs all nodes at t=100. Without a horizon, job 2 cannot
+# finish strictly before that reservation. With a ten-second horizon, the
+# reservation is omitted and job 2 starts at the first periodic tick, t=5.
+echo "Test 2c: planning horizon limits periodic reservations"
+HORIZON_TRACE="tests/test_traces/feature/planning_horizon.csv"
+$SIMULATOR "$HORIZON_TRACE" \
+    --total_nodes 10 \
+    --trace_format simple \
+    --timestamp_format epoch \
+    --run_time_mode limit \
+    --backfill_policy easy \
+    --backfill_interval 5 \
+    --outfile "$TEST_WORK_DIR/unbounded_horizon.csv"
+
+$SIMULATOR "$HORIZON_TRACE" \
+    --total_nodes 10 \
+    --trace_format simple \
+    --timestamp_format epoch \
+    --run_time_mode limit \
+    --backfill_policy easy \
+    --backfill_interval 5 \
+    --planning_horizon 10 \
+    --outfile "$TEST_WORK_DIR/bounded_horizon.csv"
+
+$SIMULATOR "$HORIZON_TRACE" \
+    --total_nodes 10 \
+    --trace_format simple \
+    --timestamp_format epoch \
+    --run_time_mode limit \
+    --backfill_policy hybrid \
+    --reservation_depth 1 \
+    --backfill_interval 5 \
+    --planning_horizon 10 \
+    --outfile "$TEST_WORK_DIR/hybrid_horizon.csv"
+
+if diff -u \
+    <(awk -F, 'NR == 1 { print "job_id,start_time,end_time"; next } { print NR - 2 "," $2 "," $3 }' "$TEST_WORK_DIR/unbounded_horizon.csv") \
+    <(printf 'job_id,start_time,end_time\n0,0,100\n1,100,110\n2,110,209\n') > /dev/null && \
+   diff -u \
+    <(awk -F, 'NR == 1 { print "job_id,start_time,end_time"; next } { print NR - 2 "," $2 "," $3 }' "$TEST_WORK_DIR/bounded_horizon.csv") \
+    <(printf 'job_id,start_time,end_time\n0,0,100\n1,104,114\n2,5,104\n') > /dev/null && \
+   diff -u \
+    <(awk -F, 'NR == 1 { print "job_id,start_time,end_time"; next } { print NR - 2 "," $2 "," $3 }' "$TEST_WORK_DIR/hybrid_horizon.csv") \
+    <(printf 'job_id,start_time,end_time\n0,0,100\n1,104,114\n2,5,104\n') > /dev/null; then
+    echo "  ✓ Periodic horizon omits out-of-window EASY and hybrid reservations"
+    PASS=$((PASS + 1))
+else
+    echo "  ✗ Planning-horizon schedule differs from expected"
     FAIL=$((FAIL + 1))
 fi
 

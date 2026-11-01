@@ -31,6 +31,7 @@ This is the REFERENCE implementation for verifying DR_EVT conservative backfilli
 """
 
 import csv
+import math
 import sys
 import os
 from dataclasses import dataclass
@@ -81,7 +82,9 @@ class ConservativeBackfillingScheduler:
 
     def __init__(self, total_nodes: int, verbose: bool = False,
                  reservation_depth: int = 0, backfill_queue_depth: int = 0,
-                 backfill_interval: float = 0.0):
+                 backfill_interval: float = 0.0,
+                 planning_time_resolution: float = 0.0,
+                 planning_horizon: float = float('inf')):
         self.total_nodes = total_nodes
         self.verbose = verbose
         # Waiting jobs that hold reservations; 0 means every waiting job,
@@ -92,6 +95,10 @@ class ConservativeBackfillingScheduler:
         # Zero preserves event-driven backfill. A positive interval runs FCFS
         # dispatch on ordinary events and backfill only at ticks.
         self.backfill_interval = backfill_interval
+        # Planning timestamps are rounded only after their start is known.
+        self.planning_time_resolution = planning_time_resolution
+        # Reservations outside this periodic planning window are omitted.
+        self.planning_horizon = planning_horizon
 
         # State
         self.current_time = 0.0
@@ -108,6 +115,14 @@ class ConservativeBackfillingScheduler:
     def log(self, msg: str):
         if self.verbose:
             print(f"[t={self.current_time:6.0f}] {msg}", file=sys.stderr)
+
+    def planned_end(self, start_time: float, duration: float) -> float:
+        """Return the projected end timestamp on the planning grid."""
+        end_time = start_time + duration
+        if self.planning_time_resolution:
+            end_time = (math.ceil(end_time / self.planning_time_resolution) *
+                        self.planning_time_resolution)
+        return end_time
 
     def get_free_nodes(self) -> int:
         """Calculate currently free nodes"""
@@ -202,10 +217,12 @@ class ConservativeBackfillingScheduler:
                 continue
             if self.reservation_depth and reserved >= self.reservation_depth:
                 break
-            reserved += 1
 
             # Calculate reservation using effective running jobs
             reservation = self.calculate_job_reservation_time_from_timeline(job, timeline)
+            if reservation - self.current_time > self.planning_horizon:
+                continue
+            reserved += 1
             earliest_reservation = min(earliest_reservation, reservation)
 
         return earliest_reservation if earliest_reservation < float('inf') else None
@@ -306,7 +323,7 @@ class ConservativeBackfillingScheduler:
                 continue
 
             # Job can backfill if it completes before the earliest reservation
-            job_end = self.current_time + job.duration
+            job_end = self.planned_end(self.current_time, job.duration)
             if job_end < conservative_window:
                 self.log(f"Conservative backfill job {job.idx} (ends {job_end} < earliest reservation {conservative_window})")
                 self.start_job(job)
@@ -314,7 +331,8 @@ class ConservativeBackfillingScheduler:
                 started = True
 
                 # Track this backfilled job so next jobs see it as running
-                pessimistic_end = self.current_time + job.duration
+                pessimistic_end = self.planned_end(self.current_time,
+                                                   job.duration)
                 backfilled_jobs[job.idx] = (self.current_time, pessimistic_end, job.nodes)
                 effective_running[job.idx] = (self.current_time, pessimistic_end,
                                               pessimistic_end, job.nodes)
@@ -333,7 +351,7 @@ class ConservativeBackfillingScheduler:
         job.end_time = self.current_time + job.actual_run_time
 
         # Track both actual and pessimistic (scheduler's view) end times
-        pessimistic_end = self.current_time + job.duration
+        pessimistic_end = self.planned_end(self.current_time, job.duration)
         self.running[job.idx] = (self.current_time, job.end_time, pessimistic_end, job.nodes)
 
         # Schedule END event
@@ -411,7 +429,8 @@ def load_trace(filename: str) -> List[Job]:
             # Handle both simple format and full format
             submit_time = float(row.get('job_submit_time', row.get('submit_time', 0)))
             nodes = int(row.get('num_nodes', row.get('nodes', 1)))
-            duration = float(row.get('time_limit', row.get('duration', 100)))
+            time_limit = float(row.get('time_limit', row.get('duration', 100)))
+            duration = time_limit
 
             # Check for actual_run_time column
             actual_run_time = None
@@ -423,7 +442,8 @@ def load_trace(filename: str) -> List[Job]:
                 submit_time=submit_time,
                 nodes=nodes,
                 duration=duration,
-                actual_run_time=actual_run_time
+                actual_run_time=(time_limit if actual_run_time is None else
+                                 actual_run_time)
             ))
     return jobs
 
@@ -473,7 +493,7 @@ def write_resource_trace(jobs: List[Job], filename: str, total_nodes: int):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python_conservative_scheduler.py <trace.csv> [--verbose] [--nodes N] [--outdir DIR] [--reservation-depth N] [--backfill-queue-depth N] [--backfill-interval SECONDS]")
+        print("Usage: python_conservative_scheduler.py <trace.csv> [--verbose] [--nodes N] [--outdir DIR] [--reservation-depth N] [--backfill-queue-depth N] [--backfill-interval SECONDS] [--planning-time-resolution SECONDS] [--planning-horizon SECONDS]")
         print()
         print("Python reference CONSERVATIVE backfilling scheduler for verification")
         print()
@@ -487,6 +507,10 @@ def main():
         print("               (default: 0 = all)")
         print("  --backfill-interval SECONDS  Run backfill only on periodic ticks")
         print("               (default: 0 = event-driven backfill)")
+        print("  --planning-time-resolution SECONDS  Round planning durations up")
+        print("               to this grid (default: 0 = exact planning)")
+        print("  --planning-horizon SECONDS  Limit periodic reservations to this")
+        print("               look-ahead (default: unlimited)")
         print()
         print("Generates reference output for CONSERVATIVE backfilling verification")
         print("Output files are written to /tmp by default to avoid directory pollution")
@@ -525,6 +549,20 @@ def main():
         if backfill_interval < 0.0:
             raise ValueError('--backfill-interval must be nonnegative')
 
+    planning_time_resolution = 0.0
+    if '--planning-time-resolution' in sys.argv:
+        idx = sys.argv.index('--planning-time-resolution')
+        planning_time_resolution = float(sys.argv[idx + 1])
+        if planning_time_resolution < 0.0:
+            raise ValueError('--planning-time-resolution must be nonnegative')
+
+    planning_horizon = float('inf')
+    if '--planning-horizon' in sys.argv:
+        idx = sys.argv.index('--planning-horizon')
+        planning_horizon = float(sys.argv[idx + 1])
+        if planning_horizon < 0.0:
+            raise ValueError('--planning-horizon must be nonnegative')
+
     print(f"=== Python Reference CONSERVATIVE Backfilling Scheduler ===", file=sys.stderr)
     print(f"Trace: {trace_file}", file=sys.stderr)
     print(f"Total nodes: {total_nodes}", file=sys.stderr)
@@ -532,6 +570,8 @@ def main():
     print(f"Reservation depth: {reservation_depth or 'all'}", file=sys.stderr)
     print(f"Queue depth: {backfill_queue_depth or 'all'}", file=sys.stderr)
     print(f"Backfill interval: {backfill_interval or 'event-driven'}", file=sys.stderr)
+    print(f"Planning resolution: {planning_time_resolution or 'exact'}", file=sys.stderr)
+    print(f"Planning horizon: {planning_horizon if math.isfinite(planning_horizon) else 'unlimited'}", file=sys.stderr)
     print(f"Verbose: {verbose}", file=sys.stderr)
     print(file=sys.stderr)
 
@@ -543,7 +583,9 @@ def main():
     scheduler = ConservativeBackfillingScheduler(total_nodes, verbose=verbose,
                                                  reservation_depth=reservation_depth,
                                                  backfill_queue_depth=backfill_queue_depth,
-                                                 backfill_interval=backfill_interval)
+                                                 backfill_interval=backfill_interval,
+                                                 planning_time_resolution=planning_time_resolution,
+                                                 planning_horizon=planning_horizon)
     jobs = scheduler.simulate(jobs)
 
     # Write output files to specified directory

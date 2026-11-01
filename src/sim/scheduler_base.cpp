@@ -164,10 +164,14 @@ create_scheduler(num_nodes_t total_nodes, size_t initial_job_count,
                  size_t wait_queue_capacity,
                  CircularOverflowPolicy wait_queue_overflow,
                  size_t reservation_depth, size_t backfill_queue_depth,
-                 tdiff_t backfill_interval) {
+                 tdiff_t backfill_interval, tdiff_t planning_horizon) {
   if (!std::isfinite(backfill_interval) || backfill_interval < 0.0) {
     throw std::invalid_argument(
         "backfill_interval must be finite and nonnegative");
+  }
+  if (!std::isfinite(planning_horizon) || planning_horizon < 0.0) {
+    throw std::invalid_argument(
+        "planning_horizon must be finite and nonnegative");
   }
   if (backfill_interval > 0.0) {
     if (backfill_policy == BackfillPolicy::NONE) {
@@ -190,7 +194,7 @@ create_scheduler(num_nodes_t total_nodes, size_t initial_job_count,
     return std::make_unique<CircularBufferFCFSPeriodicHybridScheduler>(
         total_nodes, initial_job_count, wait_queue_capacity,
         wait_queue_overflow, backfill_policy, reservation_depth,
-        backfill_queue_depth);
+        backfill_queue_depth, planning_horizon);
   }
   if (backfill_policy == BackfillPolicy::HYBRID) {
     // Hybrid reservations are implemented by the conservative FCFS

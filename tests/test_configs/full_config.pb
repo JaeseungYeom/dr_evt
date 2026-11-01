@@ -4,4 +4,6 @@ timestamp_format: "epoch"
 backfill_policy: "easy"
 priority_policy: "fcfs"
 num_max_candidates: 8
+planning_time_resolution: 10
+planning_horizon: 10
 run_time_mode: "limit"
