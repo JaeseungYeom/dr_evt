@@ -44,9 +44,9 @@ print_usage() {
     echo "ARGUMENTS:"
     echo "  --backfill-policy POLICY"
     echo "                all (default) runs EASY and hybrid comparisons;"
-    echo "                easy benchmarks all FCFS queue variants; hybrid"
-    echo "                benchmarks deque, circular, and the Python oracle; with"
-    echo "                a periodic interval, circular and Python only."
+    echo "                easy benchmarks all FCFS queue variants; hybrid benchmarks"
+    echo "                deque, circular, and the Python oracle. Conservative"
+    echo "                benchmarks circular and the Python oracle when periodic."
     echo "  --reservation-depth N"
     echo "                Hybrid reservations to protect (default: 32)."
     echo "  --backfill-queue-depth N"
@@ -68,7 +68,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --backfill-policy)
             if [[ $# -lt 2 ]]; then
-                echo "Error: --backfill-policy requires all, easy, or hybrid"
+                echo "Error: --backfill-policy requires all, easy, hybrid, or conservative"
                 exit 1
             fi
             BENCHMARK_MODE="$2"
@@ -116,8 +116,8 @@ if [[ -z "$TRACE_FILE" ]]; then
     TRACE_FILE="tests/test_traces/scale/huge_10000jobs.csv"
 fi
 
-if [[ "$BENCHMARK_MODE" != "all" && "$BENCHMARK_MODE" != "easy" && "$BENCHMARK_MODE" != "hybrid" ]]; then
-    echo "Error: unsupported backfill policy '$BENCHMARK_MODE' (use all, easy, or hybrid)"
+if [[ "$BENCHMARK_MODE" != "all" && "$BENCHMARK_MODE" != "easy" && "$BENCHMARK_MODE" != "hybrid" && "$BENCHMARK_MODE" != "conservative" ]]; then
+    echo "Error: unsupported backfill policy '$BENCHMARK_MODE' (use all, easy, hybrid, or conservative)"
     exit 1
 fi
 
@@ -143,7 +143,7 @@ elapsed_seconds() {
     echo "scale=3; ($2 - $1) / 1000000000" | bc
 }
 
-run_hybrid_benchmark() {
+run_periodic_backfill_benchmark() {
     local outdir trace_name deque_out circular_out python_out_dir
     local deque_time circular_time python_time python_status circular_status
     local cpp_start cpp_end python_start python_end
@@ -160,15 +160,19 @@ run_hybrid_benchmark() {
     circular_out="$outdir/circular.csv"
     python_out_dir="$outdir/python"
     mkdir -p "$python_out_dir"
+    cpp_policy_args=()
+    if [[ "$BENCHMARK_MODE" == "hybrid" ]]; then
+        cpp_policy_args=(--reservation_depth "$HYBRID_RESERVATION_DEPTH")
+    fi
 
-    run_hybrid_cpp() {
+    run_periodic_cpp() {
         local label="$1" queue_impl="$2" output="$3" resources="$4" log="$5"
         cpp_start=$(date +%s%N)
         if ! "$SIMULATOR" "$TRACE_FILE" \
             --priority_policy fcfs_conservative \
             --queue_impl "$queue_impl" \
-            --backfill_policy hybrid \
-            --reservation_depth "$HYBRID_RESERVATION_DEPTH" \
+            --backfill_policy "$BENCHMARK_MODE" \
+            "${cpp_policy_args[@]}" \
             --backfill_queue_depth "$HYBRID_QUEUE_DEPTH" \
             --backfill_interval "$HYBRID_BACKFILL_INTERVAL" \
             --total_nodes "$TOTAL_NODES" \
@@ -187,12 +191,14 @@ run_hybrid_benchmark() {
 
     echo ""
     echo "=========================================="
-    echo "Hybrid Backfill Queue Comparison"
+    echo "${BENCHMARK_MODE^} Backfill Queue Comparison"
     echo "=========================================="
     echo "Trace: $TRACE_FILE"
     echo "Total nodes: $TOTAL_NODES"
     echo "Max jobs: $MAX_JOBS"
-    echo "Reservation depth: $HYBRID_RESERVATION_DEPTH"
+    if [[ "$BENCHMARK_MODE" == "hybrid" ]]; then
+        echo "Reservation depth: $HYBRID_RESERVATION_DEPTH"
+    fi
     echo "Queue depth: $HYBRID_QUEUE_DEPTH"
     echo "Backfill interval: $HYBRID_BACKFILL_INTERVAL"
     echo "Measurement: complete simulation wall-clock time (not isolated queue operations)"
@@ -200,11 +206,11 @@ run_hybrid_benchmark() {
 
     if [[ "$HYBRID_BACKFILL_INTERVAL" == "0" ]]; then
         echo "Running C++ deque..."
-        deque_time=$(run_hybrid_cpp "deque" deque "$deque_out" "$outdir/deque_resources.csv" "$outdir/deque.log")
+        deque_time=$(run_periodic_cpp "deque" deque "$deque_out" "$outdir/deque_resources.csv" "$outdir/deque.log")
         echo "done (${deque_time}s)"
     fi
     echo "Running C++ circular..."
-    circular_time=$(run_hybrid_cpp "circular" circular "$circular_out" "$outdir/circular_resources.csv" "$outdir/circular.log")
+    circular_time=$(run_periodic_cpp "circular" circular "$circular_out" "$outdir/circular_resources.csv" "$outdir/circular.log")
     echo "done (${circular_time}s)"
 
     if [[ "$HYBRID_BACKFILL_INTERVAL" == "0" ]]; then
@@ -224,9 +230,13 @@ run_hybrid_benchmark() {
 
     echo -n "Running Python hybrid reference... "
     python_start=$(date +%s%N)
+    python_policy_args=()
+    if [[ "$BENCHMARK_MODE" == "hybrid" ]]; then
+        python_policy_args=(--reservation-depth "$HYBRID_RESERVATION_DEPTH")
+    fi
     if "$PYTHON_BIN" scripts/python_conservative_scheduler.py "$TRACE_FILE" \
         --nodes "$TOTAL_NODES" --outdir "$python_out_dir" \
-        --reservation-depth "$HYBRID_RESERVATION_DEPTH" \
+        "${python_policy_args[@]}" \
         --backfill-queue-depth "$HYBRID_QUEUE_DEPTH" \
         --backfill-interval "$HYBRID_BACKFILL_INTERVAL" \
         >"$outdir/python.log" 2>&1; then
@@ -266,14 +276,14 @@ run_hybrid_benchmark() {
     fi
 
     if [[ "$circular_status" != "PASS" || "$python_status" != "PASS" ]]; then
-        echo "Hybrid benchmark correctness comparison failed. Outputs: $outdir"
+        echo "Backfill benchmark correctness comparison failed. Outputs: $outdir"
         return 1
     fi
     rm -rf -- "$outdir"
 }
 
-if [[ "$BENCHMARK_MODE" == "hybrid" ]]; then
-    run_hybrid_benchmark
+if [[ "$BENCHMARK_MODE" == "hybrid" || "$BENCHMARK_MODE" == "conservative" ]]; then
+    run_periodic_backfill_benchmark
     exit $?
 fi
 

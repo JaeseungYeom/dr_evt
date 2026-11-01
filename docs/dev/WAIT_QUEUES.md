@@ -113,6 +113,12 @@ tests/benchmark_wait_queues.sh --backfill-policy hybrid \
   --reservation-depth 32 \
   --backfill-queue-depth 32 \
   tests/test_traces/scale/huge_2000jobs.csv
+
+# Slurm-default-style periodic backfill: 30 s, reserve all tested jobs,
+# and examine Slurm's default 500-job backfill prefix
+tests/benchmark_wait_queues.sh --backfill-policy conservative \
+  --backfill-interval 30 \
+  --backfill-queue-depth 500
 ```
 
 Run the same benchmark with:
