@@ -154,6 +154,13 @@ run_periodic_backfill_benchmark() {
     local outdir trace_name deque_out circular_out python_out_dir
     local deque_time circular_time python_time python_status circular_status
     local cpp_start cpp_end python_start python_end
+    local benchmark_label
+
+    case "$BENCHMARK_MODE" in
+        hybrid) benchmark_label="Hybrid" ;;
+        conservative) benchmark_label="Conservative" ;;
+        *) benchmark_label="$BENCHMARK_MODE" ;;
+    esac
 
     # A periodic benchmark measures the C++ implementation by default.  The
     # Python oracle is deliberately opt-in because repeated reference passes
@@ -203,7 +210,7 @@ run_periodic_backfill_benchmark() {
 
     echo ""
     echo "=========================================="
-    echo "${BENCHMARK_MODE^} Backfill Queue Comparison"
+    echo "$benchmark_label Backfill Queue Comparison"
     echo "=========================================="
     echo "Trace: $TRACE_FILE"
     echo "Total nodes: $TOTAL_NODES"
@@ -845,5 +852,6 @@ fi
 if [[ "$BENCHMARK_MODE" == "all" ]]; then
     echo ""
     echo "Starting hybrid backfill comparison..."
-    run_hybrid_benchmark
+    BENCHMARK_MODE="hybrid"
+    run_periodic_backfill_benchmark
 fi
