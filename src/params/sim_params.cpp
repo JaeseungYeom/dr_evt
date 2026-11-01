@@ -42,6 +42,7 @@ static constexpr int OPT_CORES_PER_NODE = 1009;
 static constexpr int OPT_RESERVATION_DEPTH = 1010;
 static constexpr int OPT_BACKFILL_QUEUE_DEPTH = 1014;
 static constexpr int OPT_BACKFILL_INTERVAL = 1015;
+static constexpr int OPT_BACKFILL_TIME_RESOLUTION = 1016;
 static constexpr int OPT_NODE_RELEASE_DELAY = 1011;
 static constexpr int OPT_NODE_RELEASE_DELAY_MODEL = 1012;
 static constexpr int OPT_NODE_RELEASE_DELAY_SPREAD = 1013;
@@ -65,6 +66,8 @@ static const struct option sim_longopts[] = {
     {"reservation_depth", required_argument, 0, OPT_RESERVATION_DEPTH},
     {"backfill_queue_depth", required_argument, 0, OPT_BACKFILL_QUEUE_DEPTH},
     {"backfill_interval", required_argument, 0, OPT_BACKFILL_INTERVAL},
+    {"backfill_time_resolution", required_argument, 0,
+     OPT_BACKFILL_TIME_RESOLUTION},
     {"priority_policy", required_argument, 0, 'p'},
     {"queue_impl", required_argument, 0, 'q'},
     {"block_size", required_argument, 0, 'Q'},
@@ -107,6 +110,7 @@ Sim_Params::Sim_Params()
       m_is_nodes_set(false), m_backfill_policy(BackfillPolicy::EASY),
       m_num_max_candidates(1), m_reservation_depth(0),
       m_backfill_queue_depth(0), m_backfill_interval(0.0),
+      m_backfill_time_resolution(0.0),
       m_priority_policy(PriorityPolicy::FCFS),
       m_queue_impl(QueueImplementation::CIRCULAR), m_block_size(128),
       m_wait_queue_capacity(0), // 0 = size of job trace (never overflows)
@@ -310,6 +314,22 @@ void Sim_Params::getopt(int &argc, char **&argv) {
       }
       if (!std::isfinite(m_backfill_interval) || m_backfill_interval < 0.0) {
         std::cerr << "Error: --backfill_interval must be finite and "
+                     "nonnegative"
+                  << std::endl;
+        print_usage(argv[0], 1);
+      }
+      break;
+    case OPT_BACKFILL_TIME_RESOLUTION: /* --backfill_time_resolution */
+      try {
+        m_backfill_time_resolution = std::stod(optarg);
+      } catch (const std::exception &) {
+        std::cerr << "Error: --backfill_time_resolution expects a number, got '"
+                  << optarg << "'" << std::endl;
+        print_usage(argv[0], 1);
+      }
+      if (!std::isfinite(m_backfill_time_resolution) ||
+          m_backfill_time_resolution < 0.0) {
+        std::cerr << "Error: --backfill_time_resolution must be finite and "
                      "nonnegative"
                   << std::endl;
         print_usage(argv[0], 1);
@@ -823,6 +843,10 @@ void Sim_Params::print_usage(const std::string exec, int code) {
          "event-driven\n"
          "        FCFS dispatch; 0 disables periodic evaluation. Requires an\n"
          "        enabled --backfill_policy and --queue_impl circular.\n"
+         "\n"
+         "    --backfill_time_resolution SECONDS\n"
+         "        Round time limits used for backfill planning up to this "
+         "grid; 0 keeps exact planning (default). Execution is unchanged.\n"
          "\n"
          "    -p, --priority_policy {fcfs|fcfs_alt|fcfs_conservative|sjf|ljf}\n"
          "        Job priority/ordering policy (default: fcfs).\n"

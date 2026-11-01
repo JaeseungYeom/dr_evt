@@ -132,6 +132,9 @@ message DR_EVT_Params {
         // evaluations. Zero keeps event-driven backfill behavior.
         double backfill_interval = 42;
 
+        // Planning time-limit grid for backfill reservations; zero is exact.
+        double backfill_time_resolution = 43;
+
         // Seconds a job's nodes stay unavailable after it ends before another
         // job can start on them (default 0: reusable at the job's end). Not
         // applied to replayed history.

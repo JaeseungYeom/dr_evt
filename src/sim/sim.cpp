@@ -2288,7 +2288,8 @@ void BasicSimulation<TraceType>::submit_job(job_no_t job_idx,
   job.set_busy_nodes(get_nodes_in_use());
 #endif
 
-  m_scheduler->insert_job(job_idx, submit_time, run_time_estimate, nodes);
+  m_scheduler->insert_job(job_idx, submit_time,
+                          planning_time_limit(run_time_estimate), nodes);
   ++m_pending_queue_arrivals[submit_time];
   m_latest_submit_time = std::max(m_latest_submit_time, submit_time);
   // Counted here, after the scheduler accepted it, so rejected jobs above
