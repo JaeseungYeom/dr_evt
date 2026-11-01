@@ -50,6 +50,8 @@ class Job:
     # Simulation results (filled in by scheduler)
     start_time: Optional[float] = None
     end_time: Optional[float] = None
+    # True when the job can never fit the machine; it is never enqueued.
+    rejected: bool = False
 
     def __post_init__(self):
         # Default actual_run_time to duration if not specified
@@ -360,7 +362,17 @@ class ConservativeBackfillingScheduler:
         self.record_resource_state()
 
     def handle_submit(self, job: Job):
-        """Handle job submission: enqueue it"""
+        """Handle job submission: enqueue it, or reject it when it can never fit"""
+        if job.nodes > self.total_nodes:
+            # Same rule as the C++ simulator: a job larger than the machine
+            # never enters the wait queue. Leaving it there would block every
+            # job behind it in FCFS order and, in periodic mode, keep the tick
+            # loop alive forever.
+            job.rejected = True
+            print(f"Job {job.idx} rejected: requests {job.nodes} nodes, exceeds "
+                  f"total nodes ({self.total_nodes}); this job can never be "
+                  f"scheduled.", file=sys.stderr)
+            return
         self.log(f"Job {job.idx} submitted (nodes={job.nodes}, duration={job.duration})")
         self.wait_queue.append(job)
 
@@ -601,14 +613,16 @@ def main():
     print(f"Resource trace written to: {resource_file}", file=sys.stderr)
     print(f"Final simulation time: {scheduler.current_time}", file=sys.stderr)
 
-    # Verify all jobs completed
+    # Verify all admitted jobs completed; rejected jobs are reported apart.
     completed = sum(1 for job in jobs if job.start_time is not None)
-    print(f"Jobs completed: {completed}/{len(jobs)}", file=sys.stderr)
+    rejected = sum(1 for job in jobs if job.rejected)
+    print(f"Jobs completed: {completed}/{len(jobs)}"
+          + (f" ({rejected} rejected)" if rejected else ""), file=sys.stderr)
 
-    if completed != len(jobs):
+    if completed + rejected != len(jobs):
         print("\n⚠ WARNING: Not all jobs completed!", file=sys.stderr)
         for job in jobs:
-            if job.start_time is None:
+            if job.start_time is None and not job.rejected:
                 print(f"  Job {job.idx}: never started", file=sys.stderr)
 
 if __name__ == '__main__':
