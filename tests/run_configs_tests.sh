@@ -85,6 +85,7 @@ $SIMULATOR "$TEST_TRACE" \
     --backfill_policy easy \
     --priority_policy fcfs \
     --num_max_candidates 8 \
+    --planning_time_resolution 10 \
     --outfile "$TEST_WORK_DIR/cli_full.csv"
 
 $SIMULATOR "$TEST_TRACE" \
@@ -96,6 +97,43 @@ if diff -q "$TEST_WORK_DIR/cli_full.csv" "$TEST_WORK_DIR/pb_full.csv" > /dev/nul
     PASS=$((PASS + 1))
 else
     echo "  ✗ Full config differs from CLI"
+    FAIL=$((FAIL + 1))
+fi
+
+# Test 2b: planning-time resolution changes the reservation/backfill decision
+# but not the actual duration.  Job 2 normally fits from t=1 through t=60,
+# before job 1's reservation at t=61.  A 60-second planning grid rounds its
+# estimate to 60, so it cannot backfill and starts after job 1 at t=71; its
+# execution duration nevertheless remains its unrounded 59 seconds.
+echo "Test 2b: planning time resolution affects planning, not execution"
+RESOLUTION_TRACE="tests/test_traces/feature/planning_time_resolution.csv"
+$SIMULATOR "$RESOLUTION_TRACE" \
+    --total_nodes 10 \
+    --trace_format simple \
+    --timestamp_format epoch \
+    --run_time_mode limit \
+    --backfill_policy easy \
+    --outfile "$TEST_WORK_DIR/exact_planning.csv"
+
+$SIMULATOR "$RESOLUTION_TRACE" \
+    --total_nodes 10 \
+    --trace_format simple \
+    --timestamp_format epoch \
+    --run_time_mode limit \
+    --backfill_policy easy \
+    --planning_time_resolution 60 \
+    --outfile "$TEST_WORK_DIR/grid_planning.csv"
+
+if diff -u \
+    <(awk -F, 'NR == 1 { print "job_id,start_time,end_time"; next } { print NR - 2 "," $2 "," $3 }' "$TEST_WORK_DIR/exact_planning.csv") \
+    <(printf 'job_id,start_time,end_time\n0,0,61\n1,61,71\n2,1,60\n') > /dev/null && \
+   diff -u \
+    <(awk -F, 'NR == 1 { print "job_id,start_time,end_time"; next } { print NR - 2 "," $2 "," $3 }' "$TEST_WORK_DIR/grid_planning.csv") \
+    <(printf 'job_id,start_time,end_time\n0,0,61\n1,61,71\n2,71,130\n') > /dev/null; then
+    echo "  ✓ Planning grid changes backfill while preserving execution duration"
+    PASS=$((PASS + 1))
+else
+    echo "  ✗ Planning-time resolution schedule differs from expected"
     FAIL=$((FAIL + 1))
 fi
 
