@@ -106,6 +106,13 @@ tests/benchmark_wait_queues.sh --backfill-policy hybrid \
   --reservation-depth 32 \
   --backfill-queue-depth 32 \
   tests/test_traces/scale/huge_2000jobs.csv
+
+# Periodic hybrid backfill: circular C++ scheduler and Python oracle
+tests/benchmark_wait_queues.sh --backfill-policy hybrid \
+  --backfill-interval 30 \
+  --reservation-depth 32 \
+  --backfill-queue-depth 32 \
+  tests/test_traces/scale/huge_2000jobs.csv
 ```
 
 Run the same benchmark with:

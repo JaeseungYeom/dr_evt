@@ -33,6 +33,7 @@ BENCHMARK_MODE="all"
 # built-in scheduler cannot protect jobs it does not examine in that pass.
 HYBRID_RESERVATION_DEPTH=32
 HYBRID_QUEUE_DEPTH=32
+HYBRID_BACKFILL_INTERVAL=0
 
 print_usage() {
     echo "Usage: $0 [OPTIONS] [TRACE_FILE]"
@@ -44,17 +45,21 @@ print_usage() {
     echo "  --backfill-policy POLICY"
     echo "                all (default) runs EASY and hybrid comparisons;"
     echo "                easy benchmarks all FCFS queue variants; hybrid"
-    echo "                benchmarks deque, circular, and the Python oracle."
+    echo "                benchmarks deque, circular, and the Python oracle; with"
+    echo "                a periodic interval, circular and Python only."
     echo "  --reservation-depth N"
     echo "                Hybrid reservations to protect (default: 32)."
     echo "  --backfill-queue-depth N"
     echo "                Eligible jobs considered per hybrid pass (default: 32)."
+    echo "  --backfill-interval SECONDS"
+    echo "                Periodic backfill cadence; 0 keeps event-driven backfill."
     echo "  TRACE_FILE    Path to test trace (default: tests/test_traces/scale/huge_10000jobs.csv)"
     echo ""
     echo "EXAMPLES:"
     echo "  $0                                           # EASY and hybrid, default trace"
     echo "  $0 --backfill-policy easy                    # Reproduce the EASY table only"
     echo "  $0 --backfill-policy hybrid                  # Hybrid comparison (depth 32)"
+    echo "  $0 --backfill-policy hybrid --backfill-interval 30"
     echo "  $0 --backfill-policy hybrid tests/test_traces/scale/huge_2000jobs.csv"
     exit 0
 }
@@ -83,6 +88,14 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             HYBRID_QUEUE_DEPTH="$2"
+            shift 2
+            ;;
+        --backfill-interval)
+            if [[ $# -lt 2 || ! "$2" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+                echo "Error: --backfill-interval requires a nonnegative number"
+                exit 1
+            fi
+            HYBRID_BACKFILL_INTERVAL="$2"
             shift 2
             ;;
         -h|--help)
@@ -157,6 +170,7 @@ run_hybrid_benchmark() {
             --backfill_policy hybrid \
             --reservation_depth "$HYBRID_RESERVATION_DEPTH" \
             --backfill_queue_depth "$HYBRID_QUEUE_DEPTH" \
+            --backfill_interval "$HYBRID_BACKFILL_INTERVAL" \
             --total_nodes "$TOTAL_NODES" \
             --max_jobs "$MAX_JOBS" \
             --trace_format "$TRACE_FORMAT" \
@@ -180,23 +194,32 @@ run_hybrid_benchmark() {
     echo "Max jobs: $MAX_JOBS"
     echo "Reservation depth: $HYBRID_RESERVATION_DEPTH"
     echo "Queue depth: $HYBRID_QUEUE_DEPTH"
+    echo "Backfill interval: $HYBRID_BACKFILL_INTERVAL"
     echo "Measurement: complete simulation wall-clock time (not isolated queue operations)"
     echo ""
 
-    echo "Running C++ deque..."
-    deque_time=$(run_hybrid_cpp "deque" deque "$deque_out" "$outdir/deque_resources.csv" "$outdir/deque.log")
-    echo "done (${deque_time}s)"
+    if [[ "$HYBRID_BACKFILL_INTERVAL" == "0" ]]; then
+        echo "Running C++ deque..."
+        deque_time=$(run_hybrid_cpp "deque" deque "$deque_out" "$outdir/deque_resources.csv" "$outdir/deque.log")
+        echo "done (${deque_time}s)"
+    fi
     echo "Running C++ circular..."
     circular_time=$(run_hybrid_cpp "circular" circular "$circular_out" "$outdir/circular_resources.csv" "$outdir/circular.log")
     echo "done (${circular_time}s)"
 
-    echo -n "Checking C++ schedule equivalence... "
-    if diff -q "$deque_out" "$circular_out" >/dev/null 2>&1; then
-        circular_status="PASS"
-        echo "PASS"
+    if [[ "$HYBRID_BACKFILL_INTERVAL" == "0" ]]; then
+        echo -n "Checking C++ schedule equivalence... "
+        if diff -q "$deque_out" "$circular_out" >/dev/null 2>&1; then
+            circular_status="PASS"
+            echo "PASS"
+        else
+            circular_status="FAIL"
+            echo "FAIL (outputs retained in $outdir)"
+        fi
     else
-        circular_status="FAIL"
-        echo "FAIL (outputs retained in $outdir)"
+        deque_out="$circular_out"
+        deque_time="$circular_time"
+        circular_status="PASS"
     fi
 
     echo -n "Running Python hybrid reference... "
@@ -205,6 +228,7 @@ run_hybrid_benchmark() {
         --nodes "$TOTAL_NODES" --outdir "$python_out_dir" \
         --reservation-depth "$HYBRID_RESERVATION_DEPTH" \
         --backfill-queue-depth "$HYBRID_QUEUE_DEPTH" \
+        --backfill-interval "$HYBRID_BACKFILL_INTERVAL" \
         >"$outdir/python.log" 2>&1; then
         python_end=$(date +%s%N)
         python_time=$(elapsed_seconds "$python_start" "$python_end")
@@ -227,9 +251,13 @@ run_hybrid_benchmark() {
     echo ""
     echo "Implementation | Time (s) | vs deque | Correctness"
     echo "---------------|----------|----------|------------"
-    printf "%-14s | %-8s | %-8s | %-11s\n" "deque" "$deque_time" "1.00x" "baseline"
-    printf "%-14s | %-8s | %-8s | %-11s\n" \
-        "circular" "$circular_time" "$(echo "scale=2; $circular_time / $deque_time" | bc)x" "$circular_status"
+    if [[ "$HYBRID_BACKFILL_INTERVAL" == "0" ]]; then
+        printf "%-14s | %-8s | %-8s | %-11s\n" "deque" "$deque_time" "1.00x" "baseline"
+        printf "%-14s | %-8s | %-8s | %-11s\n" \
+            "circular" "$circular_time" "$(echo "scale=2; $circular_time / $deque_time" | bc)x" "$circular_status"
+    else
+        printf "%-14s | %-8s | %-8s | %-11s\n" "circular" "$circular_time" "1.00x" "baseline"
+    fi
     if [[ "$python_time" == "N/A" ]]; then
         printf "%-14s | %-8s | %-8s | %-11s\n" "Python ref." "$python_time" "N/A" "$python_status"
     else
@@ -263,7 +291,8 @@ NUM_JOBS=$(wc -l < "$TRACE_FILE" | tr -d ' ')
 
 # This branch benchmarks EASY. Hybrid dispatches above to the focused
 # deque/circular/Python comparison because block and multimap do not implement
-# the same hybrid reservation algorithm.
+# the same hybrid reservation algorithm. Periodic backfill has only a circular
+# C++ implementation, so its hybrid branch compares circular and Python.
 BACKFILL_POLICY="easy"
 
 echo "Parameters:"

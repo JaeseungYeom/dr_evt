@@ -59,15 +59,15 @@ class Job:
 class Event:
     """Simulation event"""
     time: float
-    type: str  # 'SUBMIT', 'START', 'END'
+    type: str  # 'SUBMIT', 'START', 'END', or 'TICK'
     job_idx: int
 
     def __lt__(self, other):
-        # Sort by time first, then END before SUBMIT, then by job_idx
+        # Sort by time first, then END/SUBMIT before periodic scheduling.
         if self.time != other.time:
             return self.time < other.time
         if self.type != other.type:
-            type_order = {'END': 0, 'START': 1, 'SUBMIT': 2}
+            type_order = {'END': 0, 'START': 1, 'SUBMIT': 2, 'TICK': 3}
             return type_order[self.type] < type_order[other.type]
         return self.job_idx < other.job_idx
 
@@ -80,7 +80,8 @@ class ConservativeBackfillingScheduler:
     """
 
     def __init__(self, total_nodes: int, verbose: bool = False,
-                 reservation_depth: int = 0, backfill_queue_depth: int = 0):
+                 reservation_depth: int = 0, backfill_queue_depth: int = 0,
+                 backfill_interval: float = 0.0):
         self.total_nodes = total_nodes
         self.verbose = verbose
         # Waiting jobs that hold reservations; 0 means every waiting job,
@@ -88,6 +89,9 @@ class ConservativeBackfillingScheduler:
         self.reservation_depth = reservation_depth
         # Waiting jobs examined in one backfill pass; 0 means unlimited.
         self.backfill_queue_depth = backfill_queue_depth
+        # Zero preserves event-driven backfill. A positive interval runs FCFS
+        # dispatch on ordinary events and backfill only at ticks.
+        self.backfill_interval = backfill_interval
 
         # State
         self.current_time = 0.0
@@ -219,7 +223,7 @@ class ConservativeBackfillingScheduler:
 
         return self.current_time
 
-    def try_start_jobs(self):
+    def try_start_jobs(self, allow_backfill: bool = True):
         """
         Try to start jobs from wait queue
 
@@ -240,6 +244,9 @@ class ConservativeBackfillingScheduler:
             started = True
 
         if not self.wait_queue:
+            return started
+
+        if not allow_backfill:
             return started
 
         # Step 2: Try conservative backfilling
@@ -334,6 +341,8 @@ class ConservativeBackfillingScheduler:
         # Schedule SUBMIT events
         for job in jobs:
             heapq.heappush(self.events, Event(job.submit_time, 'SUBMIT', job.idx))
+        if self.backfill_interval > 0.0:
+            heapq.heappush(self.events, Event(self.backfill_interval, 'TICK', -1))
 
         # Create job lookup
         job_map = {job.idx: job for job in jobs}
@@ -356,8 +365,15 @@ class ConservativeBackfillingScheduler:
                 elif evt.type == 'END':
                     self.handle_end(evt.job_idx)
 
-            while self.try_start_jobs():
+            periodic_tick = any(evt.type == 'TICK' for evt in same_time_events)
+            while self.try_start_jobs(allow_backfill=(self.backfill_interval == 0.0 or
+                                                      periodic_tick)):
                 pass
+
+            if periodic_tick and (self.wait_queue or self.running or
+                                  any(evt.type == 'SUBMIT' for evt in self.events)):
+                heapq.heappush(self.events, Event(
+                    self.current_time + self.backfill_interval, 'TICK', -1))
 
         # Return jobs with simulation results
         return list(job_map.values())
@@ -433,7 +449,7 @@ def write_resource_trace(jobs: List[Job], filename: str, total_nodes: int):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python_conservative_scheduler.py <trace.csv> [--verbose] [--nodes N] [--outdir DIR] [--reservation-depth N] [--backfill-queue-depth N]")
+        print("Usage: python_conservative_scheduler.py <trace.csv> [--verbose] [--nodes N] [--outdir DIR] [--reservation-depth N] [--backfill-queue-depth N] [--backfill-interval SECONDS]")
         print()
         print("Python reference CONSERVATIVE backfilling scheduler for verification")
         print()
@@ -445,6 +461,8 @@ def main():
         print("               (default: 0 = all; 1 reproduces EASY)")
         print("  --backfill-queue-depth N  Examine at most N waiting jobs per pass")
         print("               (default: 0 = all)")
+        print("  --backfill-interval SECONDS  Run backfill only on periodic ticks")
+        print("               (default: 0 = event-driven backfill)")
         print()
         print("Generates reference output for CONSERVATIVE backfilling verification")
         print("Output files are written to /tmp by default to avoid directory pollution")
@@ -476,12 +494,20 @@ def main():
         idx = sys.argv.index('--backfill-queue-depth')
         backfill_queue_depth = int(sys.argv[idx + 1])
 
+    backfill_interval = 0.0
+    if '--backfill-interval' in sys.argv:
+        idx = sys.argv.index('--backfill-interval')
+        backfill_interval = float(sys.argv[idx + 1])
+        if backfill_interval < 0.0:
+            raise ValueError('--backfill-interval must be nonnegative')
+
     print(f"=== Python Reference CONSERVATIVE Backfilling Scheduler ===", file=sys.stderr)
     print(f"Trace: {trace_file}", file=sys.stderr)
     print(f"Total nodes: {total_nodes}", file=sys.stderr)
     print(f"Output directory: {outdir}", file=sys.stderr)
     print(f"Reservation depth: {reservation_depth or 'all'}", file=sys.stderr)
     print(f"Queue depth: {backfill_queue_depth or 'all'}", file=sys.stderr)
+    print(f"Backfill interval: {backfill_interval or 'event-driven'}", file=sys.stderr)
     print(f"Verbose: {verbose}", file=sys.stderr)
     print(file=sys.stderr)
 
@@ -492,7 +518,8 @@ def main():
     # Run scheduler
     scheduler = ConservativeBackfillingScheduler(total_nodes, verbose=verbose,
                                                  reservation_depth=reservation_depth,
-                                                 backfill_queue_depth=backfill_queue_depth)
+                                                 backfill_queue_depth=backfill_queue_depth,
+                                                 backfill_interval=backfill_interval)
     jobs = scheduler.simulate(jobs)
 
     # Write output files to specified directory
