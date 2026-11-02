@@ -69,6 +69,13 @@ PYBIND11_MODULE(dr_evt, m) {
       .value("UNIFORM", ReleaseDelayModel::UNIFORM)
       .export_values();
 
+  py::enum_<WarmStartWaitQueuePolicy>(
+      m, "WarmStartWaitQueuePolicy",
+      "Whether replay warm start inherits or drops pre-boundary waiting jobs.")
+      .value("INHERIT", WarmStartWaitQueuePolicy::INHERIT)
+      .value("DROP", WarmStartWaitQueuePolicy::DROP)
+      .export_values();
+
   py::enum_<Simulation::Job_State>(m, "JobState",
                                    "Lifecycle state of an appended job.")
       .value("PENDING", Simulation::Job_State::PENDING)
@@ -98,6 +105,10 @@ PYBIND11_MODULE(dr_evt, m) {
       .def_readwrite("sim_start_time", &Sim_Params::m_sim_start_time,
                      "float: Global simulation start time; a positive value "
                      "enables replay-based warm start for replay input.")
+      .def_readwrite("warm_start_wait_queue",
+                     &Sim_Params::m_warm_start_wait_queue,
+                     "WarmStartWaitQueuePolicy: Whether replay warm start "
+                     "reconstructs jobs waiting at the boundary.")
       .def_readwrite("trace_format", &Sim_Params::m_trace_format,
                      "str: Input trace format identifier.")
       .def_readwrite("timestamp_format", &Sim_Params::m_timestamp_format,

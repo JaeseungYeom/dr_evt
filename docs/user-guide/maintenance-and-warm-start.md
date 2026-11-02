@@ -132,11 +132,18 @@ never enter job output or statistics. Jobs submitted at or after `t` are
 rescheduled through the normal wait queue; a job beginning exactly at `t` is
 not classified as historical.
 
+Jobs submitted before `t` but not yet started are inherited into the waiting
+queue by default. They retain their historical submit times, so their reported
+wait includes time before the boundary and their FCFS order is preserved.
+Use `--warm_start_wait_queue drop` to retain the legacy behavior of omitting
+them. Historical scheduler reservation state is not reconstructed, so the
+first conservative or hybrid backfill decision can still differ from history.
+
 Here `t=50` is the global simulation boundary selected by
 `--sim_start_time 50`. It is not a per-job `begin_time`. The first
 job is warmup history that finishes before `t`. The second starts before `t`
 and remains active until its historical end at `80`. The third was submitted
-before `t` but had not started, so it is excluded. The last two are submitted
+before `t` but had not started, so it is inherited. The last two are submitted
 at or after `t` and go through the scheduler.
 
 Warm start and runtime selection are separate concerns. `--sim_start_time`

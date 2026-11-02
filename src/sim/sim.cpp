@@ -711,6 +711,7 @@ void BasicSimulation<TraceType>::run_warm_start() {
   m_pre_start_jobs = 0;
   m_warm_resource_area = 0.0;
   m_warm_resource_end = sim_start_time;
+  std::vector<job_no_t> inherited_waiters;
   // Replayed history before the boundary keeps its recorded releases; from
   // the boundary on, departures (historical or simulated) are delayed.
   m_trace.set_node_release_delay_from(sim_start_time);
@@ -743,10 +744,14 @@ void BasicSimulation<TraceType>::run_warm_start() {
       // bypass this branch and retain their recorded timing.
       job.prepare_for_resimulation();
       determine_one_job_run_time(job);
+    } else if (m_params.m_warm_start_wait_queue ==
+               WarmStartWaitQueuePolicy::INHERIT) {
+      job.prepare_for_resimulation();
+      determine_one_job_run_time(job);
+      inherited_waiters.push_back(job_no);
     } else {
-      // This job was waiting before the boundary. Reconstructing an inherited
-      // wait queue is a separate policy decision, so it is intentionally not
-      // admitted into either the seed state or the post-boundary workload.
+      // Compatibility mode retains the legacy behavior of omitting a job
+      // that was waiting before the boundary.
       job.suppress_output();
     }
   }
@@ -799,9 +804,14 @@ void BasicSimulation<TraceType>::run_warm_start() {
                                                   accounting_available_nodes());
   }
 
-  // No auxiliary job list is retained: prepared post-boundary records keep
-  // their real submission time, while every excluded/finished historical
-  // record carries the existing unscheduled sentinel.
+  // Prepared jobs retain their original submission time to preserve queue
+  // order and wait accounting. Inherited waiters are observed arriving at the
+  // boundary so their already elapsed submit time never moves the clock back.
+  for (const job_no_t job_no : inherited_waiters) {
+    const sim_time_t submit = convert_epoch<sim_time_t>(
+        m_trace.job_at(job_no).get_submit_time());
+    submit_job(job_no, submit, sim_start_time);
+  }
   for (job_no_t job_no = first_job; job_no < jobs_end; ++job_no) {
     const auto submit_epoch = m_trace.job_at(job_no).get_submit_time();
     if (submit_epoch != Job_Record::unscheduled_sentinel()) {
@@ -2262,13 +2272,20 @@ BasicSimulation<TraceType>::get_job_statuses(
 template <typename TraceType>
 void BasicSimulation<TraceType>::submit_job(job_no_t job_idx,
                                             sim_time_t submit_time) {
+  submit_job(job_idx, submit_time, submit_time);
+}
+
+template <typename TraceType>
+void BasicSimulation<TraceType>::submit_job(job_no_t job_idx,
+                                            sim_time_t submit_time,
+                                            sim_time_t arrival_time) {
   // Validate preconditions
-  if (submit_time < m_current_time) {
+  if (arrival_time < m_current_time) {
     throw std::runtime_error(
-        "Cannot submit job with submit_time < current_time. "
+        "Cannot submit job with arrival_time < current_time. "
         "Job " +
         std::to_string(job_idx) +
-        " has submit_time=" + std::to_string(submit_time) +
+        " has arrival_time=" + std::to_string(arrival_time) +
         " but current_time=" + std::to_string(m_current_time));
   }
 
@@ -2329,7 +2346,7 @@ void BasicSimulation<TraceType>::submit_job(job_no_t job_idx,
   if (m_params.m_backfill_interval > 0.0) {
     m_periodic_backfill_dirty = true;
   }
-  ++m_pending_queue_arrivals[submit_time];
+  ++m_pending_queue_arrivals[arrival_time];
   m_latest_submit_time = std::max(m_latest_submit_time, submit_time);
   // Counted here, after the scheduler accepted it, so rejected jobs above
   // are excluded. Starts are counted separately in m_jobs_started.

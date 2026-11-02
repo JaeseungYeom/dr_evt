@@ -93,7 +93,7 @@ server; no pre-existing Redis service is used.
 | Column aliases | 8 | `run_column_alias_tests.sh` | Accepted runtime-column aliases and missing-column rejection |
 | Run-time mode | 8 | `run_time_mode_tests.sh` | Actual, limit, distribution, capping, the 1 s sampling floor, and planning behavior |
 | Unit | 7 | `run_unit_tests.sh` | Basic parsing, formats, and execution |
-| Feature | 8 | `run_feature_tests.sh` | Policies, modes, rejection, output formats, time-varying capacity, and replay-based warm start |
+| Feature | 8 | `run_feature_tests.sh` | Policies, modes, rejection, output formats, time-varying capacity, and replay-based warm start, including inherited waiting jobs and no-checkpoint self-consistency |
 | Scale | 7 | `run_scale_tests.sh` | Workloads from 10 to 10,000 jobs |
 | Conservative backfilling | 2 | two conservative runners above | Behavioral and C++/Python comparisons |
 | Replay | 5 | `run_replay_tests.sh` | Resource equivalence and reclamation safety |

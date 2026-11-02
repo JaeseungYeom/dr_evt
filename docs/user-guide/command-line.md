@@ -17,6 +17,7 @@ Complete reference for all DR_EVT command-line options for the `simulator` binar
 | System | `-n, --total_nodes COUNT` | Set simulated cluster capacity. |
 | System | `--capacity_schedule FILENAME` | Apply time-varying capacity change points. |
 | System | `--sim_start_time TIME` | Set the global simulation start time as a nonnegative epoch value or ISO timestamp; a positive value warm-starts replay input. |
+| System | `--warm_start_wait_queue MODE` | Select `inherit` (default) or legacy `drop` handling for jobs waiting at a replay warm-start boundary. |
 | Scheduling | `-b, --backfill_policy POLICY` | Select `easy`, `conservative`, `hybrid`, or `none`. |
 | Scheduling | `--num_max_candidates COUNT` | Cap feasible jobs offered to the experimental custom-EASY selector. |
 | Scheduling | `--backfill_queue_depth N` | Cap jobs inspected by built-in hybrid or conservative backfill. |
@@ -195,18 +196,25 @@ This global boundary is distinct from each replay job's historical
 enables the recommended replay-based warm start for replay-format input: jobs
 with `begin_time < TIME` bypass the wait queue and seed live occupancy. They retain
 their historical departures, but are omitted from job output and job
-statistics. Jobs beginning at or after the boundary are rescheduled normally
-when their submission is also at or after `TIME`. Zero preserves traditional
-full replay.
+statistics. Jobs beginning at or after the boundary are rescheduled normally.
+Jobs submitted before `TIME` but still waiting are inherited by default; they
+retain their original submit timestamps. Zero preserves traditional full
+replay.
 
 Only the warm stage tests for historical jobs. After its last departure, the
 simulator switches to the ordinary event loop, so the steady-state path has no
 per-job warm-start condition. Resource output begins with a baseline at
 `TIME`; earlier samples and resource-area accounting are discarded.
 
-Jobs submitted before `TIME` but not yet running are excluded because
-reconstructing an inherited wait queue requires an explicit policy. This mode
-is currently incompatible with `--infile_list`.
+This mode is currently incompatible with `--infile_list`.
+
+### `--warm_start_wait_queue {inherit|drop}`
+
+Select how replay-based warm start handles jobs submitted before the boundary
+that have not yet started. `inherit` is the default: it reconstructs their
+waiting-queue order at the boundary, preserves their original submit times in
+output, and includes pre-boundary wait in their wait statistics. `drop`
+retains the legacy behavior of omitting those jobs.
 
 ## Scheduling Policies
 

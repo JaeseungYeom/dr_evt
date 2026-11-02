@@ -42,7 +42,11 @@ includes overcommit after a reduction and a capacity change exactly at the
 final warmup departure. A separate case protects the documented
 ``sim_start_time == 0`` behavior: zero disables replay-based warm start and
 preserves a traditional full replay. Inclusive ``max_time`` boundaries are checked in
-ordinary simulation, replay, and warm-start execution. CLI coverage accepts an ISO simulation start time,
+ordinary simulation, replay, and warm-start execution. Warm-start
+self-consistency cases replay a simulation's own output at a
+mid-run boundary and verify FCFS/EASY, conservative, hybrid, and SJF decisions
+without a checkpoint; inherited waiters retain their original submit times.
+CLI coverage accepts an ISO simulation start time,
 rejects mixed timestamp encodings within one input file, and
 rejects negative or non-finite values, simulation-format input, and progressive
 file lists.

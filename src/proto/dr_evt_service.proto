@@ -94,6 +94,9 @@ message InitRequest {
     // Global simulation start time. A positive value selects native replay
     // warm-start execution for RunRequest; zero preserves ordinary execution.
     double sim_start_time = 15;
+    // "inherit" (default) reconstructs jobs waiting at a replay warm
+    // boundary; "drop" preserves the legacy omission behavior.
+    string warm_start_wait_queue = 27;
     // When set together, job and resource-history output is written to Redis.
     string redis_uri = 16;
     string redis_key_prefix = 17;

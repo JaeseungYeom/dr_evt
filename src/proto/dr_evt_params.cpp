@@ -49,6 +49,16 @@ set_sim_options(const dr_evt_proto::DR_EVT_Params::Simulation_Params &cfg,
         "nonnegative)");
   }
   sp.m_sim_start_time = cfg.sim_start_time();
+  if (cfg.warm_start_wait_queue().empty() ||
+      cfg.warm_start_wait_queue() == "inherit") {
+    sp.m_warm_start_wait_queue = WarmStartWaitQueuePolicy::INHERIT;
+  } else if (cfg.warm_start_wait_queue() == "drop") {
+    sp.m_warm_start_wait_queue = WarmStartWaitQueuePolicy::DROP;
+  } else {
+    throw std::runtime_error(
+        "Unknown warm_start_wait_queue in protobuf: " +
+        cfg.warm_start_wait_queue());
+  }
 
   sp.m_is_jobs_set = (sp.m_max_jobs > 0u);
   sp.m_is_time_set = (sp.m_max_time > 0.0);

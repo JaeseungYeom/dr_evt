@@ -364,7 +364,8 @@ protected:
    * resources and backfilling policy.
    *
    * @param[in] job_idx Existing Trace job identifier to submit.
-   * @param[in] submit_time Arrival time, which must be >= current time.
+   * @param[in] submit_time Original job submission time retained by the
+   * scheduler.
    *
    * This does not add a job record to Trace: job_idx must already identify
    * one. It validates the arrival, records arrival-time accounting, then
@@ -377,6 +378,10 @@ protected:
    * @see Trace::insert_job()
    */
   void submit_job(job_no_t job_idx, sim_time_t submit_time);
+
+  /** Submit a stored job observed as arriving at arrival_time. */
+  void submit_job(job_no_t job_idx, sim_time_t submit_time,
+                  sim_time_t arrival_time);
 
   void record_appended_job(job_no_t job_idx, sim_time_t submit_time,
                            num_nodes_t num_nodes, tdiff_t limit_time);
