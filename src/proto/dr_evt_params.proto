@@ -36,7 +36,8 @@ message DR_EVT_Params {
         bool verbose = 8;
 
         // Scheduling parameters
-        uint32 total_nodes = 9;         // System node count (default: 795)
+        // System node count (default: 795); larger input jobs are dropped.
+        uint32 total_nodes = 9;
         string backfill_policy = 10;     // "easy", "conservative", "hybrid", or "none" (default: "easy")
         string priority_policy = 11;    // "fcfs", "fcfs_alt", "fcfs_conservative", "sjf", or "ljf" (default: "fcfs")
 
@@ -143,6 +144,10 @@ message DR_EVT_Params {
         // or periodic (Slurm bf_window). Presence is explicit so zero is a
         // valid immediate horizon.
         optional double planning_horizon = 44;
+
+        // Optional EASYPower caps used by the experimental scheduler.
+        bool cap_backfill_power = 46;
+        bool cap_fcfs_power = 47;
 
         // Seconds a job's nodes stay unavailable after it ends before another
         // job can start on them (default 0: reusable at the job's end). Not

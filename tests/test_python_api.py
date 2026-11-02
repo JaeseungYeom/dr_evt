@@ -171,6 +171,8 @@ def test_sim_params(result):
         params.run_time_mode = dr_evt.RunTimeMode.LIMIT
         params.backfill_policy = dr_evt.BackfillPolicy.EASY
         params.num_max_candidates = 8
+        params.cap_backfill_power = True
+        params.cap_fcfs_power = True
         params.priority_policy = dr_evt.PriorityPolicy.FCFS
         params.node_release_delay = 30.0
         params.node_release_delay_model = dr_evt.ReleaseDelayModel.EXPONENTIAL
@@ -345,7 +347,7 @@ def test_backfill_window_api(result):
         sim = dr_evt.Simulation(
             params,
             lambda job_id, _submit, _runtime, _nodes: job_id,
-            lambda candidates: candidates[0][0] if candidates else None,
+            lambda candidates: 0 if candidates else None,
         )
         for num_nodes, limit_time in [(40, 50), (60, 100), (100, 10)]:
             sim.append_job(0.0, num_nodes, QUEUE_INPUT, limit_time)
@@ -408,8 +410,12 @@ def test_custom_backfill_api(result):
             return job_id
 
         def select_lowest_cost(candidates):
-            candidate_windows.append(candidates)
-            return min(candidates, key=lambda candidate: candidate[1])[0]
+            candidate_windows.append([
+                (candidate.queue_index, candidate.cost)
+                for candidate in candidates
+            ])
+            return min(range(len(candidates)),
+                       key=lambda index: candidates[index].cost)
 
         sim = dr_evt.Simulation(params, compute_cost, select_lowest_cost)
         for nodes, runtime in [(70, 100), (50, 200), (20, 50),
@@ -418,8 +424,7 @@ def test_custom_backfill_api(result):
         sim.advance_to(0.0)
 
         assert costed_jobs == [0, 1, 2, 3, 4]
-        assert candidate_windows[0] == [(2, 2), (3, 3)]
-        assert select_lowest_cost([(7, 4), (8, 2), (9, 2)]) == 8
+        assert candidate_windows[0] == [(1, 2), (2, 3)]
         result.record_pass("Custom cost and selection callbacks")
     except Exception as e:
         result.record_fail("Custom backfill API", str(e))
@@ -451,7 +456,7 @@ def test_statistics(result):
         sim = dr_evt.Simulation(
             params,
             lambda job_id, _submit, _runtime, _nodes: job_id,
-            lambda candidates: candidates[0][0] if candidates else None,
+            lambda candidates: 0 if candidates else None,
         )
         # Run complete simulation
         sim.advance_to(0.0)

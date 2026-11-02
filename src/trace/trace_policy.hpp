@@ -17,12 +17,21 @@
 #include "trace/job_record.hpp"
 #include <boost/circular_buffer.hpp>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace dr_evt {
 
 class Data_Columns;
+
+/** Admission limits applied before a parsed job enters the trace store. */
+struct Trace_Admission_Limits {
+  std::optional<num_nodes_t> maximum_nodes;
+  std::optional<double> maximum_job_power;
+  bool report_dropped_jobs = true;
+  std::optional<double> maximum_average_job_power;
+};
 
 /** Values carried by one job in the Pcon experiment. */
 struct Pcon_Values {
@@ -78,7 +87,8 @@ struct Standard_Trace_Policy {
 
   static int load_records(const std::string &fname, const Data_Columns &dcols,
                           std::vector<record_type> &records,
-                          num_jobs_t max_count);
+                          num_jobs_t max_count,
+                          const Trace_Admission_Limits &limits = {});
   static record_type make_record(const epoch_t &submit_time,
                                  num_nodes_t num_nodes, job_queue_t queue,
                                  timeout_t limit_time) {
@@ -95,6 +105,12 @@ struct Standard_Trace_Policy {
   }
   /** @brief Reset runtime accounting before restoring running jobs. */
   void reset_runtime_state() {}
+  static std::optional<double> scheduler_power(const record_type &) {
+    return std::nullopt;
+  }
+  static std::optional<double> scheduler_maximum_power(const record_type &) {
+    return std::nullopt;
+  }
   void on_start(const record_type &) {}
   void on_finish(const record_type &) {}
 };
@@ -106,7 +122,8 @@ struct Pcon_Trace_Policy {
 
   static int load_records(const std::string &fname, const Data_Columns &dcols,
                           std::vector<record_type> &records,
-                          num_jobs_t max_count);
+                          num_jobs_t max_count,
+                          const Trace_Admission_Limits &limits = {});
   static record_type make_record(const epoch_t &submit_time,
                                  num_nodes_t num_nodes, job_queue_t queue,
                                  timeout_t limit_time) {
@@ -125,6 +142,13 @@ struct Pcon_Trace_Policy {
   }
   /** @brief Reset accumulated Pcon values before restoring running jobs. */
   void reset_runtime_state() { m_current = {}; }
+  static std::optional<double> scheduler_power(const record_type &job) {
+    return job.pcon().avgpcon;
+  }
+  static std::optional<double>
+  scheduler_maximum_power(const record_type &job) {
+    return job.pcon().maxpcon;
+  }
   void on_start(const record_type &job) {
     const auto &pcon = job.pcon();
     m_current.avgpcon += pcon.avgpcon;
@@ -201,13 +225,17 @@ struct Swf_Trace_Policy {
    * @param[out] records Destination, appended to and sorted by submit time
    *        over the records this call added.
    * @param[in] max_count Maximum records to accept; 0 means no limit.
+   * @param[in] limits Admission limits; a job requesting more than
+   *        maximum_nodes is dropped and reported. Power limits do not apply
+   *        because SWF carries no power data.
    * @return EXIT_SUCCESS, or EXIT_FAILURE when the file cannot be opened.
    * @throws std::invalid_argument on a malformed line or an out-of-range
    *         node count or time limit.
    */
   static int load_records(const std::string &fname, const Data_Columns &dcols,
                           std::vector<record_type> &records,
-                          num_jobs_t max_count);
+                          num_jobs_t max_count,
+                          const Trace_Admission_Limits &limits = {});
   /**
    * @brief Build a record for a job appended at run time.
    * @param[in] submit_time Arrival time.
@@ -240,6 +268,14 @@ struct Swf_Trace_Policy {
   }
   /// @brief Reset runtime accounting before restoring running jobs (no-op).
   void reset_runtime_state() {}
+  /// @brief Scheduling power for a job. @return Empty; SWF has no power data.
+  static std::optional<double> scheduler_power(const record_type &) {
+    return std::nullopt;
+  }
+  /// @brief Maximum power for a job. @return Empty; SWF has no power data.
+  static std::optional<double> scheduler_maximum_power(const record_type &) {
+    return std::nullopt;
+  }
   /// @brief Hook called when a job starts (no-op for SWF).
   void on_start(const record_type &) {}
   /// @brief Hook called when a job finishes (no-op for SWF).

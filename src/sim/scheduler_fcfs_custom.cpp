@@ -134,7 +134,7 @@ std::optional<tdiff_t> CustomFCFSScheduler::waiting_resource_area() const {
   return area;
 }
 
-std::optional<job_no_t> CustomFCFSScheduler::select_backfill_candidate(
+std::optional<size_t> CustomFCFSScheduler::select_backfill_candidate(
     const backfill_candidates_t &candidates, num_nodes_t available_nodes,
     const running_jobs_t &effective_running_jobs, sim_time_t current_time) {
   (void)available_nodes;
@@ -145,6 +145,30 @@ std::optional<job_no_t> CustomFCFSScheduler::select_backfill_candidate(
         "CustomFCFSScheduler subclass did not implement candidate selection");
   }
   return m_backfill_selector(candidates);
+}
+
+std::optional<double>
+CustomFCFSScheduler::running_job_power(const JobEntry &job) const {
+  (void)job;
+  return std::nullopt;
+}
+
+bool CustomFCFSScheduler::can_start_fcfs_job(
+    const JobEntry &job, num_nodes_t available_nodes,
+    const running_jobs_t &effective_running_jobs,
+    sim_time_t current_time) const {
+  (void)job;
+  (void)available_nodes;
+  (void)effective_running_jobs;
+  (void)current_time;
+  return true;
+}
+
+sim_time_t CustomFCFSScheduler::fcfs_head_reservation_time(
+    const JobEntry &job, num_nodes_t available_nodes,
+    const running_jobs_t &effective_running_jobs, sim_time_t current_time) {
+  return calculate_fcfs_reservation(job.nodes_requested, available_nodes,
+                                    effective_running_jobs, current_time);
 }
 
 void CustomFCFSScheduler::on_jobs_became_eligible(
@@ -304,7 +328,7 @@ backfill_candidates_t CustomFCFSScheduler::find_backfill_candidates_from(
             reservation_time) {
       continue;
     }
-    candidates.emplace_back(job.job_id, job.m_cost);
+    candidates.push_back({i, job.m_cost});
     if (candidates.size() == m_num_max_candidates) {
       break;
     }
@@ -334,16 +358,20 @@ CustomFCFSScheduler::schedule(num_nodes_t free_nodes,
   num_nodes_t available_nodes = free_nodes;
   running_jobs_t effective_running_jobs = running_jobs;
 
-  while (m_eligible_end_idx > 0 && !m_wait_queue.empty() &&
-         (m_wait_queue.front().removed ||
-          m_wait_queue.front().nodes_requested <= available_nodes)) {
+  while (m_eligible_end_idx > 0 && !m_wait_queue.empty()) {
+    if (!m_wait_queue.front().removed &&
+        (m_wait_queue.front().nodes_requested > available_nodes ||
+         !can_start_fcfs_job(m_wait_queue.front(), available_nodes,
+                             effective_running_jobs, current_time))) {
+      break;
+    }
     if (!m_wait_queue.front().removed) {
       const auto &job = m_wait_queue.front();
       jobs_to_run.push_back(job.job_id);
       available_nodes -= job.nodes_requested;
       effective_running_jobs[job.job_id] = {
           current_time, release_estimate(current_time, job.run_time_estimate),
-          job.nodes_requested};
+          job.nodes_requested, running_job_power(job)};
     } else {
       --m_removed_count;
     }
@@ -364,9 +392,9 @@ CustomFCFSScheduler::schedule(num_nodes_t free_nodes,
     return jobs_to_run;
   }
 
-  m_fcfs_reservation_time = calculate_fcfs_reservation(
-      m_wait_queue.front().nodes_requested, available_nodes,
-      effective_running_jobs, current_time);
+  m_fcfs_reservation_time = fcfs_head_reservation_time(
+      m_wait_queue.front(), available_nodes, effective_running_jobs,
+      current_time);
 
   const size_t candidate_begin =
       m_reevaluate_all_candidates ? 1 : m_newly_eligible_begin_idx;
@@ -389,7 +417,7 @@ CustomFCFSScheduler::schedule(num_nodes_t free_nodes,
     m_candidate_preparation_pending = false;
   }
 
-  const std::optional<job_no_t> selected = select_backfill_candidate(
+  const std::optional<size_t> selected = select_backfill_candidate(
       candidates, available_nodes, effective_running_jobs, current_time);
   if (!selected) {
     if (jobs_to_run.empty()) {
@@ -401,22 +429,20 @@ CustomFCFSScheduler::schedule(num_nodes_t free_nodes,
     return jobs_to_run;
   }
 
-  const auto candidate =
-      std::find_if(candidates.begin(), candidates.end(),
-                   [&](const auto &item) { return item.first == *selected; });
-  if (candidate == candidates.end()) {
+  if (*selected >= candidates.size()) {
     throw std::invalid_argument(
-        "backfill selector returned a job that was not a candidate");
+        "backfill selector returned an invalid candidate index");
   }
 
-  for (size_t i = 1; i < m_eligible_end_idx; ++i) {
-    if (!m_wait_queue[i].removed && m_wait_queue[i].job_id == *selected) {
-      m_wait_queue[i].removed = true;
-      ++m_removed_count;
-      jobs_to_run.push_back(*selected);
-      break;
-    }
+  const size_t queue_index = candidates[*selected].queue_index;
+  if (queue_index >= m_eligible_end_idx || m_wait_queue[queue_index].removed) {
+    throw std::logic_error(
+        "backfill candidate no longer refers to a waiting job");
   }
+  auto &selected_job = m_wait_queue[queue_index];
+  selected_job.removed = true;
+  ++m_removed_count;
+  jobs_to_run.push_back(selected_job.job_id);
   return jobs_to_run;
 }
 

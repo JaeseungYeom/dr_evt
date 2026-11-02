@@ -30,15 +30,24 @@ template <typename TraceType> class BasicSimulation;
  *  @{ */
 
 /**
- * @brief Describes a currently running job for reservation calculations.
+ * @brief Transient scheduler view of a job identified by a pending END event.
  */
 struct Running_Job {
   sim_time_t start_time;
   tdiff_t run_time;
   num_nodes_t nodes;
+  std::optional<double> predicted_power = std::nullopt;
 };
 
 using running_jobs_t = std::map<job_no_t, Running_Job>;
+
+/** Optional trace fields supplied alongside the scheduler's core job data. */
+struct SchedulerJobMetadata {
+  std::optional<double> predicted_power;
+  tdiff_t actual_run_time;
+  timeout_t time_limit;
+  std::optional<double> maximum_power = std::nullopt;
+};
 
 /**
  * @brief Abstract interface shared by all job schedulers.
@@ -85,6 +94,25 @@ public:
 
   /** @brief Destroy a scheduler through its polymorphic base interface. */
   virtual ~SchedulerBase() = default;
+
+  /** Per-job power admission limit, if this scheduler defines one. */
+  virtual std::optional<double> maximum_job_power_for_admission() const {
+    return std::nullopt;
+  }
+
+  /** Per-job average-power admission limit, if defined by the scheduler. */
+  virtual std::optional<double>
+  maximum_average_job_power_for_admission() const {
+    return std::nullopt;
+  }
+
+  /** Select the trace power value copied into running-job scheduler state. */
+  virtual std::optional<double> scheduling_power(
+      std::optional<double> average_power,
+      std::optional<double> maximum_power) const {
+    (void)maximum_power;
+    return average_power;
+  }
 
   /**
    * @brief Set the grid used for projected reservation timestamps.
@@ -146,6 +174,19 @@ public:
   virtual void insert_job(job_no_t job_id, sim_time_t submit_time,
                           tdiff_t run_time_estimate,
                           num_nodes_t nodes_requested) = 0;
+
+  /**
+   * @brief Enqueue a job with trace metadata needed by specialized schedulers.
+   * @details The default preserves the existing scheduler API. Schedulers that
+   * consume trace-specific fields can override this method without requiring
+   * callers to reread the input trace.
+   */
+  virtual void insert_job_with_metadata(
+      job_no_t job_id, sim_time_t submit_time, tdiff_t run_time_estimate,
+      num_nodes_t nodes_requested, const SchedulerJobMetadata &metadata) {
+    (void)metadata;
+    insert_job(job_id, submit_time, run_time_estimate, nodes_requested);
+  }
 
   /**
    * @brief Select wait-queue jobs that may start at current_time.

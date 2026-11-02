@@ -622,7 +622,10 @@ endif()
 # Custom callback-driven EASY backfill scheduler, resource accounting, and
 # prediction-horizon APIs.
 add_executable(test_custom_scheduler-bin
-  tests/test_custom_scheduler.cpp)
+  tests/test_custom_scheduler.cpp
+  src/sim/scheduler_power_cap.cpp
+  src/sim/scheduler_easy_pc.cpp
+  src/sim/scheduler_easy_power.cpp)
 target_include_directories(test_custom_scheduler-bin PUBLIC
   $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
   $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
@@ -948,6 +951,13 @@ if(DR_EVT_WITH_UNIT_TESTING)
     set_tests_properties(test_multi_system_backfill PROPERTIES
       LABELS "unit;scripts;multi-cluster-bf"
       SKIP_RETURN_CODE 77
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(
+      NAME test_monthly_easy_pc_scripts
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_monthly_easy_pc_scripts.py)
+    set_tests_properties(test_monthly_easy_pc_scripts PROPERTIES
+      LABELS "unit;scripts"
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
   endif()
 

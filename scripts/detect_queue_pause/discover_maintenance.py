@@ -114,12 +114,14 @@ class TraceStats:
         rows=0,
         invalid_rows=0,
         invalid_intervals=0,
+        duplicate_rows=0,
         min_submit=None,
         max_submit=None,
     ):
         self.rows = rows
         self.invalid_rows = invalid_rows
         self.invalid_intervals = invalid_intervals
+        self.duplicate_rows = duplicate_rows
         self.min_submit = min_submit
         self.max_submit = max_submit
         self.analysis_start = min_submit
@@ -237,12 +239,19 @@ def filename_month_window(path, timestamps):
 
 def read_traces(
     paths: Sequence[str], builder: TimelineBuilder,
-    overlap_policy="combine", timestamps=None,
+    overlap_policy="combine", timestamps=None, analysis_window=None,
 ) -> TraceStats:
     stats = TraceStats()
+    if analysis_window is not None:
+        stats.analysis_start, stats.analysis_end = analysis_window
+    # Monthly trace files overlap: a job that crosses a month boundary is
+    # listed in both months' files. A row already read from a different file
+    # is the same job and is skipped. Identical rows within one file are kept,
+    # because distinct jobs (for example array tasks) can share every column.
+    first_file_of_row = {} if len(paths) > 1 else None
     for path in paths:
-        window = None
-        if overlap_policy == "filename-month":
+        window = analysis_window
+        if window is None and overlap_policy == "filename-month":
             window = filename_month_window(path, timestamps)
             stats.analysis_start = (
                 window[0] if stats.analysis_start is None
@@ -266,6 +275,12 @@ def read_traces(
             max_index = max(indices)
             for row in reader:
                 stats.rows += 1
+                if first_file_of_row is not None:
+                    key = tuple(row)
+                    origin = first_file_of_row.setdefault(key, path)
+                    if origin != path:
+                        stats.duplicate_rows += 1
+                        continue
                 try:
                     if len(row) <= max_index:
                         raise ValueError
@@ -283,7 +298,7 @@ def read_traces(
                 builder.add_job(submit, begin, end, nodes, window)
     if not stats.rows or stats.min_submit is None or stats.max_submit is None:
         raise ValueError("no valid job records found")
-    if overlap_policy == "combine":
+    if analysis_window is None and overlap_policy == "combine":
         stats.analysis_start = stats.min_submit
         stats.analysis_end = stats.max_submit + 1
     return stats
@@ -889,6 +904,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="combine all jobs, or stitch each YY_MM trace to its filename month (default: combine)",
     )
     parser.add_argument("--bin-minutes", type=int, default=60, help="timeline resolution (default: 60)")
+    parser.add_argument("--analysis-start", type=int,
+                        help="inclusive epoch-second analysis boundary")
+    parser.add_argument("--analysis-end", type=int,
+                        help="exclusive epoch-second analysis boundary")
     parser.add_argument("--known-capacity", type=int, help="normal node capacity; skips inference")
     parser.add_argument("--capacity-quantile", type=float, default=0.995, help="capacity quantile (default: 0.995)")
     parser.add_argument("--min-duration-hours", type=float, default=1.0, help="shortest reported anomaly (default: 1)")
@@ -908,6 +927,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         or args.min_missed_jobs < 1 or args.min_missed_families < 1
     ):
         parser.error("pending-job and bridge-bin thresholds cannot be negative")
+    if (args.analysis_start is None) != (args.analysis_end is None):
+        parser.error("--analysis-start and --analysis-end must be used together")
+    if args.analysis_start is not None and args.analysis_end <= args.analysis_start:
+        parser.error("--analysis-end must be later than --analysis-start")
     for name in (
         "capacity_quantile", "min_pending_fraction", "shutdown_fraction",
         "reduced_fraction", "pause_start_fraction", "min_backfill_miss_fraction",
@@ -925,7 +948,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         paths = expand_paths(args.inputs)
         width = args.bin_minutes * 60
         builder = TimelineBuilder(width)
-        stats = read_traces(paths, builder, args.overlap_policy, timestamps)
+        analysis_window = ((args.analysis_start, args.analysis_end)
+                           if args.analysis_start is not None else None)
+        stats = read_traces(paths, builder, args.overlap_policy, timestamps,
+                            analysis_window)
         bins = build_bins(builder, stats)
         evidence_bins = 0
         evidence_parameters = {}
@@ -980,6 +1006,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 "rows": stats.rows,
                 "invalid_rows": stats.invalid_rows,
                 "invalid_intervals": stats.invalid_intervals,
+                "duplicate_rows": stats.duplicate_rows,
                 "backfill_evidence": (
                     None if not args.backfill_evidence else {
                         "path": os.path.abspath(args.backfill_evidence),
