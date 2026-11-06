@@ -119,6 +119,8 @@ protected:
   size_t m_replay_jobs_enqueued;
   double m_memory_pressure_fraction =
       0.0; ///< 0.0 = disabled; see set_memory_pressure_fraction()
+  /// Limits used to discard jobs before assigning trace-store job IDs.
+  Trace_Admission_Limits m_admission_limits;
 
   /// Tracks continuity across load_next_file() calls: the latest
   /// submit_time seen across every file loaded so far this way, so
@@ -288,6 +290,16 @@ public:
    * @return `EXIT_SUCCESS` on success, otherwise a nonzero status. */
   int load_data(num_jobs_t n_lines_to_read = static_cast<num_jobs_t>(0u));
 
+  /** Configure whole-record filtering applied by all subsequent file loads. */
+  void set_admission_limits(
+      std::optional<num_nodes_t> maximum_nodes,
+      std::optional<double> maximum_job_power = std::nullopt,
+      bool report_dropped_jobs = true,
+      std::optional<double> maximum_average_job_power = std::nullopt) {
+    m_admission_limits = {maximum_nodes, maximum_job_power,
+                          report_dropped_jobs, maximum_average_job_power};
+  }
+
   /// Allow write access to the job trace data - for range-based
   /// iteration only (write_simulated_trace(), print(), etc.). Indexing
   /// this directly by job_no is wrong once anything's been reclaimed -
@@ -311,6 +323,10 @@ public:
    * @param[in] job_no Permanent job identifier.
    * @return Read-only reference to the corresponding record. */
   const Job_Record &job_at(job_no_t job_no) const;
+
+  /** Power estimate embedded in the retained record, when the policy has one. */
+  std::optional<double> scheduler_power(job_no_t job_no) const;
+  std::optional<double> scheduler_maximum_power(job_no_t job_no) const;
 
   /// Jobs reclaimed so far - add to data().size() for the true total
   /// ever loaded (data().size() alone undercounts once anything's
