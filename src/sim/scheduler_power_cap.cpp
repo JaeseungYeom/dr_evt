@@ -90,6 +90,32 @@ double PowerCappedFCFSScheduler::current_power(
   return power;
 }
 
+double PowerCappedFCFSScheduler::backfill_running_power(
+    const running_jobs_t &running_jobs, sim_time_t current_time,
+    double &reserved_running_power) const {
+  reserved_running_power = -std::numeric_limits<double>::infinity();
+  const auto &queue = queued_jobs();
+  if (!m_cap_fcfs_power || queue.empty() || is_uncapped_job(queue.front()) ||
+      !reservation_within_horizon(m_fcfs_reservation_time, current_time)) {
+    return current_power(running_jobs);
+  }
+  double power = 0.0;
+  double surviving_power = 0.0;
+  for (const auto &[job_id, running] : running_jobs) {
+    (void)job_id;
+    if (!running.predicted_power) {
+      throw std::logic_error(
+          "power-capped scheduler has no power estimate for a running job");
+    }
+    power += *running.predicted_power;
+    if (running.start_time + running.run_time > m_fcfs_reservation_time) {
+      surviving_power += *running.predicted_power;
+    }
+  }
+  reserved_running_power = surviving_power;
+  return power;
+}
+
 std::optional<double>
 PowerCappedFCFSScheduler::running_job_power(const JobEntry &job) const {
   return job.m_cost;

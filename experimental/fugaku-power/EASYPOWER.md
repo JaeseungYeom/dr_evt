@@ -102,6 +102,10 @@ candidate is filtered, no job is backfilled. Pass `--cap_fcfs_power` to apply
 the same admission limit to each job in the FCFS prefix. The options are
 independent and can be used together. These flags govern combined running
 power; the per-job admission check above is independent of them.
+With the FCFS cap enabled, a backfill that overlaps the head's protected
+reservation must also leave enough power for the head to start then. Jobs
+finishing by that start can use the present power budget; reservations beyond
+the planning horizon are not protected.
 
 Pass `--uncapped_submit_time=EPOCH_S` to exempt jobs submitted at or before that
 time from both aggregate caps. The monthly warm-start suites use it for their
