@@ -97,6 +97,8 @@ void test_selector_must_return_a_candidate() {
 
 class TestableEASYPowerScheduler final : public EASYPowerScheduler {
 public:
+  using SchedulerBase::set_capacity_outlook;
+
   TestableEASYPowerScheduler(
       double maximum_power = 12.0, double initial_target = 10.0,
       double target_weight = 1.0, double maximum_weight = 1.0,
@@ -136,7 +138,51 @@ public:
   }
 
   void refresh_target() { on_jobs_became_eligible(0, 4, 100, {}, 0.0); }
+
+  sim_time_t head_reservation(num_nodes_t nodes, num_nodes_t available,
+                              const running_jobs_t &running,
+                              sim_time_t current_time = 0.0) {
+    return fcfs_head_reservation_time(JobEntry(1, 0.0, 10.0, nodes, 2.1),
+                                      available, running, current_time);
+  }
 };
+
+void test_power_capped_reservation_capacity_outlook() {
+  const auto check = [](num_nodes_t capacity, num_nodes_t occupied,
+                         num_nodes_t available, num_nodes_t requested,
+                         const running_jobs_t &running,
+                         const std::vector<Capacity_Change> &changes,
+                         sim_time_t expected) {
+    TestableEASYPowerScheduler scheduler(
+        12.0, 10.0, 1.0, 1.0, 144.0, 1.0, 0.0,
+        {10.0, 2.1, 1.0, 3.0}, false, true);
+    scheduler.set_capacity_outlook(
+        capacity, occupied, changes.data(),
+        changes.empty() ? changes.data() : changes.data() + changes.size());
+    if (scheduler.head_reservation(requested, available, running) != expected) {
+      throw std::runtime_error(
+          "power-capped head reservation ignored the capacity outlook");
+    }
+  };
+  const running_jobs_t running{
+      {0, {0.0, 10.0, 70, 1.0}}, {2, {0.0, 20.0, 30, 1.0}}};
+  // Releases must first pay back the deficit after the reduction. The head
+  // needs the restoration, even though power is feasible throughout.
+  check(100, 100, 0, 60, running, {{5.0, 50}, {30.0, 100}}, 30.0);
+  // Net a reduction and release sharing a timestamp before testing the head.
+  check(100, 100, 0, 60, running, {{10.0, 50}, {30.0, 100}}, 30.0);
+  // An already overcommitted machine starts with negative slack, not zero.
+  check(50, 100, 0, 40, running, {}, 20.0);
+  // A capacity increase can enable the head without any running-job release.
+  check(50, 0, 50, 60, {}, {{30.0, 100}}, 30.0);
+  // Capacity is temporarily sufficient while power is still blocked. Both
+  // constraints must hold together, at the later restoration.
+  check(50, 50, 0, 60, {{0, {0.0, 20.0, 50, 10.0}}},
+        {{5.0, 100}, {10.0, 50}, {30.0, 100}}, 30.0);
+  // Permanent reductions can make a resource-feasible release impossible.
+  check(100, 100, 0, 60, running, {{5.0, 50}},
+        std::numeric_limits<sim_time_t>::infinity());
+}
 
 void test_easypower_semiclamped_candidate_cost() {
   // Use non-unit parameters so each term in the specified equation is
@@ -738,6 +784,7 @@ int main(int argc, char **argv) {
   test_external_backfill_selection();
   test_selector_must_return_a_candidate();
   test_easypower_semiclamped_candidate_cost();
+  test_power_capped_reservation_capacity_outlook();
   test_easy_pc_mean_and_maximum_modes();
   test_power_cap_initialization_job_exemption();
   test_easypower_load_admission_limits();

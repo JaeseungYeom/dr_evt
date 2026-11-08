@@ -8,6 +8,7 @@
 #include "sim/scheduler_power_cap.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -143,6 +144,51 @@ sim_time_t PowerCappedFCFSScheduler::fcfs_head_reservation_time(
               return left.time != right.time ? left.time < right.time
                                              : left.job_id < right.job_id;
             });
+  // Keep the release-only path below for fixed, non-overcommitted capacity.
+  // Otherwise merge the already ordered capacity outlook with this same
+  // release vector; no second event container is needed.
+  if (m_outlook_changes_begin != m_outlook_changes_end ||
+      (available_nodes == 0 && m_outlook_occupied > m_outlook_capacity)) {
+    std::int64_t balance = static_cast<std::int64_t>(available_nodes);
+    if (available_nodes == 0 && m_outlook_occupied > m_outlook_capacity) {
+      balance = static_cast<std::int64_t>(m_outlook_capacity) -
+                static_cast<std::int64_t>(m_outlook_occupied);
+    }
+    const Capacity_Change *change = m_outlook_changes_begin;
+    num_nodes_t reference_capacity = m_outlook_capacity;
+    while (change != m_outlook_changes_end && change->time <= current_time) {
+      reference_capacity = change->total_nodes;
+      ++change;
+    }
+    size_t begin = 0;
+    while (begin < releases.size() || change != m_outlook_changes_end) {
+      sim_time_t event_time = begin < releases.size()
+                                  ? releases[begin].time
+                                  : change->time;
+      if (change != m_outlook_changes_end) {
+        event_time = std::min(event_time, change->time);
+      }
+      double released_power = 0.0;
+      while (begin < releases.size() && releases[begin].time == event_time) {
+        balance += static_cast<std::int64_t>(releases[begin].nodes);
+        released_power += releases[begin].power;
+        ++begin;
+      }
+      while (change != m_outlook_changes_end && change->time == event_time) {
+        balance += static_cast<std::int64_t>(change->total_nodes) -
+                   static_cast<std::int64_t>(reference_capacity);
+        reference_capacity = change->total_nodes;
+        ++change;
+      }
+      projected_power = std::max(0.0, projected_power - released_power);
+      // Net releases and capacity changes before checking either constraint.
+      if (static_cast<std::int64_t>(job.nodes_requested) <= balance &&
+          projected_power + job.m_cost <= m_maximum_power) {
+        return event_time;
+      }
+    }
+    return std::numeric_limits<sim_time_t>::infinity();
+  }
   for (size_t begin = 0; begin < releases.size();) {
     const sim_time_t end_time = releases[begin].time;
     num_nodes_t released_nodes = 0;
