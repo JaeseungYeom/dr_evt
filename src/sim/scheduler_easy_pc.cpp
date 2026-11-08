@@ -52,10 +52,16 @@ std::optional<size_t> EASYPCScheduler::select_backfill_candidate(
     const backfill_candidates_t &candidates, num_nodes_t available_nodes,
     const running_jobs_t &effective_running_jobs, sim_time_t current_time) {
   (void)available_nodes;
-  (void)current_time;
-  const double running_power = current_power(effective_running_jobs);
+  double reserved_running_power;
+  const double running_power =
+      backfill_running_power(effective_running_jobs, current_time,
+                              reserved_running_power);
   const auto &queue = queued_jobs();
   for (size_t index = 0; index < candidates.size(); ++index) {
+    if (!preserves_head_power(queue[candidates[index].queue_index],
+                              reserved_running_power, current_time)) {
+      continue;
+    }
     if (is_uncapped_job(queue[candidates[index].queue_index]) ||
         running_power + candidates[index].cost <= maximum_power()) {
       return index;

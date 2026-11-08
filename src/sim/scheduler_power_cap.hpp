@@ -67,6 +67,40 @@ protected:
    */
   double current_power(const running_jobs_t &running_jobs) const;
 
+  /**
+   * @brief Sum running power now and at the protected head's reserved start.
+   * @details Compute both sums in one running-job scan. When the FCFS cap
+   * does not protect an in-horizon head, use the existing current-power path.
+   * @param[in] running_jobs Effective running jobs, including selected starts.
+   * @param[in] current_time Scheduler timestamp.
+   * @param[out] reserved_running_power Power of running jobs that survive the
+   * head's reserved start; negative infinity when no capped head is protected.
+   * @return Aggregate predicted power of the effective running set now.
+   * @throws std::logic_error when a running job has no power metadata.
+   */
+  double backfill_running_power(const running_jobs_t &running_jobs,
+                                sim_time_t current_time,
+                                double &reserved_running_power) const;
+
+  /**
+   * @brief Check whether a candidate preserves the head's power feasibility.
+   * @param[in] job Candidate wait-queue entry.
+   * @param[in] reserved_running_power Future running power computed by
+   * backfill_running_power.
+   * @param[in] current_time Proposed candidate start time.
+   * @return true if the candidate fits the budget, is exempt, or finishes by
+   * the head's reserved start; otherwise false.
+   */
+  bool preserves_head_power(const JobEntry &job, double reserved_running_power,
+                             sim_time_t current_time) const {
+    return reserved_running_power < 0.0 ||
+           reserved_running_power + job.m_cost + queued_jobs().front().m_cost
+               <= m_maximum_power ||
+           is_uncapped_job(job) ||
+           current_time + release_estimate(current_time, job.run_time_estimate)
+               <= m_fcfs_reservation_time;
+  }
+
   bool cap_backfill_power() const { return m_cap_backfill_power; }
 
   /** Whether a queued job is an initialization job exempt from the caps. */
