@@ -107,6 +107,12 @@ reservation must also leave enough power for the head to start then. Jobs
 finishing by that start can use the present power budget; reservations beyond
 the planning horizon are not protected.
 
+EASYPower and EASY+PC use the custom event-driven simulation loop. Their C++
+simulation constructors reject nonzero `backfill_interval` or
+`dispatch_interval`, and enabled `dispatch_queue_depth`, `dispatch_on_events`,
+`per_pass_accounting`, or `diagnostic_no_reservations`, because those controls
+belong to the core scheduling modes.
+
 Pass `--uncapped_submit_time=EPOCH_S` to exempt jobs submitted at or before that
 time from both aggregate caps. The monthly warm-start suites use it for their
 initialization jobs, which are submitted exactly at the month boundary and

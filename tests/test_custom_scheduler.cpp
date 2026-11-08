@@ -95,6 +95,58 @@ void test_selector_must_return_a_candidate() {
   assert(threw);
 }
 
+void test_custom_simulation_rejects_unsupported_modes() {
+  for (const std::string option :
+       {"per_pass_accounting", "diagnostic_no_reservations",
+        "backfill_interval", "dispatch_interval", "dispatch_queue_depth",
+        "dispatch_on_events"}) {
+    Sim_Params params;
+    params.m_infile = "tests/test_traces/unit/simple_basic.csv";
+    if (option == "per_pass_accounting") {
+      params.m_per_pass_accounting = true;
+    } else if (option == "diagnostic_no_reservations") {
+      params.m_diagnostic_no_reservations = true;
+    } else if (option == "backfill_interval") {
+      params.m_backfill_interval = 10.0;
+    } else if (option == "dispatch_interval") {
+      params.m_dispatch_interval = 10.0;
+    } else if (option == "dispatch_queue_depth") {
+      params.m_dispatch_queue_depth = 3;
+    } else {
+      params.m_dispatch_on_events = true;
+    }
+    // Exercise both custom constructors, including the Pcon specialization
+    // used for EASYPower and EASY+PC experiments.
+    for (int kind = 0; kind < 3; ++kind) {
+      bool rejected = false;
+      try {
+        if (kind == 0) {
+          Simulation sim(params, cost_from_job_order, select_lowest_cost);
+        } else if (kind == 1) {
+          PconSimulation sim(
+              params, std::make_unique<EASYPowerScheduler>(
+                          params.m_total_nodes, 0, 4, 12.0, 10.0, 1.0, 1.0,
+                          144.0, job_power_function_t{},
+                          [](const auto &, const auto &, double, num_nodes_t) {
+                            return EASYPowerReplayResult{1.0, 0.0};
+                          }));
+        } else {
+          PconSimulation sim(
+              params, std::make_unique<EASYPCScheduler>(
+                          params.m_total_nodes, 0, 4, 12.0,
+                          EASYPCPowerMode::MEAN));
+        }
+      } catch (const std::invalid_argument &error) {
+        rejected = std::string(error.what()).find(option) != std::string::npos;
+      }
+      if (!rejected) {
+        throw std::runtime_error("custom simulation accepted unsupported " +
+                                 option);
+      }
+    }
+  }
+}
+
 class TestableEASYPowerScheduler final : public EASYPowerScheduler {
 public:
   using SchedulerBase::set_capacity_outlook;
@@ -879,6 +931,7 @@ int main(int argc, char **argv) {
 
   test_external_backfill_selection();
   test_selector_must_return_a_candidate();
+  test_custom_simulation_rejects_unsupported_modes();
   test_easypower_semiclamped_candidate_cost();
   test_power_capped_reservation_capacity_outlook();
   test_backfill_preserves_capped_head_start();

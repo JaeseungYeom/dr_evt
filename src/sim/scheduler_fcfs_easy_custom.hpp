@@ -67,6 +67,9 @@ using backfill_selector_t =
  * dispatch and backfill intervals zero. --num_max_candidates controls the
  * candidate limit after this API path is selected; no CLI flag activates
  * the custom scheduler by itself.
+ * Custom simulation constructors reject per_pass_accounting,
+ * diagnostic_no_reservations, dispatch_queue_depth, and dispatch_on_events,
+ * as well as nonzero dispatch or backfill intervals.
  */
 class FCFSEasyCustomScheduler : public SchedulerBase {
 private:
