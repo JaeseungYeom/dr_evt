@@ -95,12 +95,15 @@ protected:
 
   /**
    * @brief Find the first resource- and power-feasible FCFS start time.
+   * @details Merge projected releases with scheduled capacity changes. While
+   * overcommitted, releases first pay back the negative node balance. Events
+   * sharing a timestamp are applied together before checking feasibility.
    * @param[in] job Blocked FCFS head queue entry.
    * @param[in] available_nodes Nodes currently available for dispatch.
    * @param[in] effective_running_jobs Running jobs and selected starts.
    * @param[in] current_time Scheduler timestamp.
-   * @return Earliest feasible start, or infinity if releases never satisfy
-   *         both the resource and power constraints.
+   * @return Earliest feasible start, or infinity if no projected release or
+   *         capacity change satisfies both resource and power constraints.
    */
   sim_time_t
   fcfs_head_reservation_time(const JobEntry &job, num_nodes_t available_nodes,
