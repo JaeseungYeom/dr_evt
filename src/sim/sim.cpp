@@ -60,6 +60,30 @@ timeout_t checked_streaming_limit(tdiff_t limit_time) {
   return static_cast<timeout_t>(limit_time);
 }
 
+/** Reject scheduling modes not implemented by custom simulation loops.
+ * @param[in] params Configuration passed to a custom simulation constructor.
+ * @throws std::invalid_argument if core-only scheduling controls are enabled.
+ */
+void validate_custom_scheduler_modes(const Sim_Params &params) {
+  if (params.m_per_pass_accounting) {
+    throw std::invalid_argument(
+        "per_pass_accounting is unsupported by custom schedulers");
+  }
+  if (params.m_diagnostic_no_reservations) {
+    throw std::invalid_argument(
+        "diagnostic_no_reservations is unsupported by custom schedulers");
+  }
+  if (params.m_backfill_interval != 0.0 || params.m_dispatch_interval != 0.0) {
+    throw std::invalid_argument(
+        "custom schedulers require backfill_interval=0 and dispatch_interval=0");
+  }
+  if (params.m_dispatch_queue_depth != 0 || params.m_dispatch_on_events) {
+    throw std::invalid_argument(
+        "dispatch_queue_depth and dispatch_on_events are unsupported by "
+        "custom schedulers");
+  }
+}
+
 #if defined(DR_EVT_HAS_SER20)
 
 constexpr std::array<char, 8> checkpoint_magic{'D', 'R', 'E', 'V',
@@ -440,6 +464,7 @@ BasicSimulation<TraceType>::BasicSimulation(Sim_Params params,
   if (m_params.m_resource_model != "capacity")
     throw std::invalid_argument(
         "custom schedulers require resource_model=capacity");
+  validate_custom_scheduler_modes(m_params);
   m_trace.set_cores_per_node(m_params.m_cores_per_node);
   m_custom_scheduler->set_backfill_queue_depth(m_params.m_backfill_queue_depth);
   m_scheduler->set_planning_time_resolution(
@@ -485,6 +510,7 @@ BasicSimulation<TraceType>::BasicSimulation(
   if (m_params.m_resource_model != "capacity")
     throw std::invalid_argument(
         "custom schedulers require resource_model=capacity");
+  validate_custom_scheduler_modes(m_params);
   m_trace.set_cores_per_node(m_params.m_cores_per_node);
   m_custom_scheduler->set_backfill_queue_depth(m_params.m_backfill_queue_depth);
   m_scheduler->set_planning_time_resolution(
