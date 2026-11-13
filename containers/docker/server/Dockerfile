@@ -74,7 +74,7 @@ RUN apt-get update \
         lcov \
         libboost-all-dev \
         libgrpc++-dev \
-        libhiredis1.1 \
+        libhiredis1.1.0 \
         libhiredis-dev \
         libopenmpi-dev \
         libprotobuf-dev \

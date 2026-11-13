@@ -1511,10 +1511,10 @@ void test_resource_area_and_time_accounted_utilization() {
       [](job_no_t job_id, sim_time_t, tdiff_t, num_nodes_t) {
         return static_cast<job_cost_t>(job_id);
       },
-      [](const backfill_candidates_t &candidates) -> std::optional<job_no_t> {
+      [](const backfill_candidates_t &candidates) -> std::optional<size_t> {
         return candidates.empty()
                    ? std::nullopt
-                   : std::optional<job_no_t>{candidates.front().first};
+                   : std::optional<size_t>{0};
       });
   sim.get_trace().load_data(0);
 
@@ -1570,10 +1570,10 @@ void test_prediction_horizon() {
       [](job_no_t job_id, sim_time_t, tdiff_t, num_nodes_t) {
         return static_cast<job_cost_t>(job_id);
       },
-      [](const backfill_candidates_t &candidates) -> std::optional<job_no_t> {
+      [](const backfill_candidates_t &candidates) -> std::optional<size_t> {
         return candidates.empty()
                    ? std::nullopt
-                   : std::optional<job_no_t>{candidates.front().first};
+                   : std::optional<size_t>{0};
       });
   sim.get_trace().load_data(0);
 
@@ -1640,10 +1640,10 @@ void test_prediction_horizon() {
       [](job_no_t job_id, sim_time_t, tdiff_t, num_nodes_t) {
         return static_cast<job_cost_t>(job_id);
       },
-      [](const backfill_candidates_t &candidates) -> std::optional<job_no_t> {
+      [](const backfill_candidates_t &candidates) -> std::optional<size_t> {
         return candidates.empty()
                    ? std::nullopt
-                   : std::optional<job_no_t>{candidates.front().first};
+                   : std::optional<size_t>{0};
       });
   empty.get_trace().load_data(0);
   assert(approx_equal(empty.estimate_queue_horizon(0.5), 0.0));
@@ -1688,10 +1688,10 @@ void test_prediction_horizon() {
       [](job_no_t job_id, sim_time_t, tdiff_t, num_nodes_t) {
         return static_cast<job_cost_t>(job_id);
       },
-      [](const backfill_candidates_t &candidates) -> std::optional<job_no_t> {
+      [](const backfill_candidates_t &candidates) -> std::optional<size_t> {
         return candidates.empty()
                    ? std::nullopt
-                   : std::optional<job_no_t>{candidates.front().first};
+                   : std::optional<size_t>{0};
       });
   no_backfill.get_trace().load_data(0);
   bool rejected_without_easy = false;

@@ -60,6 +60,30 @@ timeout_t checked_streaming_limit(tdiff_t limit_time) {
   return static_cast<timeout_t>(limit_time);
 }
 
+/** Reject scheduling modes not implemented by custom simulation loops.
+ * @param[in] params Configuration passed to a custom simulation constructor.
+ * @throws std::invalid_argument if core-only scheduling controls are enabled.
+ */
+void validate_custom_scheduler_modes(const Sim_Params &params) {
+  if (params.m_per_pass_accounting) {
+    throw std::invalid_argument(
+        "per_pass_accounting is unsupported by custom schedulers");
+  }
+  if (params.m_diagnostic_no_reservations) {
+    throw std::invalid_argument(
+        "diagnostic_no_reservations is unsupported by custom schedulers");
+  }
+  if (params.m_backfill_interval != 0.0 || params.m_dispatch_interval != 0.0) {
+    throw std::invalid_argument(
+        "custom schedulers require backfill_interval=0 and dispatch_interval=0");
+  }
+  if (params.m_dispatch_queue_depth != 0 || params.m_dispatch_on_events) {
+    throw std::invalid_argument(
+        "dispatch_queue_depth and dispatch_on_events are unsupported by "
+        "custom schedulers");
+  }
+}
+
 #if defined(DR_EVT_HAS_SER20)
 
 constexpr std::array<char, 8> checkpoint_magic{'D', 'R', 'E', 'V',
@@ -399,6 +423,10 @@ BasicSimulation<TraceType>::BasicSimulation(Sim_Params params)
       m_params.m_planning_time_resolution);
   m_scheduler->set_planning_horizon(m_params.m_planning_horizon);
   configure_node_release_delay();
+  m_trace.set_admission_limits(
+      params.m_total_nodes,
+      m_scheduler->maximum_job_power_for_admission(), true,
+      m_scheduler->maximum_average_job_power_for_admission());
   reset_capacity_schedule();
 }
 
@@ -436,12 +464,17 @@ BasicSimulation<TraceType>::BasicSimulation(Sim_Params params,
   if (m_params.m_resource_model != "capacity")
     throw std::invalid_argument(
         "custom schedulers require resource_model=capacity");
+  validate_custom_scheduler_modes(m_params);
   m_trace.set_cores_per_node(m_params.m_cores_per_node);
   m_custom_scheduler->set_backfill_queue_depth(m_params.m_backfill_queue_depth);
   m_scheduler->set_planning_time_resolution(
       m_params.m_planning_time_resolution);
   m_scheduler->set_planning_horizon(m_params.m_planning_horizon);
   configure_node_release_delay();
+  m_trace.set_admission_limits(
+      params.m_total_nodes,
+      m_scheduler->maximum_job_power_for_admission(), true,
+      m_scheduler->maximum_average_job_power_for_admission());
   reset_capacity_schedule();
 }
 
@@ -477,12 +510,17 @@ BasicSimulation<TraceType>::BasicSimulation(
   if (m_params.m_resource_model != "capacity")
     throw std::invalid_argument(
         "custom schedulers require resource_model=capacity");
+  validate_custom_scheduler_modes(m_params);
   m_trace.set_cores_per_node(m_params.m_cores_per_node);
   m_custom_scheduler->set_backfill_queue_depth(m_params.m_backfill_queue_depth);
   m_scheduler->set_planning_time_resolution(
       m_params.m_planning_time_resolution);
   m_scheduler->set_planning_horizon(m_params.m_planning_horizon);
   configure_node_release_delay();
+  m_trace.set_admission_limits(
+      params.m_total_nodes,
+      m_scheduler->maximum_job_power_for_admission(), true,
+      m_scheduler->maximum_average_job_power_for_admission());
   reset_capacity_schedule();
 }
 
@@ -605,7 +643,10 @@ template <typename TraceType> void BasicSimulation<TraceType>::run() {
             ++m_jobs_completed;
           } else if (m_params.m_is_time_set && begin <= run_limit) {
             m_running_jobs[replay_job_no] = {
-                begin, static_cast<tdiff_t>(end - begin), job.get_num_nodes()};
+                begin, static_cast<tdiff_t>(end - begin), job.get_num_nodes(),
+                m_scheduler->scheduling_power(
+                    m_trace.scheduler_power(replay_job_no),
+                    m_trace.scheduler_maximum_power(replay_job_no))};
           }
         }
         ++replay_job_no;
@@ -808,7 +849,9 @@ void BasicSimulation<TraceType>::run_warm_start() {
         // use that known end rather than a possibly stale original limit.
         m_running_jobs[job_no] = {
             begin, planning_run_time(begin, job.get_actual_run_time()),
-            job.get_num_nodes()};
+            job.get_num_nodes(), m_scheduler->scheduling_power(
+                                     m_trace.scheduler_power(job_no),
+                                     m_trace.scheduler_maximum_power(job_no))};
         m_warm_resource_area +=
             static_cast<tdiff_t>(job.get_num_nodes()) * (end - sim_start_time);
         m_warm_resource_end = std::max(m_warm_resource_end, end);
@@ -3145,7 +3188,13 @@ void BasicSimulation<TraceType>::submit_job(job_no_t job_idx,
   job.set_busy_nodes(get_nodes_in_use());
 #endif
 
-  m_scheduler->insert_job(job_idx, submit_time, run_time_estimate, nodes);
+  const SchedulerJobMetadata metadata{m_trace.scheduler_power(job_idx),
+                                      job.get_actual_run_time(),
+                                      job.get_limit_time(),
+                                      m_trace.scheduler_maximum_power(job_idx)};
+  m_scheduler->insert_job_with_metadata(job_idx, submit_time,
+                                        run_time_estimate,
+                                        nodes, metadata);
   if (m_params.scheduling_interval() > 0.0) {
     m_periodic_backfill_dirty = true;
   }
@@ -3387,7 +3436,9 @@ void BasicSimulation<TraceType>::advance_to_impl(
             m_current_time,
             planning_run_time(m_current_time,
                               static_cast<tdiff_t>(record.get_limit_time())),
-            record.get_num_nodes()};
+            record.get_num_nodes(), m_scheduler->scheduling_power(
+                                        m_trace.scheduler_power(job),
+                                        m_trace.scheduler_maximum_power(job))};
         if (m_running_jobs.placement())
           m_running_jobs.commit(job, running,
                                 jobs_to_run.take_allocation(selected));
@@ -3739,7 +3790,9 @@ void BasicSimulation<TraceType>::advance_to_impl(
               m_current_time,
               planning_run_time(m_current_time,
                                 static_cast<tdiff_t>(record.get_limit_time())),
-              record.get_num_nodes()};
+              record.get_num_nodes(), m_scheduler->scheduling_power(
+                                          m_trace.scheduler_power(job),
+                                          m_trace.scheduler_maximum_power(job))};
           if (m_running_jobs.placement())
             m_running_jobs.commit(job, running,
                                   jobs_to_run.take_allocation(selected));

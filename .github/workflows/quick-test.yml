@@ -113,6 +113,10 @@ jobs:
         id: append-job
         run: $GITHUB_WORKSPACE/install/bin/tests/test_append_job_api
 
+      - name: Validate Capped Monthly Experiment Scripts
+        id: capped-monthly-scripts
+        run: python3 tests/test_monthly_backfill_cap_scripts.py
+
       - name: Run Ser20 Memory Serialization Test
         id: serialization
         run: $GITHUB_WORKSPACE/install/bin/tests/t_state_ser20
@@ -155,4 +159,5 @@ jobs:
           echo "Bitmap placement and native comparison: ${{ steps.bitmap-placement.outcome }}"
           echo "Flux placement oracle audits: ${{ steps.flux-placement-audits.outcome }}"
           echo "OpenPBS forecast policy: ${{ steps.openpbs-forecast.outcome }}"
+          echo "Capped monthly experiment scripts: ${{ steps.capped-monthly-scripts.outcome }}"
           echo "========================================"

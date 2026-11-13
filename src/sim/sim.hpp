@@ -178,7 +178,9 @@ public:
    * @details Configuration and callbacks are owned by the simulation. Resource
    * diagnostics are selected once and observe trace event accounting; this
    * custom scheduler does not use the CapacityModel fit/reservation operations.
-   * @throws std::invalid_argument if resource_model is not capacity.
+   * @throws std::invalid_argument if resource_model is not capacity,
+   * or periodic intervals, dispatch-only controls, per_pass_accounting,
+   * or diagnostic_no_reservations are enabled.
    * @throws std::runtime_error if the input trace cannot be initialized.
    */
   BasicSimulation(Sim_Params params, job_cost_function_t cost_function,
@@ -191,8 +193,9 @@ public:
    * @details Diagnostics are selected once from params and observe the trace's
    * event accounting. The scheduler is destroyed before the trace counter
    * owner.
-   * @throws std::invalid_argument if scheduler is null or resource_model is not
-   * capacity.
+   * @throws std::invalid_argument if scheduler is null, resource_model is not
+   * capacity, or periodic intervals, dispatch-only controls,
+   * per_pass_accounting, or diagnostic_no_reservations are enabled.
    * @throws std::runtime_error if the input trace cannot be initialized.
    */
   BasicSimulation(Sim_Params params,

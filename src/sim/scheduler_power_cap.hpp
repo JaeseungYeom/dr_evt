@@ -1,0 +1,157 @@
+/******************************************************************************
+ *         Copyright 2023 Lawrence Livermore National Security, LLC           *
+ *         See the top-level LICENSE file for details.                        *
+ *                                                                            *
+ *         SPDX-License-Identifier: MIT                                       *
+ ******************************************************************************/
+
+#ifndef DR_EVT_SIM_SCHEDULER_POWER_CAP_HPP
+#define DR_EVT_SIM_SCHEDULER_POWER_CAP_HPP
+
+#include "sim/scheduler_fcfs_easy_custom.hpp"
+#include <functional>
+
+namespace dr_evt {
+
+using job_power_function_t =
+    std::function<double(job_no_t, sim_time_t, tdiff_t, num_nodes_t)>;
+
+/** Shared aggregate-power admission and reservation behavior for EASY. */
+class PowerCappedFCFSScheduler : public FCFSEasyCustomScheduler {
+public:
+  double maximum_power() const { return m_maximum_power; }
+  std::optional<double> maximum_job_power_for_admission() const override {
+    return m_maximum_power;
+  }
+
+  void insert_job(job_no_t job_id, sim_time_t submit_time,
+                  tdiff_t run_time_estimate,
+                  num_nodes_t nodes_requested) override;
+
+  void insert_job_with_metadata(job_no_t job_id, sim_time_t submit_time,
+                                tdiff_t run_time_estimate,
+                                num_nodes_t nodes_requested,
+                                const SchedulerJobMetadata &metadata) override;
+
+  /**
+   * @brief Exempt warm-start initialization jobs from the aggregate power caps.
+   * @details Jobs submitted at or before @p submit_time represent work that
+   * was already running when the simulation window opened. They must start
+   * regardless of the FCFS and backfill caps so the initial machine state
+   * matches history; the caps then govern only later arrivals. Per-job
+   * admission limits applied at trace load are unaffected. The default
+   * (negative infinity) exempts nothing.
+   * @param[in] submit_time Latest submit time treated as an initialization job.
+   */
+  void set_uncapped_submit_time(sim_time_t submit_time) {
+    m_uncapped_submit_time = submit_time;
+  }
+  sim_time_t uncapped_submit_time() const { return m_uncapped_submit_time; }
+
+protected:
+  PowerCappedFCFSScheduler(
+      num_nodes_t total_nodes, size_t initial_job_count,
+      size_t num_max_candidates, double maximum_power,
+      job_power_function_t power_function, bool cap_backfill_power,
+      bool cap_fcfs_power, size_t initial_capacity = 0,
+      CircularOverflowPolicy overflow_policy = CircularOverflowPolicy::GROW);
+
+  virtual std::optional<double>
+  power_from_metadata(const SchedulerJobMetadata &metadata) const;
+
+  /**
+   * @brief Sum the power metadata of the effective running set.
+   * @param[in] running_jobs Running jobs with mandatory power metadata.
+   * @return Aggregate predicted power of all running jobs.
+   * @throws std::logic_error when a running job has no power metadata.
+   */
+  double current_power(const running_jobs_t &running_jobs) const;
+
+  /**
+   * @brief Sum running power now and at the protected head's reserved start.
+   * @details Compute both sums in one running-job scan. When the FCFS cap
+   * does not protect an in-horizon head, use the existing current-power path.
+   * @param[in] running_jobs Effective running jobs, including selected starts.
+   * @param[in] current_time Scheduler timestamp.
+   * @param[out] reserved_running_power Power of running jobs that survive the
+   * head's reserved start; negative infinity when no capped head is protected.
+   * @return Aggregate predicted power of the effective running set now.
+   * @throws std::logic_error when a running job has no power metadata.
+   */
+  double backfill_running_power(const running_jobs_t &running_jobs,
+                                sim_time_t current_time,
+                                double &reserved_running_power) const;
+
+  /**
+   * @brief Check whether a candidate preserves the head's power feasibility.
+   * @param[in] job Candidate wait-queue entry.
+   * @param[in] reserved_running_power Future running power computed by
+   * backfill_running_power.
+   * @param[in] current_time Proposed candidate start time.
+   * @return true if the candidate fits the budget, is exempt, or finishes by
+   * the head's reserved start; otherwise false.
+   */
+  bool preserves_head_power(const JobEntry &job, double reserved_running_power,
+                             sim_time_t current_time) const {
+    return reserved_running_power < 0.0 ||
+           reserved_running_power + job.m_cost + queued_jobs().front().m_cost
+               <= m_maximum_power ||
+           is_uncapped_job(job) ||
+           current_time + release_estimate(current_time, job.run_time_estimate)
+               <= m_fcfs_reservation_time;
+  }
+
+  bool cap_backfill_power() const { return m_cap_backfill_power; }
+
+  /** Whether a queued job is an initialization job exempt from the caps. */
+  bool is_uncapped_job(const JobEntry &job) const {
+    return job.submit_time <= m_uncapped_submit_time;
+  }
+
+  /**
+   * @brief Return the power metadata for a queued job being started.
+   * @param[in] job Queue entry selected for dispatch.
+   * @return Predicted power retained in the effective running record.
+   */
+  std::optional<double> running_job_power(const JobEntry &job) const override;
+
+  /**
+   * @brief Check whether starting the FCFS head would exceed the power cap.
+   * @param[in] job FCFS head queue entry.
+   * @param[in] available_nodes Nodes currently available for dispatch.
+   * @param[in] effective_running_jobs Running jobs and selected starts.
+   * @param[in] current_time Scheduler timestamp.
+   * @return true if the job is exempt, uncapped, or within the power cap.
+   */
+  bool can_start_fcfs_job(const JobEntry &job, num_nodes_t available_nodes,
+                          const running_jobs_t &effective_running_jobs,
+                          sim_time_t current_time) const override;
+
+  /**
+   * @brief Find the first resource- and power-feasible FCFS start time.
+   * @details Merge projected releases with scheduled capacity changes. While
+   * overcommitted, releases first pay back the negative node balance. Events
+   * sharing a timestamp are applied together before checking feasibility.
+   * @param[in] job Blocked FCFS head queue entry.
+   * @param[in] available_nodes Nodes currently available for dispatch.
+   * @param[in] effective_running_jobs Running jobs and selected starts.
+   * @param[in] current_time Scheduler timestamp.
+   * @return Earliest feasible start, or infinity if no projected release or
+   *         capacity change satisfies both resource and power constraints.
+   */
+  sim_time_t
+  fcfs_head_reservation_time(const JobEntry &job, num_nodes_t available_nodes,
+                             const running_jobs_t &effective_running_jobs,
+                             sim_time_t current_time) override;
+
+private:
+  double m_maximum_power;
+  job_power_function_t m_power_function;
+  bool m_cap_backfill_power;
+  bool m_cap_fcfs_power;
+  sim_time_t m_uncapped_submit_time;
+};
+
+} // namespace dr_evt
+
+#endif // DR_EVT_SIM_SCHEDULER_POWER_CAP_HPP
