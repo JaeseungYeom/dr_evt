@@ -329,8 +329,14 @@ backfill_candidates_t FCFSEasyCustomScheduler::find_backfill_candidates_from(
     return candidates;
   }
 
-  // A head reserved beyond the planning horizon is not planned, so every
-  // fitting job is a candidate (Slurm bf_window).
+  // A finite head projection beyond the planning horizon is not protected, but
+  // a head with no projection cannot safely admit any backfill candidate.
+  const bool head_has_projection =
+      std::isfinite(reservation_time) &&
+      reservation_time != std::numeric_limits<sim_time_t>::max();
+  if (!head_has_projection) {
+    return candidates;
+  }
   const bool head_within_horizon =
       reservation_within_horizon(reservation_time, current_time);
   auto reservation_plan = reservation_timeline(available_nodes, running_jobs,
@@ -438,8 +444,9 @@ FCFSEasyCustomScheduler::schedule(num_nodes_t free_nodes,
       fcfs_head_reservation_time(m_wait_queue.front(), available_nodes,
                                  effective_running_jobs, current_time);
 
-  record_estimated_start(m_wait_queue.front().job_id, m_fcfs_reservation_time,
-                       reservation_within_horizon(m_fcfs_reservation_time, current_time));
+  record_estimated_start(
+      m_wait_queue.front().job_id, m_fcfs_reservation_time,
+      reservation_within_horizon(m_fcfs_reservation_time, current_time));
 
   // Scanning only new arrivals is unsafe with a queue depth: a start moves
   // older, never-examined jobs into the window. The depth bounds the full
@@ -492,6 +499,18 @@ FCFSEasyCustomScheduler::schedule(num_nodes_t free_nodes,
   auto &selected_job = m_wait_queue[queue_index];
 
 #ifndef DR_EVT_LEGACY_RESERVATION_BARRIER
+  const bool head_has_projection =
+      std::isfinite(m_fcfs_reservation_time) &&
+      m_fcfs_reservation_time != std::numeric_limits<sim_time_t>::max();
+  if (!head_has_projection) {
+    if (jobs_to_run.empty()) {
+      finish_scheduling_cycle(available_nodes, effective_running_jobs,
+                              current_time);
+    } else {
+      complete_candidate_scan();
+    }
+    return jobs_to_run;
+  }
   const bool head_within_horizon =
       reservation_within_horizon(m_fcfs_reservation_time, current_time);
   auto reservation_plan = reservation_timeline(available_nodes, running_jobs,

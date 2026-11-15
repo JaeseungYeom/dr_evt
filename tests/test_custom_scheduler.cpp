@@ -41,11 +41,9 @@ select_lowest_cost(const backfill_candidates_t &candidates) {
   if (candidates.empty()) {
     return std::nullopt;
   }
-  const auto selected =
-      std::min_element(candidates.begin(), candidates.end(),
-                       [](const auto &lhs, const auto &rhs) {
-                         return lhs.cost < rhs.cost;
-                       });
+  const auto selected = std::min_element(
+      candidates.begin(), candidates.end(),
+      [](const auto &lhs, const auto &rhs) { return lhs.cost < rhs.cost; });
   return static_cast<size_t>(std::distance(candidates.begin(), selected));
 }
 
@@ -79,9 +77,7 @@ void test_selector_must_return_a_candidate() {
   FCFSEasyCustomScheduler scheduler(
       100, 0, BackfillPolicy::EASY, 1,
       [](job_no_t, sim_time_t, tdiff_t, num_nodes_t) { return 0; },
-      [](const backfill_candidates_t &) {
-        return std::optional<size_t>{99};
-      });
+      [](const backfill_candidates_t &) { return std::optional<size_t>{99}; });
   scheduler.insert_job(0, 0.0, 100.0, 70);
   scheduler.insert_job(1, 0.0, 200.0, 50);
   scheduler.insert_job(2, 0.0, 20.0, 10);
@@ -131,10 +127,9 @@ void test_custom_simulation_rejects_unsupported_modes() {
                             return EASYPowerReplayResult{1.0, 0.0};
                           }));
         } else {
-          PconSimulation sim(
-              params, std::make_unique<EASYPCScheduler>(
-                          params.m_total_nodes, 0, 4, 12.0,
-                          EASYPCPowerMode::MEAN));
+          PconSimulation sim(params, std::make_unique<EASYPCScheduler>(
+                                         params.m_total_nodes, 0, 4, 12.0,
+                                         EASYPCPowerMode::MEAN));
         }
       } catch (const std::invalid_argument &error) {
         rejected = std::string(error.what()).find(option) != std::string::npos;
@@ -157,7 +152,8 @@ public:
       double dominant_cost = 12.0 * 12.0, double replay_horizon = 1.0,
       double replay_running_energy = 0.0,
       std::array<double, 4> powers = {10.0, 2.1, 1.0, 3.0},
-      bool cap_backfill_power = false, bool cap_fcfs_power = false)
+      bool cap_backfill_power = false, bool cap_fcfs_power = false,
+      bool populate = true)
       : EASYPowerScheduler(
             100, 4, 4, maximum_power, initial_target, target_weight,
             maximum_weight, dominant_cost,
@@ -172,9 +168,9 @@ public:
             },
             0, CircularOverflowPolicy::GROW, cap_backfill_power,
             cap_fcfs_power) {
-    for (job_no_t job_id = 0; job_id < 4; ++job_id) {
-      insert_job(job_id, 0.0, 10.0, 1);
-    }
+    if (populate)
+      for (job_no_t job_id = 0; job_id < 4; ++job_id)
+        insert_job(job_id, 0.0, 10.0, 1);
   }
 
   std::optional<size_t> choose(const backfill_candidates_t &candidates) {
@@ -201,13 +197,12 @@ public:
 
 void test_power_capped_reservation_capacity_outlook() {
   const auto check = [](num_nodes_t capacity, num_nodes_t occupied,
-                         num_nodes_t available, num_nodes_t requested,
-                         const running_jobs_t &running,
-                         const std::vector<Capacity_Change> &changes,
-                         sim_time_t expected) {
-    TestableEASYPowerScheduler scheduler(
-        12.0, 10.0, 1.0, 1.0, 144.0, 1.0, 0.0,
-        {10.0, 2.1, 1.0, 3.0}, false, true);
+                        num_nodes_t available, num_nodes_t requested,
+                        const running_jobs_t &running,
+                        const std::vector<Capacity_Change> &changes,
+                        sim_time_t expected) {
+    TestableEASYPowerScheduler scheduler(12.0, 10.0, 1.0, 1.0, 144.0, 1.0, 0.0,
+                                         {10.0, 2.1, 1.0, 3.0}, false, true);
     scheduler.set_capacity_outlook(
         capacity, occupied, changes.data(),
         changes.empty() ? changes.data() : changes.data() + changes.size());
@@ -216,8 +211,8 @@ void test_power_capped_reservation_capacity_outlook() {
           "power-capped head reservation ignored the capacity outlook");
     }
   };
-  const running_jobs_t running{
-      {0, {0.0, 10.0, 70, 1.0}}, {2, {0.0, 20.0, 30, 1.0}}};
+  const running_jobs_t running{{0, {0.0, 10.0, 70, 1.0}},
+                               {2, {0.0, 20.0, 30, 1.0}}};
   // Releases must first pay back the deficit after the reduction. The head
   // needs the restoration, even though power is feasible throughout.
   check(100, 100, 0, 60, running, {{5.0, 50}, {30.0, 100}}, 30.0);
@@ -238,8 +233,8 @@ void test_power_capped_reservation_capacity_outlook() {
 
 void test_backfill_preserves_capped_head_start() {
   const auto check = [](bool cap_fcfs, tdiff_t candidate_duration,
-                         double candidate_power, tdiff_t planning_horizon,
-                         bool expected_backfill) {
+                        double candidate_power, tdiff_t planning_horizon,
+                        bool expected_backfill) {
     EASYPowerScheduler scheduler(
         100, 3, 3, 10.0, 10.0, 1.0, 1.0, 100.0,
         [candidate_power](job_no_t id, sim_time_t, tdiff_t, num_nodes_t) {
@@ -255,7 +250,7 @@ void test_backfill_preserves_capped_head_start() {
     scheduler.insert_job(2, 0.0, candidate_duration, 10);
     const auto starts = scheduler.schedule(100, {}, 0.0);
     if (starts != (expected_backfill ? std::vector<job_no_t>{0, 2}
-                                    : std::vector<job_no_t>{0})) {
+                                     : std::vector<job_no_t>{0})) {
       throw std::runtime_error(
           "EASYPower backfill did not preserve capped head power feasibility");
     }
@@ -266,7 +261,8 @@ void test_backfill_preserves_capped_head_start() {
       }
       if (scheduler.schedule(running.empty() ? 100 : 90, running, 10.0) !=
           std::vector<job_no_t>{1}) {
-        throw std::runtime_error("EASYPower backfill delayed the reserved head");
+        throw std::runtime_error(
+            "EASYPower backfill delayed the reserved head");
       }
     }
   };
@@ -310,11 +306,11 @@ void test_backfill_preserves_capped_head_start() {
       0, CircularOverflowPolicy::GROW, true, true);
   boundary.insert_job(1, 0.0, 10.0, 50);
   boundary.insert_job(2, 0.0, 20.0, 10);
-  const running_jobs_t running{
-      {0, {0.0, 10.0, 70, 6.0}}, {3, {0.0, 30.0, 10, 3.3}}};
+  const running_jobs_t running{{0, {0.0, 10.0, 70, 6.0}},
+                               {3, {0.0, 30.0, 10, 3.3}}};
   assert((boundary.schedule(20, running, 0.0) == std::vector<job_no_t>{2}));
-  const running_jobs_t survivors{
-      {2, {0.0, 20.0, 10, 1.1}}, {3, {0.0, 30.0, 10, 3.3}}};
+  const running_jobs_t survivors{{2, {0.0, 20.0, 10, 1.1}},
+                                 {3, {0.0, 30.0, 10, 3.3}}};
   assert((boundary.schedule(80, survivors, 10.0) == std::vector<job_no_t>{1}));
 
   // Both EASY+PC modes share the same protected aggregate-power reservation.
@@ -329,6 +325,36 @@ void test_backfill_preserves_capped_head_start() {
     scheduler.insert_job(2, 0.0, 20.0, 10);
     assert((scheduler.schedule(100, {}, 0.0) == std::vector<job_no_t>{0}));
     assert((scheduler.schedule(100, {}, 10.0) == std::vector<job_no_t>{1}));
+  }
+
+  // A permanent capacity reduction below the blocked head's request leaves no
+  // finite reservation. Later jobs must not backfill behind an impossible
+  // head. This differs from a finite reservation beyond the planning horizon,
+  // which remains intentionally unprotected above.
+  TestableEASYPowerScheduler impossible(12.0, 10.0, 1.0, 1.0, 144.0, 1.0, 0.0,
+                                        {1.0, 1.0, 1.0, 1.0}, false, false,
+                                        false);
+  const std::vector<Capacity_Change> no_changes;
+  impossible.set_capacity_outlook(50, 40, no_changes.data(), no_changes.data());
+  impossible.insert_job(0, 0.0, 100.0, 60);
+  impossible.insert_job(1, 0.0, 10.0, 10);
+  const running_jobs_t impossible_running{{2, {0.0, 20.0, 40, 1.0}}};
+  if (!impossible.schedule(10, impossible_running, 0.0).empty()) {
+    throw std::runtime_error(
+        "EASYPower backfilled behind a head with no projection");
+  }
+
+  // An ended job can remain in the running owner while its nodes are cleaned
+  // up. Its nodes stay unavailable through available_nodes, but execution
+  // power must not prevent a different free-node job from starting.
+  EASYPCScheduler cleanup(
+      10, 0, 1, 10.0, EASYPCPowerMode::MEAN,
+      [](job_no_t, sim_time_t, tdiff_t, num_nodes_t) { return 5.0; }, 0,
+      CircularOverflowPolicy::GROW);
+  cleanup.insert_job(0, 10.0, 10.0, 1);
+  const running_jobs_t cleanup_owner{{1, {0.0, 5.0, 1, 10.0}}};
+  if (cleanup.schedule(9, cleanup_owner, 10.0) != std::vector<job_no_t>{0}) {
+    throw std::runtime_error("cleanup-only job retained execution power");
   }
 }
 
@@ -395,8 +421,7 @@ void test_easypower_semiclamped_candidate_cost() {
   TestableEASYPowerScheduler rounded(large_maximum, large_maximum, 1.0, 1.0,
                                      large_maximum * large_maximum, 1.0, 0.0,
                                      {0.0, large_maximum + 1.0, 0.0, 0.0});
-  if (rounded.choose(
-          {{1, large_maximum + 1.0}, {2, 0.0}}) != 2) {
+  if (rounded.choose({{1, large_maximum + 1.0}, {2, 0.0}}) != 2) {
     throw std::runtime_error(
         "EASYPower floating-point rounding broke branch dominance");
   }
@@ -417,10 +442,8 @@ void test_easypower_semiclamped_candidate_cost() {
 }
 
 void test_easy_pc_mean_and_maximum_modes() {
-  EASYPCScheduler mean_scheduler(10, 0, 4, 10.0,
-                                 EASYPCPowerMode::MEAN);
-  EASYPCScheduler max_scheduler(10, 0, 4, 10.0,
-                                EASYPCPowerMode::MAXIMUM);
+  EASYPCScheduler mean_scheduler(10, 0, 4, 10.0, EASYPCPowerMode::MEAN);
+  EASYPCScheduler max_scheduler(10, 0, 4, 10.0, EASYPCPowerMode::MAXIMUM);
 
   const SchedulerJobMetadata metadata{4.0, 10.0, 10, 8.0};
   if (mean_scheduler.scheduling_power(metadata.predicted_power,
@@ -461,8 +484,9 @@ void test_power_cap_initialization_job_exemption() {
   // to more than the cap. With the exemption they all start, as they did
   // historically; later arrivals remain capped against the resulting power.
   const std::array<double, 4> powers{6.0, 5.0, 3.0, 1.0};
-  auto power_of = [powers](job_no_t job_id, sim_time_t, tdiff_t,
-                           num_nodes_t) { return powers.at(job_id); };
+  auto power_of = [powers](job_no_t job_id, sim_time_t, tdiff_t, num_nodes_t) {
+    return powers.at(job_id);
+  };
 
   EASYPCScheduler capped(10, 0, 4, 10.0, EASYPCPowerMode::MEAN, power_of);
   capped.insert_job(0, 0.0, 100.0, 2);
@@ -528,10 +552,8 @@ void test_easypower_load_admission_limits() {
 
   auto scheduler = std::make_unique<EASYPowerScheduler>(
       100, 0, 4, 12.0, 10.0, 1.0, 1.0, 144.0, job_power_function_t{},
-      [](const std::vector<EASYPowerJob> &,
-         const std::vector<EASYPowerJob> &, double, num_nodes_t) {
-        return EASYPowerReplayResult{1.0, 0.0};
-      },
+      [](const std::vector<EASYPowerJob> &, const std::vector<EASYPowerJob> &,
+         double, num_nodes_t) { return EASYPowerReplayResult{1.0, 0.0}; },
       0, CircularOverflowPolicy::GROW, true, true);
   assert(scheduler->maximum_job_power_for_admission() == 12.0);
 

@@ -76,8 +76,9 @@ void PowerCappedFCFSScheduler::insert_job_with_metadata(
                        *power);
 }
 
-double PowerCappedFCFSScheduler::current_power(
-    const running_jobs_t &running_jobs) const {
+double
+PowerCappedFCFSScheduler::current_power(const running_jobs_t &running_jobs,
+                                        sim_time_t current_time) const {
   double power = 0.0;
   for (const auto &[job_id, running] : running_jobs) {
     (void)job_id;
@@ -85,7 +86,8 @@ double PowerCappedFCFSScheduler::current_power(
       throw std::logic_error(
           "power-capped scheduler has no power estimate for a running job");
     }
-    power += *running.predicted_power;
+    if (running.start_time + running.run_time > current_time)
+      power += *running.predicted_power;
   }
   return power;
 }
@@ -97,7 +99,7 @@ double PowerCappedFCFSScheduler::backfill_running_power(
   const auto &queue = queued_jobs();
   if (!m_cap_fcfs_power || queue.empty() || is_uncapped_job(queue.front()) ||
       !reservation_within_horizon(m_fcfs_reservation_time, current_time)) {
-    return current_power(running_jobs);
+    return current_power(running_jobs, current_time);
   }
   double power = 0.0;
   double surviving_power = 0.0;
@@ -107,8 +109,10 @@ double PowerCappedFCFSScheduler::backfill_running_power(
       throw std::logic_error(
           "power-capped scheduler has no power estimate for a running job");
     }
-    power += *running.predicted_power;
-    if (running.start_time + running.run_time > m_fcfs_reservation_time) {
+    const sim_time_t end = running.start_time + running.run_time;
+    if (end > current_time)
+      power += *running.predicted_power;
+    if (end > m_fcfs_reservation_time) {
       surviving_power += *running.predicted_power;
     }
   }
@@ -128,7 +132,8 @@ bool PowerCappedFCFSScheduler::can_start_fcfs_job(
   (void)available_nodes;
   (void)current_time;
   return !m_cap_fcfs_power || is_uncapped_job(job) ||
-         current_power(effective_running_jobs) + job.m_cost <= m_maximum_power;
+         current_power(effective_running_jobs, current_time) + job.m_cost <=
+             m_maximum_power;
 }
 
 sim_time_t PowerCappedFCFSScheduler::fcfs_head_reservation_time(
@@ -154,9 +159,9 @@ sim_time_t PowerCappedFCFSScheduler::fcfs_head_reservation_time(
       throw std::logic_error(
           "power-capped scheduler has no power estimate for a running job");
     }
-    projected_power += *running.predicted_power;
     const sim_time_t end_time = running.start_time + running.run_time;
     if (end_time > current_time) {
+      projected_power += *running.predicted_power;
       releases.push_back(
           {end_time, running_id, running.nodes, *running.predicted_power});
     }
@@ -188,9 +193,8 @@ sim_time_t PowerCappedFCFSScheduler::fcfs_head_reservation_time(
     }
     size_t begin = 0;
     while (begin < releases.size() || change != m_outlook_changes_end) {
-      sim_time_t event_time = begin < releases.size()
-                                  ? releases[begin].time
-                                  : change->time;
+      sim_time_t event_time =
+          begin < releases.size() ? releases[begin].time : change->time;
       if (change != m_outlook_changes_end) {
         event_time = std::min(event_time, change->time);
       }

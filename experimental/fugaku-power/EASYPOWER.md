@@ -111,7 +111,10 @@ EASYPower and EASY+PC use the custom event-driven simulation loop. Their C++
 simulation constructors reject nonzero `backfill_interval` or
 `dispatch_interval`, and enabled `dispatch_queue_depth`, `dispatch_on_events`,
 `per_pass_accounting`, or `diagnostic_no_reservations`, because those controls
-belong to the core scheduling modes.
+belong to the core scheduling modes. They also require the capacity resource
+model; the core simulator's exact-placement scheduler does not apply power caps.
+Node cleanup after END can retain capacity until RELEASE, but an ended job no
+longer contributes execution power to EASYPower's aggregate cap.
 
 Pass `--uncapped_submit_time=EPOCH_S` to exempt jobs submitted at or before that
 time from both aggregate caps. The monthly warm-start suites use it for their

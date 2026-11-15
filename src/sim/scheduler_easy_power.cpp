@@ -26,9 +26,8 @@ EASYPowerScheduler::EASYPowerScheduler(
           total_nodes, initial_job_count, num_max_candidates, maximum_power,
           std::move(power_function), cap_backfill_power, cap_fcfs_power,
           initial_capacity, overflow_policy),
-      m_power_target(initial_target),
-      m_target_weight(target_weight), m_maximum_weight(maximum_weight),
-      m_dominant_cost(dominant_cost),
+      m_power_target(initial_target), m_target_weight(target_weight),
+      m_maximum_weight(maximum_weight), m_dominant_cost(dominant_cost),
       m_forward_replay(std::move(forward_replay)),
       m_target_refreshed_for_arrivals(false) {
   if (!std::isfinite(m_power_target) || m_power_target < 0.0 ||
@@ -64,8 +63,10 @@ EASYPowerScheduler::running_power_jobs(const running_jobs_t &running_jobs,
     }
     const tdiff_t remaining = std::max<tdiff_t>(
         0.0, running.start_time + running.run_time - current_time);
-    result.push_back({job_id, remaining, running.nodes,
-                      *running.predicted_power});
+    if (remaining == 0.0)
+      continue;
+    result.push_back(
+        {job_id, remaining, running.nodes, *running.predicted_power});
   }
   return result;
 }
@@ -75,9 +76,8 @@ std::optional<size_t> EASYPowerScheduler::select_backfill_candidate(
     const running_jobs_t &effective_running_jobs, sim_time_t current_time) {
   (void)available_nodes;
   double reserved_running_power;
-  const double running_power =
-      backfill_running_power(effective_running_jobs, current_time,
-                              reserved_running_power);
+  const double running_power = backfill_running_power(
+      effective_running_jobs, current_time, reserved_running_power);
   const auto &queue = queued_jobs();
 
   std::optional<size_t> selected;
@@ -91,8 +91,8 @@ std::optional<size_t> EASYPowerScheduler::select_backfill_candidate(
         !is_uncapped_job(queue[candidate.queue_index])) {
       continue;
     }
-    if (!preserves_head_power(queue[candidate.queue_index], reserved_running_power,
-                              current_time)) {
+    if (!preserves_head_power(queue[candidate.queue_index],
+                              reserved_running_power, current_time)) {
       continue;
     }
     const double cost = candidate_power_cost(projected_power);
@@ -169,8 +169,8 @@ void EASYPowerScheduler::refresh_power_target(
     if (job.removed) {
       continue;
     }
-    waiting.push_back({job.job_id, job.run_time_estimate, job.nodes_requested,
-                       job.m_cost});
+    waiting.push_back(
+        {job.job_id, job.run_time_estimate, job.nodes_requested, job.m_cost});
     waiting_energy += job.m_cost * job.run_time_estimate;
   }
 

@@ -62,10 +62,14 @@ protected:
   /**
    * @brief Sum the power metadata of the effective running set.
    * @param[in] running_jobs Running jobs with mandatory power metadata.
-   * @return Aggregate predicted power of all running jobs.
+   * @param[in] current_time Scheduler timestamp; jobs whose forecast execution
+   * ended at or before this time retain nodes for cleanup but contribute no
+   * execution power.
+   * @return Aggregate predicted power of actively executing jobs.
    * @throws std::logic_error when a running job has no power metadata.
    */
-  double current_power(const running_jobs_t &running_jobs) const;
+  double current_power(const running_jobs_t &running_jobs,
+                       sim_time_t current_time) const;
 
   /**
    * @brief Sum running power now and at the protected head's reserved start.
@@ -92,13 +96,14 @@ protected:
    * the head's reserved start; otherwise false.
    */
   bool preserves_head_power(const JobEntry &job, double reserved_running_power,
-                             sim_time_t current_time) const {
+                            sim_time_t current_time) const {
     return reserved_running_power < 0.0 ||
-           reserved_running_power + job.m_cost + queued_jobs().front().m_cost
-               <= m_maximum_power ||
+           reserved_running_power + job.m_cost + queued_jobs().front().m_cost <=
+               m_maximum_power ||
            is_uncapped_job(job) ||
-           current_time + release_estimate(current_time, job.run_time_estimate)
-               <= m_fcfs_reservation_time;
+           current_time +
+                   release_estimate(current_time, job.run_time_estimate) <=
+               m_fcfs_reservation_time;
   }
 
   bool cap_backfill_power() const { return m_cap_backfill_power; }
