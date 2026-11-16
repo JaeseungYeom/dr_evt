@@ -109,6 +109,8 @@ void connect_and_init(SimulationClient &client, const std::string &trace_file,
   init->set_timestamp_format("epoch");
   init->set_backfill_policy(backfill_policy);
   init->set_reservation_depth(1);
+  init->set_cap_backfill_power(true);
+  init->set_cap_fcfs_power(true);
   init->set_priority_policy("fcfs");
   init->set_run_time_mode("limit");
   init->set_infile(trace_file);
